@@ -877,7 +877,7 @@ def main():
              "usb-out-tracks-post": (),
              "remix-switch": (), "remix-switch-trace": (),   # REMIX SWITCH's park in dead vectors, no region words
              "usb-out-main-cue": (), "usb-out-main": (), "usb-midi": (), "stems": (),     # stock effects + ColdFire modules, no DSP words
-             "rec-threshold": (), "plocks-p2": (), "scenes-midisc": (), "kits": (), "analog-bassdrum": ("SPRING REV",),
+             "octa303": (), "rec-threshold": (), "plocks-p2": (), "scenes-midisc": (), "kits": (), "analog-bassdrum": ("SPRING REV",),
              "sidechain-compressor": ("SPRING REV",), "kyoti-mute-sidechain": ("SPRING REV",),   # its DSP section in SPRING's words
              "repitch-repeat98-kyoti": ("SPRING REV",),   # its kernel in SPRING's P run, its tables in SPRING's X data (#603)
              # Zac Kyoti's ColdFire modules on the stock effects, no DSP words
