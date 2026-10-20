@@ -34,7 +34,10 @@ nav:
       - BBD Delay: reference/modules/bbd.md
       - Character: reference/modules/character.md
       - Character TXTR: reference/modules/character-txtr.md
+      - DBX 160: reference/modules/dbx160.md
       - Delay Server: reference/modules/busdelay.md
+      - dEVILish: reference/modules/devilish.md
+      - DisTorX: reference/modules/distorx.md
       - Euclid: reference/modules/euclid.md
       - Gate Verb: reference/modules/gateverb.md
       - LOFI2: reference/modules/lofi2.md
@@ -62,6 +65,7 @@ nav:
       - Erase Empty Trigless Locks: reference/modules/erase-empty-trigless-locks.md
       - Euclid Fill: reference/modules/euclid-fill.md
       - Mute Modes: reference/modules/mute-modes.md
+      - OCTA-303: reference/modules/octa303.md
       - Page 2 Parameter Locks: reference/modules/plocks-p2.md
       - Quantize Live Rec Toggle: reference/modules/quantize-live-rec-toggle.md
       - Rec Threshold: reference/modules/rec-threshold.md
