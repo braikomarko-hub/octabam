@@ -5,6 +5,9 @@ cycle every **128 steps**, starting on A. The other tracks keep the crossfader. 
 and press **DOWN**: the morph finishes its cycle on A and the track stays **parked on A**; it
 follows the crossfader again only once the crossfader reaches its A end, so nothing jumps.
 
+Author: MaMarko (Marko Brajković, [braikomarko-hub](https://github.com/braikomarko-hub)): the idea, the listening and the tests on the unit.
+**The code was written by Claude (Anthropic)**: engine, calibration, integration and gates.
+
 Inspired by the Korg Electribe's Motion Sequence
 (https://support.korguser.net/hc/en-us/articles/205917700-Motion-sequence): there the knob moves
 are recorded; here the movement is the ramp between the two scenes the Octatrack already has.
