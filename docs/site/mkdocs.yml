@@ -82,6 +82,7 @@ nav:
       - Kits: reference/modules/kits.md
       - MIDI Part State: reference/modules/midi-part-state.md
       - MIDI Scenes: reference/modules/midi-scenes.md
+      - Morph: reference/modules/morph.md
       - Page 2 Scene Locks: reference/modules/scenes-p2.md
   - MIDI and USB:
       - CC Feedback: reference/modules/cc-feedback.md

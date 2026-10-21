@@ -906,7 +906,7 @@ def main():
              "remix-switch": (), "remix-switch-trace": (),   # REMIX SWITCH's park in dead vectors, no region words
              "usb-out-main-cue": (), "usb-out-main": (), "usb-midi": (), "stems": (),     # stock effects + ColdFire modules, no DSP words
              "stems-brain": (),   # STEM REC under PROJECT + BRAIN/REMIX SWITCH; no DSP words
-             "octa303": (), "rec-threshold": (), "buffer-saver": (), "plocks-p2": (), "scenes-midisc": (), "kits": (),
+             "octa303": (), "morph": (), "rec-threshold": (), "buffer-saver": (), "plocks-p2": (), "scenes-midisc": (), "kits": (),
              "persistent-buffers": (),   # STORE + PERSISTENT BUFFERS on the stock effects, no DSP words
              "analog-bassdrum": ("SPRING REV",),
               "blackpyramids-303": ("SPRING REV",),   # its DSP voice in SPRING's words, as ANALOG BD's
