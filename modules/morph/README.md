@@ -1,9 +1,10 @@
 # MORPH (v1)
 
 Hold a track key and press **UP**: the MORPH window opens for that track (STEPS, x, MODE on the
-knobs A, B, C); **YES** starts it, and on the next step the track's scene morph runs by itself,
-scene A → B → A, one cycle every **STEPS × x steps** (by default 16 × 8 = 128), starting on A.
-Release the track key and the window closes; the morph goes on. The other tracks keep the crossfader. Hold the track key and press **DOWN**: the morph finishes
+knobs A, B, C) and the track is armed. Release the track key: the window closes and, on the next
+step, the track's scene morph runs by itself, scene A → B → A, one cycle every **STEPS × x steps**
+(by default 16 × 8 = 128), starting on A. [TRACK] + [UP] again opens the window over the running
+morph; changes apply at once and the morph goes on. The other tracks keep the crossfader. Hold the track key and press **DOWN**: the morph finishes
 its cycle on A and the track stays **parked on A**; it follows the crossfader again only once the
 crossfader reaches its A end, so nothing jumps.
 
@@ -24,7 +25,7 @@ Markers: ✅ measured, 🟡 inferred.
 
 | keys | what happens |
 |---|---|
-| [TRACK] + [UP] | the MORPH window for the held tracks (below) |
+| [TRACK] + [UP] | the MORPH window for the held tracks (below); they are armed (ARM) and start on the step after the release |
 | [TRACK] + [DOWN] | MORPH STOP on every held track: a morphing one finishes its cycle on A, then is parked on A; one still waiting for its step goes back to the crossfader |
 | crossfader to its A end | a parked track follows the crossfader again |
 | [STOP] | the morph holds where it is; [PLAY] carries on |
@@ -37,24 +38,24 @@ The window (opened by [TRACK] + [UP]; hold several track keys and it is for all 
 ```
  MORPH            T1        the window's tracks
  ──────────────────────
-  MORPH            ON       OFF / WAIT (starts on the next step) / ON / STOP (finishing) / PARK
+  MORPH            ON       ARM (in the window) / WAIT (next step) / ON / STOP (finishing) / PARK
   STEPS (A)        16       encoder A: TRK (the track's length), 1..64
-  x (B)             8       encoder B: 1..8
+  x (B)             8       encoder B: 1..16
   MODE (C)     SMOOTH       encoder C: SMOOTH / HOLD (TRIG HOLD)
-  STEP 12 / 128             while morphing
+  STEP 12 / 128             while morphing; CYCLE 128 STEPS otherwise
 ```
 
 | in the window | what happens |
 |---|---|
-| YES | MORPH on for the window's tracks (from A, on the next step), or off when one of them is morphing (they finish the cycle on A) |
+| YES | nothing (stock would arm recording under the held track key) |
 | A, B, C | STEPS, x, MODE on every window track |
 | DOWN | stop, as [TRACK] + [DOWN] |
-| NO, UP, or releasing the track keys | the window closes; a morph goes on |
+| NO, UP, or releasing the track keys | the window closes; an armed track starts on the next step, a running one goes on |
 
 | setting (per track) | values | default |
 |---|---|---|
 | STEPS | 0 = the track's length in the current pattern, 1..64 | 16 |
-| x | 1..8: one cycle is STEPS × x steps (at most 512) | 8 |
+| x | 1..16: one cycle is STEPS × x steps (at most 1024). Keep turning right at 16 and it gives in: 41.625 (16 × 41.625 = 666 steps); left goes back to 16 | 8 |
 | MODE | SMOOTH: the weight moves every frame. TRIG HOLD: the step's value for the whole step | SMOOTH |
 
 ## How it works

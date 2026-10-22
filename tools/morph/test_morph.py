@@ -99,8 +99,8 @@ def enc(i, delta):
 def tick():
     cpu.a[7] = SP; cpu.call('mw_tick')
 def win(): return mem.r(C['mw_win'], 'l')
-def start(held):                     # [TRACK]+[UP] opens the window, YES starts, the window closed again
-    key('morph_up', held); key('mw_yes'); key('mw_no')
+def start(held):                     # [TRACK]+[UP] opens the window and arms; closing it starts
+    key('morph_up', held); key('mw_no')
 def text(a):
     s = b''
     while True:
@@ -150,14 +150,21 @@ key('morph_up', 0b101)    # T1 and T3: the window
 check('up_opens_the_window', win() == WIN and ui['win_args'][:2] == [92, 64] and ui['win_args'][4] == 5
       and C['MW_LAYER'] in ui['layers'] and len(ui['timers']) == 1)
 tt = {y: s for x, y, s in ui['texts']}
-check('window_paint', tt.get(52) == 'T13' and tt.get(40) == 'OFF' and tt.get(32) == '16'
-      and tt.get(24) == '8' and tt.get(16) == 'SMOOTH', str(sorted(ui['texts'], key=lambda r: -r[1])))
-check('window_alone_changes_nothing', (state(0), state(2)) == (0, 0))
-key('mw_yes')
-check('yes_arms_the_window_tracks', (state(0), state(1), state(2)) == (4, 0, 4))
-check('window_shows_wait', {y: s for x, y, s in ui['texts']}.get(40) == 'WAIT')
-key('mw_no')
-check('no_closes_the_window', win() == 0 and not ui['layers'] and not ui['timers'])
+check('window_paint', tt.get(52) == 'T13' and tt.get(40) == 'ARM' and tt.get(32) == '16'
+      and tt.get(24) == '8' and tt.get(16) == 'SMOOTH' and tt.get(4) == 'CYCLE 128 STEPS',
+      str(sorted(ui['texts'], key=lambda r: -r[1])))
+check('up_holds_the_window_tracks', (state(0), state(1), state(2)) == (5, 0, 5))
+for _ in range(3): to_next_step()
+check('held_does_not_start_while_the_window_is_open', (state(0), state(2)) == (5, 5)
+      and weight(0) == 0x12345678)
+enc(1, -6); tick()
+check('cycle_follows_the_settings', {y: s for x, y, s in ui['texts']}.get(4) == 'CYCLE 32 STEPS')
+enc(1, 6)
+st = toasts[:]; key('mw_yes')
+check('yes_is_swallowed', (state(0), state(2)) == (5, 5) and win() == WIN and toasts == st)
+mem.w(HELD, 'l', 0); tick()
+check('release_closes_and_arms', win() == 0 and not ui['layers'] and not ui['timers']
+      and (state(0), state(1), state(2)) == (4, 0, 4))
 frame()
 check('armed_leaves_the_weight_until_the_step', weight(0) == 0x12345678 or seq.steps > 0)
 to_next_step()
@@ -271,16 +278,31 @@ mem.w(XF, 'l', 64)
 key('morph_up', 0b11000000)          # T7 and T8
 enc(0, -20); enc(1, 3); enc(2, 1)
 s6, s7 = [[mem.r(C['mp_set'] + 4 * t + i, 'b') for i in range(3)] for t in (6, 7)]
-check('enc_sets_every_window_track', s6 == s7 == [0, 8, 1], '%s %s' % (s6, s7))
+check('enc_sets_every_window_track', s6 == s7 == [0, 11, 1], '%s %s' % (s6, s7))
 tt = {y: s for x, y, s in ui['texts']}
 check('window_shows_trk_and_hold', tt.get(32) == 'TRK' and tt.get(16) == 'HOLD' and tt.get(52) == 'T78')
-enc(0, 100); enc(1, -9); enc(2, -1)
+enc(0, 100); enc(1, -20); enc(2, -1)
 check('enc_clamps', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0])
 enc(3, 5); enc(0, 0)
 check('enc_d_and_zero_do_nothing', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0])
-settings(6, 16, 8, 0); settings(7, 16, 8, 0)
-key('mw_yes'); to_next_step(); frame(5); tick()
+enc(1, 30)
+check('x_goes_to_16', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 16)
+enc(1, 5); enc(1, 5)
+check('x_16_insisted_a_little_stays', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 16)
+enc(1, 6)
 tt = {y: s for x, y, s in ui['texts']}
+check('easter_egg_41_625', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 17 and tt.get(24) == '41.625')
+settings(6, 16, 17, 0); cpu.a[7] = SP; cpu.call('mw_draw')
+tt = {y: s for x, y, s in ui['texts']}
+check('egg_cycle_is_666', tt.get(4) == 'CYCLE 666 STEPS', str(tt.get(4)))
+enc(1, -1)
+check('egg_left_is_16', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 16)
+settings(6, 16, 8, 0); settings(7, 16, 8, 0)
+mem.w(HELD, 'l', 0); tick(); to_next_step(); frame(5)
+check('released_tracks_run', state(6) == 1 and state(7) == 1)
+key('morph_up', 0b11000000); tick()
+tt = {y: s for x, y, s in ui['texts']}
+check('reopen_keeps_running', state(6) == 1 and state(7) == 1)
 check('window_shows_on_and_the_step', tt.get(40) == 'ON' and (tt.get(4) or '').startswith('STEP ')
       and tt.get(4, '').endswith('/ 128'), str(tt.get(4)))
 n0 = len(ui['texts']); tick()

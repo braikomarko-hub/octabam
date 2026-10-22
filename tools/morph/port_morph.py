@@ -57,28 +57,28 @@ def main():
         print('  tempo24 %d (%.1f BPM), a step %.3f s, crossfader xf %d' % (tempo24, tempo24 / 24, step_s, fader),
               flush=True)
         w1, w2 = W(0), W(1)
-        # [T1]+[UP]: the window, nothing starts
+        # [T1]+[UP]: the window, T1 armed but held while T1 is held
         p.key('t1', True); p.run(60); p.press('up', settle=120)
         shot('1_window_open')
-        check('T1+UP opens the window: nothing starts', W(0) == w1)
         # the encoders while T1 is held: STEPS 16 -> 8, x 8 -> 2 (16 steps), MODE stays SMOOTH
         enc(0, -8); enc(1, -6)
+        p.run(int(step_s * 2000))
         shot('2_window_steps_8_x_2')
-        # YES: T1 arms, starts on the next step from A
-        p.press('yes', settle=60); p.run(int(step_s * 1000) + 60)
-        shot('3_window_on')
-        # the triangle: xf = 127 - 127 * steps / 8 on the way to B (16-step cycle), about 16 a step
+        check('T1 held in the window: nothing starts over two steps', W(0) == w1)
+        # release T1: the window closes, the morph starts on the next step from A
+        p.key('t1', False); p.run(int(step_s * 1000) + 60)
+        shot('3_released_closed')
         tri = lambda s: int(round(127 - 127 * min(s, 8) / 8))
         x0 = xf(0)
-        # YES + about two steps: started from A, so about 127 - 2 x 16 (not yet B)
-        check('YES: T1 starts from A and moves', x0 is not None and 70 <= x0 <= 120, 'xf %s' % x0)
-        # release T1: the window closes, the morph goes on
+        check('release: T1 starts from A and moves', x0 is not None and 90 <= x0 <= 127, 'xf %s' % x0)
+        # [T1]+[UP] again: the window over a running morph, it goes on
+        p.key('t1', True); p.run(60); p.press('up', settle=120)
+        shot('4_window_on')
         p.key('t1', False); p.run(200)
-        shot('4_released_closed')
-        p.run(int(step_s * 2 * 1000))        # since YES: ~2 + 1.6 + 2 = ~5.6 steps -> xf ~38
+        p.run(int(step_s * 2 * 1000))        # since the start: ~1 + 0.4 + 1.6 + 2 = ~5 steps -> xf ~48
         x1 = xf(0)
-        check('T1 moves toward B at the tempo (16 steps a cycle)', x1 is not None and abs(x1 - tri(5.6)) <= 24,
-              'xf %s after about 5.6 steps (expected ~%d)' % (x1, tri(5.6)))
+        check('T1 moves toward B at the tempo (16 steps a cycle)', x1 is not None and abs(x1 - tri(5)) <= 26,
+              'xf %s after about 5 steps (expected ~%d)' % (x1, tri(5)))
         check('T2 keeps the crossfader', W(1) == w2)
         p.press('stop', settle=60); held = W(0); p.run(500)
         check('STOP holds T1', W(0) == held, 'xf %s -> %s' % (stock.get(held), xf(0)))
@@ -91,7 +91,7 @@ def main():
         # TRIG HOLD: the window again, MODE right, YES; one value a step
         p.key('t1', True); p.run(60); p.press('up', settle=120); enc(2, 1)
         shot('5_window_hold')
-        p.press('yes', settle=60); p.key('t1', False); p.run(int(step_s * 1500))
+        p.key('t1', False); p.run(int(step_s * 1500))
         vals = set()
         for _ in range(6):
             p.run(int(step_s * 1000 / 8)); vals.add(xf(0))
