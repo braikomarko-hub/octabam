@@ -42,6 +42,14 @@
         .text
         .globl  morph_frame, morph_up, morph_down, mp_keys
 
+| a key record, 0x1a bytes: code, 0, press, release, 16 zero bytes (repeat 0: replaces the layer
+| below's, as stock's and EUCLID FILL's records do)
+        .macro  KEYREC code, press, release
+        .byte   \code, 0
+        .long   \press, \release
+        .space  16
+        .endm
+
         .set    WEIGHTS,  0x80003c60     | long per track (8 used here)
         .set    CURVE,    0x400bcd90     | the crossfader curve, short per xf 0..127
         .set    XF,       0x460d16c8     | the crossfader position, long 0..127 (127 = scene A)
@@ -240,60 +248,61 @@ ml_5:   lea     mp_k,%a1                | a1 = this track's k (the caller's poin
         rts
 
 | ---------------------------------------------------------------- the keys
-| morph_up: on press, every held track: the fader's or parked -> armed (starts on the next step,
-| from A); stopping -> morphing again (the stop is cancelled); morphing or armed -> unchanged.
-| Toast MORPH ON; with the master switch off nothing changes: MORPH IS OFF.
+| morph_up ([TRACK]+[UP], the [TRACK] layer): on press, opens the MORPH window for the held tracks
+| (or closes it, when it is open and [UP] reaches this layer).
 morph_up:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0              | press only
         bne     mu_9
+        tst.l   mw_win
+        bne     mw_close
         move.l  HELD,%d1
         beq     mu_9
-        tst.b   mp_master
-        bne     mu_0
-        move.l  #S_OFF,%d0
-        bra     toast
-mu_0:   lea     mp_state,%a0
-mu_1:   btst    #0,%d1
-        beq     mu_3
-        mvz.b   (%a0),%d0
-        beq     mu_arm                  | the fader's: armed
-        subq.l  #S_STOP,%d0
-        beq     mu_run                  | stopping: carry on
-        subq.l  #S_PARK-S_STOP,%d0
-        bne     mu_3                    | morphing or armed: ignored
-mu_arm: moveq   #S_ARMED,%d0
-        bra     mu_2
-mu_run: moveq   #S_RUN,%d0
-mu_2:   move.b  %d0,(%a0)
-mu_3:   addq.l  #1,%a0
-        lsr.l   #1,%d1
-        bne     mu_1
-        move.l  #S_ON,%d0
-toast:                                  | tail-call NOTIFY(text, 0x30) in our caller's frame
-        move.l  %d0,4(%sp)
-        moveq   #0x30,%d0
-        move.l  %d0,8(%sp)
-        jmp     NOTIFY
+        bra     mw_open
 mu_9:   rts
 
-| morph_down: on press, every held morphing track finishes its cycle on A, then parks there; an
-| armed one goes back to the fader. Toast MORPH STOP.
+| mp_start1 -- the track at a0: the fader's or parked -> armed (starts on the next step, from A);
+| stopping -> morphing again (the stop is cancelled); morphing or armed -> unchanged. Clobbers d0.
+mp_start1:
+        mvz.b   (%a0),%d0
+        beq     mst_arm                 | the fader's
+        subq.l  #S_STOP,%d0
+        beq     mst_run                 | stopping: carry on
+        subq.l  #S_PARK-S_STOP,%d0
+        bne     mst_9                   | morphing or armed: unchanged
+mst_arm: moveq  #S_ARMED,%d0
+        move.b  %d0,(%a0)
+mst_9:  rts
+mst_run: moveq  #S_RUN,%d0
+        move.b  %d0,(%a0)
+        rts
+
+| morph_down ([TRACK]+[DOWN]): on press, every held morphing track finishes its cycle on A, then
+| parks there; an armed one goes back to the fader. Toast MORPH STOP.
 morph_down:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
         bne     mu_9
         move.l  HELD,%d1
         beq     mu_9
-        lea     mp_state,%a0
-md_1:   btst    #0,%d1
-        beq     md_2
-        bsr     mp_stop1
-md_2:   addq.l  #1,%a0
-        lsr.l   #1,%d1
-        bne     md_1
+        bsr     mp_stopmask
         move.l  #S_STOP_T,%d0
-        bra     toast
+toast:                                  | tail-call NOTIFY(text, 0x30) in our caller's frame
+        move.l  %d0,4(%sp)
+        moveq   #0x30,%d0
+        move.l  %d0,8(%sp)
+        jmp     NOTIFY
+
+| mp_stopmask -- mp_stop1 on every track of the mask d1. Clobbers d0, d1, a0.
+mp_stopmask:
+        lea     mp_state,%a0
+msm_1:  btst    #0,%d1
+        beq     msm_2
+        bsr     mp_stop1
+msm_2:  addq.l  #1,%a0
+        lsr.l   #1,%d1
+        bne     msm_1
+        rts
 
 | mp_stop1 -- the track at a0: morphing -> stopping; armed -> the fader's. Clobbers d0.
 mp_stop1:
@@ -315,26 +324,485 @@ morph_master:
         move.l  4(%sp),%d0
         move.b  %d0,mp_master
         bne     mm_9
-        lea     mp_state,%a0
-        moveq   #7,%d1
-mm_1:   bsr     mp_stop1
-        addq.l  #1,%a0
-        subq.l  #1,%d1
-        bge     mm_1
+        moveq   #-1,%d1
+        lsr.l   #8,%d1
+        lsr.l   #8,%d1
+        lsr.l   #8,%d1                  | 0xff: every track
+        bsr     mp_stopmask
 mm_9:   rts
 
-S_ON:   .asciz  "MORPH ON"
+| ---------------------------------------------------------------- the window
+| [TRACK]+[UP] opens a TEMPO-class window over the page for the tracks held at that moment (the
+| structure of ilia-murzinov's EUCLID FILL, modules/euclid-fill: WCREATE / WFRAME / WDESTROY, an
+| input layer pushed over everything, the stock text and box routines, y counted up from the
+| bottom). While it is open:
+|   A  STEPS (0 = TRK, the track's length, 1..64)     B  x (1..8)     C  MODE (SMOOTH / HOLD)
+|   YES  MORPH on / off for the window's tracks        DOWN  stop (as [TRACK]+[DOWN])
+|   NO or UP  close; releasing every window track key closes it too (a soft timer, ~60 Hz,
+|   watches the held keys and redraws the state and the step when they change).
+| The settings shown are the first window track's; an edit sets every window track to the value.
+| From a key handler, as EUCLID FILL opens its window from the PAGE handler.
+
+        .set    WCREATE,  0x4005829c    | (w, h, 0, 0, class, closed) -> window
+        .set    WFRAME,   0x40056f4c    | (window)
+        .set    WDESTROY, 0x40055db4    | (&window)
+        .set    CLEAR,    0x40035624    | (surface)
+        .set    FONT,     0x400ba876    | the small UI font, 6 px
+        .set    TEXT,     0x40012bd8    | (font, surface, x, y, limit, str)
+        .set    TWIDTH,   0x40012f30    | (font, limit, str) -> pixels
+        .set    RULE,     0x40011910    | (surface, x, y, x2, 1)
+        .set    INVERT,   0x40012254    | (surface, x1, y1, x2, y2, -1): an EOR bar
+        .set    SPRINTF,  0x40013a08
+        .set    LPUSH,    0x40031494    | (layer)
+        .set    LPOP,     0x4003146c    | (layer)
+        .set    TIMER,    0x40031a0c    | (period, callback) -> slot; ~0.5 s = 60
+        .set    UNTIMER,  0x40031abc    | (slot)
+        .set    SCRDIRTY, 0x46c7c72c
+        .set    WINW,     92
+        .set    WINH,     64
+        .set    Y_TITLE,  52
+        .set    Y_RULE,   49
+        .set    Y_MORPH,  40
+        .set    Y_STEPS,  32
+        .set    Y_MULT,   24
+        .set    Y_MODE,   16
+        .set    Y_POS,    4
+        .set    X_LAB,    6
+        .set    X_VAL,    88
+        .set    TICK,     2             | the soft timer's period: two ticks, ~17 ms
+
+| mw_open -- d1 = the held tracks. Clobbers d0, d1, a0, a1.
+mw_open:
+        move.l  %d1,mw_targets
+        moveq   #-1,%d0
+        move.l  %d0,mw_last             | force the first paint
+        pea     mw_closed
+        pea     5                       | TEMPO class: windows of the class evict each other
+        clr.l   -(%sp)
+        clr.l   -(%sp)
+        pea     WINH
+        pea     WINW
+        jsr     WCREATE
+        lea     24(%sp),%sp
+        move.l  %d0,mw_win
+        beq     mw_o9
+        move.l  %d0,-(%sp)
+        jsr     WFRAME
+        addq.l  #4,%sp
+        pea     MW_LAYER
+        jsr     LPUSH
+        addq.l  #4,%sp
+        moveq   #1,%d0
+        move.l  %d0,mw_pushed
+        pea     mw_tick
+        pea     TICK
+        jsr     TIMER
+        addq.l  #8,%sp
+        move.l  %d0,mw_timer
+        bra     mw_draw
+mw_o9:  rts
+
+| mw_close -- the window, the layer and the timer gone; safe when already closed.
+mw_close:
+        tst.l   mw_win
+        beq     mw_c9
+        pea     mw_win
+        jsr     WDESTROY
+        addq.l  #4,%sp
+mw_closed:                              | WCREATE's callback: another window of the class took over
+        clr.l   mw_win
+        move.l  mw_timer,%d0
+        bmi     mw_c1
+        move.l  %d0,-(%sp)
+        jsr     UNTIMER
+        addq.l  #4,%sp
+        moveq   #-1,%d0
+        move.l  %d0,mw_timer
+mw_c1:  tst.l   mw_pushed               | once: WDESTROY may call mw_closed itself
+        beq     mw_c9
+        clr.l   mw_pushed
+        pea     MW_LAYER
+        jsr     LPOP
+        addq.l  #4,%sp
+mw_c9:  rts
+
+| mw_tick -- the soft timer: closes when no window track key is held any more, else repaints when
+| the first track's state or step changed (once a step at most while morphing).
+mw_tick:
+        tst.l   mw_win
+        beq     mw_close                | (closed elsewhere: drops the timer and the layer)
+        move.l  HELD,%d0
+        and.l   mw_targets,%d0
+        beq     mw_close
+        bsr     mw_first                | a0 = the first track's state, d0 = its index
+        move.l  %d0,%d1
+        lsl.l   #2,%d1
+        lea     mp_k,%a1
+        move.l  (%a1,%d1.l),%d1
+        mvz.b   (%a0),%d0
+        swap    %d0
+        clr.w   %d0                     | state << 16 | k (k < 512)
+        or.l    %d1,%d0
+        cmp.l   mw_last,%d0
+        beq     mw_t9
+        bra     mw_draw
+mw_t9:  rts
+
+| mw_first -- d0 = the first window track, a0 = its state byte, a1 = its settings. Clobbers d1.
+mw_first:
+        moveq   #0,%d0
+        move.l  mw_targets,%d1
+mf1_1:  btst    %d0,%d1
+        bne     mf1_2
+        addq.l  #1,%d0
+        moveq   #7,%d1
+        cmp.l   %d1,%d0
+        bcc     mf1_2                   | (never: the mask is not empty)
+        move.l  mw_targets,%d1
+        bra     mf1_1
+mf1_2:  lea     mp_state,%a0
+        add.l   %d0,%a0
+        lea     mp_set,%a1
+        move.l  %d0,%d1
+        lsl.l   #2,%d1
+        add.l   %d1,%a1
+        rts
+
+| ---- the window's keys: handler(keycode @4, event @8), event 1 = press
+mw_yes:
+        moveq   #1,%d0
+        cmp.l   8(%sp),%d0
+        bne     mw_k9
+        tst.b   mp_master
+        bne     mw_y1
+        move.l  #S_OFF,%d0
+        bra     toast
+mw_y1:  lea     mp_state,%a0            | any window track morphing or armed: stop them all
+        move.l  mw_targets,%d1
+mw_y2:  btst    #0,%d1
+        beq     mw_y3
+        mvz.b   (%a0),%d0
+        subq.l  #S_RUN,%d0
+        beq     mw_ystop
+        subq.l  #S_ARMED-S_RUN,%d0
+        beq     mw_ystop
+mw_y3:  addq.l  #1,%a0
+        lsr.l   #1,%d1
+        bne     mw_y2
+        lea     mp_state,%a0            | none: start them all
+        move.l  mw_targets,%d1
+mw_y4:  btst    #0,%d1
+        beq     mw_y5
+        bsr     mp_start1
+mw_y5:  addq.l  #1,%a0
+        lsr.l   #1,%d1
+        bne     mw_y4
+        bra     mw_draw
+mw_ystop:
+        move.l  mw_targets,%d1
+        bsr     mp_stopmask
+        bra     mw_draw
+
+mw_no:                                  | NO, UP: close
+        moveq   #1,%d0
+        cmp.l   8(%sp),%d0
+        beq     mw_close
+mw_k9:  rts
+
+mw_down:
+        moveq   #1,%d0
+        cmp.l   8(%sp),%d0
+        bne     mw_k9
+        move.l  mw_targets,%d1
+        bsr     mp_stopmask
+        bra     mw_draw
+
+| mw_enc -- encoder (index @4, delta @8): A STEPS 0..64, B x 1..8, C MODE 0..1 (any turn to the
+| right HOLD, to the left SMOOTH), on every window track; the first track's value is the base.
+mw_enc:
+        tst.l   8(%sp)                  | delta 0: nothing
+        beq     mw_k9
+        bsr     mw_first                | a1 = the first track's settings (d0, d1 clobbered)
+        move.l  8(%sp),%d1              | delta
+        move.l  4(%sp),%d0              | index
+        beq     mw_e_steps
+        subq.l  #1,%d0
+        beq     mw_e_mult
+        subq.l  #1,%d0
+        bne     mw_k9                   | D..F: nothing
+        moveq   #0,%d0                  | MODE
+        tst.l   %d1
+        bmi     mw_e_set2
+        moveq   #1,%d0
+mw_e_set2:
+        moveq   #2,%d1                  | the byte: MODE at +2
+        bra     mw_e_set
+mw_e_steps:
+        mvz.b   (%a1),%d0
+        add.l   %d1,%d0
+        bpl     mw_e_s1
+        moveq   #0,%d0
+mw_e_s1: moveq  #64,%d1
+        cmp.l   %d1,%d0
+        ble     mw_e_s2
+        move.l  %d1,%d0
+mw_e_s2: moveq  #0,%d1
+        bra     mw_e_set
+mw_e_mult:
+        mvz.b   1(%a1),%d0
+        add.l   %d1,%d0
+        moveq   #1,%d1
+        cmp.l   %d1,%d0
+        bge     mw_e_m1
+        move.l  %d1,%d0
+mw_e_m1: moveq  #8,%d1
+        cmp.l   %d1,%d0
+        ble     mw_e_m2
+        move.l  %d1,%d0
+mw_e_m2: moveq  #1,%d1
+| d0 = the value, d1 = the byte (0 STEPS, 1 x, 2 MODE): set on every window track
+mw_e_set:
+        lea     mp_set,%a0
+        add.l   %d1,%a0
+        move.l  mw_targets,%d1
+mw_e_t: btst    #0,%d1
+        beq     mw_e_n
+        move.b  %d0,(%a0)
+mw_e_n: addq.l  #4,%a0
+        lsr.l   #1,%d1
+        bne     mw_e_t
+        bra     mw_draw
+
+| ---- the paint
+| MORPH  T1              (the window tracks)
+| ─────────────
+|  MORPH        ON       (OFF / WAIT / ON / STOP / PARK)
+|  STEPS (A)    16       (TRK = the track's length)
+|  x (B)         8
+|  MODE (C)  SMOOTH      (SMOOTH / HOLD)
+|  STEP 12 / 128         (while morphing)
+mw_draw:
+        tst.l   mw_win
+        beq     mw_d99
+        lea     -44(%sp),%sp
+        movem.l %d2-%d7/%a2-%a6,(%sp)
+        move.l  mw_win,%a2
+        lea     36(%a2),%a5             | the window's surface
+        move.l  %a5,-(%sp)
+        jsr     CLEAR
+        addq.l  #4,%sp
+        moveq   #4,%d0
+        moveq   #Y_TITLE,%d1
+        lea     T_TITLE,%a0
+        bsr     mw_text
+        bsr     mw_fmt_tracks
+        moveq   #X_VAL,%d0
+        moveq   #Y_TITLE,%d1
+        lea     mw_buf,%a0
+        bsr     mw_rtext
+        pea     1
+        pea     WINW-4
+        pea     Y_RULE
+        pea     4
+        move.l  %a5,-(%sp)
+        jsr     RULE
+        lea     20(%sp),%sp
+        bsr     mw_first                | d0 = track, a0 = state, a1 = settings
+        move.l  %d0,%d6
+        move.l  %a1,%a3
+        mvz.b   (%a0),%d7               | the state
+| MORPH row
+        moveq   #X_LAB,%d0
+        moveq   #Y_MORPH,%d1
+        lea     L_MORPH,%a0
+        bsr     mw_text
+        lea     V_STATE,%a0             | 5 bytes a name: OFF ON STOP PARK WAIT
+        move.l  %d7,%d0
+        mulu.w  #5,%d0
+        add.l   %d0,%a0
+        moveq   #X_VAL,%d0
+        moveq   #Y_MORPH,%d1
+        bsr     mw_rtext
+| STEPS row
+        moveq   #X_LAB,%d0
+        moveq   #Y_STEPS,%d1
+        lea     L_STEPS,%a0
+        bsr     mw_text
+        mvz.b   (%a3),%d0
+        lea     V_TRK,%a0
+        tst.l   %d0
+        beq     mw_d1
+        bsr     mw_num
+mw_d1:  moveq   #X_VAL,%d0
+        moveq   #Y_STEPS,%d1
+        bsr     mw_rtext
+| x row
+        moveq   #X_LAB,%d0
+        moveq   #Y_MULT,%d1
+        lea     L_MULT,%a0
+        bsr     mw_text
+        mvz.b   1(%a3),%d0
+        bsr     mw_num
+        moveq   #X_VAL,%d0
+        moveq   #Y_MULT,%d1
+        bsr     mw_rtext
+| MODE row
+        moveq   #X_LAB,%d0
+        moveq   #Y_MODE,%d1
+        lea     L_MODE,%a0
+        bsr     mw_text
+        lea     V_SMOOTH,%a0
+        tst.b   2(%a3)
+        beq     mw_d2
+        lea     V_HOLD,%a0
+mw_d2:  moveq   #X_VAL,%d0
+        moveq   #Y_MODE,%d1
+        bsr     mw_rtext
+| the step, while morphing
+        moveq   #S_RUN,%d0
+        cmp.l   %d0,%d7
+        beq     mw_d3
+        moveq   #S_STOP,%d0
+        cmp.l   %d0,%d7
+        bne     mw_d4
+mw_d3:  move.l  %d6,%d4                 | mp_len: d4 = the track, a3 = its settings
+        move.l  %d6,%d0
+        lsl.l   #2,%d0
+        lea     mp_k,%a0
+        move.l  (%a0,%d0.l),%d5         | k
+        bsr     mp_len                  | d3 = N
+        move.l  %d3,-(%sp)
+        addq.l  #1,%d5
+        move.l  %d5,-(%sp)              | the step, from 1
+        pea     F_POS
+        pea     mw_buf
+        jsr     SPRINTF
+        lea     16(%sp),%sp
+        moveq   #X_LAB,%d0
+        moveq   #Y_POS,%d1
+        lea     mw_buf,%a0
+        bsr     mw_text
+mw_d4:
+| what this paint showed, for mw_tick
+        move.l  %d6,%d0
+        lsl.l   #2,%d0
+        lea     mp_k,%a0
+        move.l  (%a0,%d0.l),%d0
+        swap    %d7
+        clr.w   %d7
+        or.l    %d0,%d7
+        move.l  %d7,mw_last
+        moveq   #1,%d0
+        move.l  %d0,SCRDIRTY
+        movem.l (%sp),%d2-%d7/%a2-%a6
+        lea     44(%sp),%sp
+mw_d99: rts
+
+| mw_num -- d0 -> "%d" in mw_buf, a0 = mw_buf. Clobbers d0, d1, a0, a1.
+mw_num:
+        move.l  %d0,-(%sp)
+        pea     F_NUM
+        pea     mw_buf
+        jsr     SPRINTF
+        lea     12(%sp),%sp
+        lea     mw_buf,%a0
+        rts
+
+| mw_text -- d0 = x, d1 = y, a0 = str; a5 = surface. Clobbers d0, d1, a0, a1.
+mw_text:
+        move.l  %a0,-(%sp)
+        pea     -1
+        move.l  %d1,-(%sp)
+        move.l  %d0,-(%sp)
+        move.l  %a5,-(%sp)
+        pea     FONT
+        jsr     TEXT
+        lea     24(%sp),%sp
+        rts
+
+| mw_rtext -- a0 right-aligned at x = d0, row d1 (the pointer parked across TWIDTH, as EUCLID FILL
+| learnt). Clobbers d0, d1, a0, a1.
+mw_rtext:
+        move.l  %a0,mw_rstr
+        move.l  %d0,mw_rx
+        move.l  %d1,mw_ry
+        move.l  %a0,-(%sp)
+        pea     -1
+        pea     FONT
+        jsr     TWIDTH
+        lea     12(%sp),%sp
+        move.l  mw_rx,%d1
+        sub.l   %d0,%d1
+        bpl     mw_r1
+        moveq   #0,%d1
+mw_r1:  move.l  %d1,%d0
+        move.l  mw_ry,%d1
+        move.l  mw_rstr,%a0
+        bra     mw_text
+
+| mw_fmt_tracks -- "T135" (1-based) for the window tracks into mw_buf. Clobbers d0, d1, a0.
+mw_fmt_tracks:
+        lea     mw_buf,%a0
+        moveq   #0x54,%d0               | 'T'
+        move.b  %d0,(%a0)+
+        moveq   #0,%d1
+mwf_1:  move.l  mw_targets,%d0
+        btst    %d1,%d0
+        beq     mwf_2
+        moveq   #0x31,%d0               | '1'
+        add.l   %d1,%d0
+        move.b  %d0,(%a0)+
+mwf_2:  addq.l  #1,%d1
+        moveq   #8,%d0
+        cmp.l   %d0,%d1
+        bcs     mwf_1
+        clr.b   (%a0)
+        rts
+
 S_STOP_T: .asciz "MORPH STOP"
 S_OFF:  .asciz  "MORPH IS OFF"
+T_TITLE: .asciz "MORPH"
+L_MORPH: .asciz "MORPH"
+L_STEPS: .asciz "STEPS (A)"
+L_MULT: .asciz  "x (B)"
+L_MODE: .asciz  "MODE (C)"
+V_STATE: .asciz "OFF"                   | 5 bytes a name, by the state
+         .byte  0
+        .asciz  "ON"
+        .byte   0, 0
+        .asciz  "STOP"
+        .asciz  "PARK"
+        .asciz  "WAIT"
+V_TRK:  .asciz  "TRK"
+V_SMOOTH: .asciz "SMOOTH"
+V_HOLD: .asciz  "HOLD"
+F_NUM:  .asciz  "%d"
+F_POS:  .asciz  "STEP %d / %d"
+
+| ---- the window's layer (pushed while it is open): {next, keys, encoders, +12, +16, -1, -1}
+        .balign 4
+MW_LAYER:
+        .long   0, MW_KEYS, MW_ENCS, 0, 0, -1, -1
+MW_KEYS:
+        KEYREC  0x31, mw_yes, 0                     | YES:  MORPH on / off
+        KEYREC  0x32, mw_no, 0                      | NO:   close
+        KEYREC  0x33, mw_no, 0                      | UP:   close
+        KEYREC  0x20, mw_down, 0                    | DOWN: stop
+        .byte   0xff, 0
+        .space  24
+MW_ENCS:
+        .byte   0, 0                                | A: STEPS
+        .long   mw_enc, 0, 0, 0, 0
+        .byte   1, 0                                | B: x
+        .long   mw_enc, 0, 0, 0, 0
+        .byte   2, 0                                | C: MODE
+        .long   mw_enc, 0, 0, 0, 0
+        .byte   0xff, 0
+        .long   0, 0, 0, 0, 0
 
 | ---------------------------------------------------------------- the [TRACK]-held key table
 | The stock table 0x400d1594 record for record (0x1a bytes: code, 0, press, release, 16 zero
 | bytes), UP and DOWN added before the terminator.
-        .macro  KEYREC code, press, release
-        .byte   \code, 0
-        .long   \press, \release
-        .space  16
-        .endm
         .balign 4
 mp_keys:
         KEYREC  0x27, 0x40083a7c, 0                 | STOP (stock)
@@ -343,7 +811,7 @@ mp_keys:
         KEYREC  0x31, 0x400834d8, 0x400834d8        | YES  (stock: ARM REC TRK)
         KEYREC  0x32, 0x40083488, 0x40083488        | NO   (stock: DISARM REC TRK)
         KEYREC  0x18, 0x400839dc, 0                 | 0x18 (stock)
-        KEYREC  0x33, morph_up, 0                   | UP:   MORPH ON
+        KEYREC  0x33, morph_up, 0                   | UP:   the MORPH window
         KEYREC  0x20, morph_down, 0                 | DOWN: MORPH STOP
         .byte   0xff, 0                             | terminator, as stock 0x400d1630
         .space  24
@@ -365,3 +833,13 @@ mp_set:    .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
 mp_master: .byte 1                          | the master switch
+        .balign 4
+mw_win:    .long 0                          | the window, 0 = closed
+mw_timer:  .long -1                         | its soft timer slot
+mw_pushed: .long 0                          | the layer is pushed
+mw_targets: .long 0                         | the window's tracks (bits)
+mw_last:   .long -1                         | state << 16 | k the last paint showed
+mw_rx:     .long 0
+mw_ry:     .long 0
+mw_rstr:   .long 0
+mw_buf:    .space 24

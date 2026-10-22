@@ -5,7 +5,8 @@ A morphing track's A/B weight comes from a triangle of one cycle = STEPS x x seq
 starting on scene A on the step after the keys, instead of from the crossfader; the other tracks
 keep the crossfader. MODE SMOOTH or TRIG HOLD. [TRACK]+[DOWN] lets the cycle finish on A and parks
 the track there until the crossfader reaches its A end. Inspired by the Korg Electribe's Motion
-Sequence. Not built yet: the settings window, the menu row for the master switch, saving.
+Sequence. [TRACK]+[UP] opens the window (A STEPS, B x, C MODE, YES on/off). Not built yet: the
+menu row for the master switch, saving.
 
 Sites, measured from the user's 1.40C (base 0x40000400; modules/morph/README.md):
   * the frame builder at 0x4000cc62 (`move.l #96,%macsr ; lea 12(%sp),%sp`, 10 bytes): once a
@@ -41,7 +42,7 @@ MODULE = Module(
     proof=Proof.HARDWARE,
     proof_note=("v0 on the owner's MKI, image ACIDV73MP (aCiDtRacK + MORPH), 21 Oct 2026: the keys, the "
                 "morph of the held track, the others on the fader, parking on A. v1 (the step clock, "
-                "STEPS x x, TRIG HOLD, the master switch): tools/morph/test_morph.py, 35/35 in cfsim; "
+                "STEPS x x, TRIG HOLD, the master switch, the window): tools/morph/test_morph.py, 52/52 in cfsim; "
                 "the port and the unit pending"),
     linked=(
         Linked("morph", os.path.join(_HERE, "morph.s"), dram=True),

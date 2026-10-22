@@ -45,18 +45,62 @@ def stock_weight(xf):
 WMAP = {stock_weight(x): x for x in range(128)}
 
 toasts = []
-def notify(cpu): toasts.append(cpu.mem.r(cpu.a[7] + 4, 'l'))
+def notify(cpu): toasts.append(cpu.mem.r(cpu.a[7] + 4, 'l'))     # reached by jmp: args above the return
+# ---- the window's firmware, mocked (reached by jsr: the first argument at a7)
+WCREATE, WFRAME, WDESTROY, CLEAR, TEXT, TWIDTH, RULE, INVERT, SPRINTF, LPUSH, LPOP, TIMER, UNTIMER = (
+    0x4005829c, 0x40056f4c, 0x40055db4, 0x40035624, 0x40012bd8, 0x40012f30, 0x40011910, 0x40012254,
+    0x40013a08, 0x40031494, 0x4003146c, 0x40031a0c, 0x40031abc)
+WIN = 0x48000000
+ui = dict(win_args=None, texts=[], layers=[], timers={}, untimers=[], destroyed=0)
+def arg(cpu, i): return cpu.mem.r(cpu.a[7] + 4 * i, 'l')
+def cstr(a):
+    s = b''
+    while True:
+        c = mem.r(a, 'b')
+        if not c: return s.decode()
+        s += bytes([c]); a += 1
+def h_wcreate(cpu): ui['win_args'] = [arg(cpu, i) for i in range(6)]; cpu.d[0] = WIN
+def h_wdestroy(cpu): mem.w(arg(cpu, 0), 'l', 0); ui['destroyed'] += 1
+def h_clear(cpu): ui['texts'] = []
+def h_text(cpu): ui['texts'].append((arg(cpu, 2), arg(cpu, 3), cstr(arg(cpu, 5))))
+def h_twidth(cpu): cpu.d[0] = 6 * len(cstr(arg(cpu, 2)))
+def h_sprintf(cpu):
+    buf, fmt = arg(cpu, 0), cstr(arg(cpu, 1)); out = ''; i = 0; n = 2
+    while i < len(fmt):
+        if fmt[i] == '%' and fmt[i + 1] == 'd': out += str(arg(cpu, n) - (1 << 32) * (arg(cpu, n) >> 31)); n += 1; i += 2
+        elif fmt[i] == '%' and fmt[i + 1] == 's': out += cstr(arg(cpu, n)); n += 1; i += 2
+        else: out += fmt[i]; i += 1
+    for j, ch in enumerate(out.encode() + b'\0'): mem.w(buf + j, 'b', ch)
+def h_lpush(cpu): ui['layers'].append(arg(cpu, 0))
+def h_lpop(cpu):
+    a = arg(cpu, 0)
+    assert a in ui['layers'], 'LPOP of a layer not pushed'
+    ui['layers'].remove(a)
+def h_timer(cpu): s = 7 + len(ui['timers']); ui['timers'][s] = (arg(cpu, 0), arg(cpu, 1)); cpu.d[0] = s
+def h_untimer(cpu): ui['untimers'].append(arg(cpu, 0)); ui['timers'].pop(arg(cpu, 0), None)
+noop = lambda c: None
 mem = Mem()
-cpu = CPU(SRC, mem, hooks={NOTIFY: notify, RESUME: lambda c: None})
+cpu = CPU(SRC, mem, hooks={NOTIFY: notify, RESUME: noop, WCREATE: h_wcreate, WFRAME: noop,
+                           WDESTROY: h_wdestroy, CLEAR: h_clear, TEXT: h_text, TWIDTH: h_twidth,
+                           RULE: noop, INVERT: noop, SPRINTF: h_sprintf, LPUSH: h_lpush, LPOP: h_lpop,
+                           TIMER: h_timer, UNTIMER: h_untimer})
 check('cfsim_lint_and_load', True, '%d instructions' % len(cpu.prog))
 for i, v in enumerate(curve): mem.w(CURVE + 2 * i, 'w', v & 0xffff)
 C = cpu.consts
 SP = 0x47000000
 
-def key(label, held):
-    mem.w(HELD, 'l', held)
-    mem.w(SP - 8, 'l', 0x33); mem.w(SP - 4, 'l', 1)          # (keycode, event = press) above the return address
+def key(label, held=None, ev=1):
+    if held is not None: mem.w(HELD, 'l', held)
+    mem.w(SP - 8, 'l', 0x33); mem.w(SP - 4, 'l', ev)         # (keycode, event) above the return address
     cpu.a[7] = SP - 8; cpu.call(label)
+def enc(i, delta):
+    mem.w(SP - 8, 'l', i); mem.w(SP - 4, 'l', delta & 0xffffffff)
+    cpu.a[7] = SP - 8; cpu.call('mw_enc')
+def tick():
+    cpu.a[7] = SP; cpu.call('mw_tick')
+def win(): return mem.r(C['mw_win'], 'l')
+def start(held):                     # [TRACK]+[UP] opens the window, YES starts, the window closed again
+    key('morph_up', held); key('mw_yes'); key('mw_no')
 def text(a):
     s = b''
     while True:
@@ -102,9 +146,18 @@ key('morph_down', 0b1)
 check('down_on_a_fader_track_does_nothing', state(0) == 0)
 
 # ---- start: armed until the next step, then from A
-key('morph_up', 0b101)              # T1 and T3
-check('up_arms_held_tracks', (state(0), state(1), state(2)) == (4, 0, 4))
-check('toast_morph_on', toasts and text(toasts[-1]) == 'MORPH ON')
+key('morph_up', 0b101)    # T1 and T3: the window
+check('up_opens_the_window', win() == WIN and ui['win_args'][:2] == [92, 64] and ui['win_args'][4] == 5
+      and C['MW_LAYER'] in ui['layers'] and len(ui['timers']) == 1)
+tt = {y: s for x, y, s in ui['texts']}
+check('window_paint', tt.get(52) == 'T13' and tt.get(40) == 'OFF' and tt.get(32) == '16'
+      and tt.get(24) == '8' and tt.get(16) == 'SMOOTH', str(sorted(ui['texts'], key=lambda r: -r[1])))
+check('window_alone_changes_nothing', (state(0), state(2)) == (0, 0))
+key('mw_yes')
+check('yes_arms_the_window_tracks', (state(0), state(1), state(2)) == (4, 0, 4))
+check('window_shows_wait', {y: s for x, y, s in ui['texts']}.get(40) == 'WAIT')
+key('mw_no')
+check('no_closes_the_window', win() == 0 and not ui['layers'] and not ui['timers'])
 frame()
 check('armed_leaves_the_weight_until_the_step', weight(0) == 0x12345678 or seq.steps > 0)
 to_next_step()
@@ -134,8 +187,8 @@ check('stopped_transport_holds', weight(0) == before)
 mem.w(TRANSPORT, 'l', 1)
 
 # ---- up on a running track: ignored
-k = mem.r(C['mp_k'], 'l'); key('morph_up', 0b1)
-check('up_on_running_is_ignored', mem.r(C['mp_k'], 'l') == k and state(0) == 1)
+k = mem.r(C['mp_k'], 'l'); key('morph_up', 0b1); tick(); key('mw_no')
+check('window_on_running_changes_nothing', mem.r(C['mp_k'], 'l') == k and state(0) == 1)
 
 # ---- TRIG HOLD, 8 x 1: the step's value for the whole step, 8 values a cycle
 key('morph_down', 0b101)
@@ -143,7 +196,7 @@ n = 0
 while (state(0) == 2 or state(2) == 2) and n < 140 * FPS: frame(); n += 1
 settings(0, 8, 1, 1)
 mem.w(XF, 'l', 127); frame(); frame()   # both re-attach
-key('morph_up', 0b1); to_next_step()
+start(0b1); to_next_step()
 vals = []; s0 = seq.steps; per = {}
 while seq.steps - s0 < 16:
     frame(); per.setdefault(seq.steps - s0, set()).add(xf_of(0))
@@ -158,7 +211,7 @@ mem.w(BANK_PTR, 'l', BANK); mem.w(PAT_IDX, 'b', 3)
 mem.w(BANK + 3 * PAT_STRIDE + 0 * TRK_STRIDE + 0x50, 'b', 32)
 settings(0, 0, 2, 0)
 mem.w(XF, 'l', 127); frame()
-key('morph_up', 0b1); to_next_step()
+start(0b1); to_next_step()
 xs = []; ks = []; s0 = seq.steps
 while seq.steps - s0 < 66:
     frame(); xs.append(xf_of(0)); ks.append(seq.steps - s0)
@@ -181,21 +234,21 @@ check('then_follows_the_fader', xf_of(0) == 10)
 
 # ---- cancel, re-arm, armed then down
 settings(2, 16, 8, 0)
-key('morph_up', 0b100); to_next_step(); key('morph_down', 0b100); key('morph_up', 0b100)
+start(0b100); to_next_step(); key('morph_down', 0b100); start(0b100)
 check('up_cancels_a_stop', state(2) == 1)
 key('morph_down', 0b100)
 while state(2) == 2: frame()
-key('morph_up', 0b100)
+start(0b100)
 check('up_on_parked_arms', state(2) == 4)
 key('morph_down', 0b100)
 check('down_on_armed_back_to_the_fader', state(2) == 0)
 
 # ---- extremes: N = 512 and N = 1
 settings(3, 64, 8, 0); mem.w(XF, 'l', 127)
-key('morph_up', 0b1000); to_next_step(); s0 = seq.steps; xs = []
+start(0b1000); to_next_step(); s0 = seq.steps; xs = []
 while seq.steps - s0 < 300: frame(); xs.append(xf_of(3))
 check('n_512_reaches_b_at_256', xs.index(0) > 0 and abs(seq.steps - s0 - 300) <= 1 and min(xs) == 0)
-settings(4, 1, 1, 1); key('morph_up', 0b10000); to_next_step(); frame(); a = xf_of(4); to_next_step(); frame()
+settings(4, 1, 1, 1); start(0b10000); to_next_step(); frame(); a = xf_of(4); to_next_step(); frame()
 check('n_1_trig_hold_is_a', a == 127 and xf_of(4) == 127)
 
 # ---- the master switch
@@ -204,14 +257,48 @@ def master(on):
 mem.w(XF, 'l', 64)                  # the fader away from A: the stopped tracks stay parked
 master(0)
 check('master_off_stops_every_morph', state(3) == 2 and state(4) == 2)
-n = toasts[:]; key('morph_up', 0b100000)
+n = toasts[:]; start(0b100000)
 check('master_off_refuses_up', state(5) == 0 and text(toasts[-1]) == 'MORPH IS OFF')
 n = 0
 while (state(3) == 2 or state(4) == 2) and n < 600 * FPS: frame(); n += 1
 check('master_off_morphs_end_on_a', state(3) == 3 and xf_of(3) == 127 and state(4) == 3,
       'states %d %d, xf %s, %d frames' % (state(3), state(4), xf_of(3), n))
-master(1); key('morph_up', 0b100000)
+master(1); start(0b100000)
 check('master_on_again', state(5) == 4)
+
+# ---- the window: encoders, release of the track keys, DOWN, several tracks
+mem.w(XF, 'l', 64)
+key('morph_up', 0b11000000)          # T7 and T8
+enc(0, -20); enc(1, 3); enc(2, 1)
+s6, s7 = [[mem.r(C['mp_set'] + 4 * t + i, 'b') for i in range(3)] for t in (6, 7)]
+check('enc_sets_every_window_track', s6 == s7 == [0, 8, 1], '%s %s' % (s6, s7))
+tt = {y: s for x, y, s in ui['texts']}
+check('window_shows_trk_and_hold', tt.get(32) == 'TRK' and tt.get(16) == 'HOLD' and tt.get(52) == 'T78')
+enc(0, 100); enc(1, -9); enc(2, -1)
+check('enc_clamps', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0])
+enc(3, 5); enc(0, 0)
+check('enc_d_and_zero_do_nothing', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0])
+settings(6, 16, 8, 0); settings(7, 16, 8, 0)
+key('mw_yes'); to_next_step(); frame(5); tick()
+tt = {y: s for x, y, s in ui['texts']}
+check('window_shows_on_and_the_step', tt.get(40) == 'ON' and (tt.get(4) or '').startswith('STEP ')
+      and tt.get(4, '').endswith('/ 128'), str(tt.get(4)))
+n0 = len(ui['texts']); tick()
+check('tick_repaints_only_on_change', len(ui['texts']) == n0)
+key('mw_down')
+check('down_in_the_window_stops', state(6) == 2 and state(7) == 2)
+mem.w(HELD, 'l', 0b01000000); tick()
+check('still_open_with_one_key_held', win() == WIN)
+mem.w(HELD, 'l', 0); tick()
+check('release_closes', win() == 0 and not ui['layers'] and not ui['timers'])
+key('mw_no')
+check('close_twice_is_safe', win() == 0 and not ui['layers'])
+key('morph_up', 0b1); key('morph_up', 0b1)
+check('up_again_toggles_closed', win() == 0 and not ui['layers'])
+key('morph_up', 0b1); cpu.a[7] = SP; cpu.call('mw_closed')      # another TEMPO-class window took over
+check('evicted_drops_layer_and_timer', win() == 0 and not ui['layers'] and not ui['timers'])
+key('morph_up', 0, 1)
+check('up_with_no_track_held_does_nothing', win() == 0)
 
 print('%d failure(s)' % fails)
 sys.exit(1 if fails else 0)

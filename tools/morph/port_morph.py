@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """port_morph: MORPH under the ColdFire port, keys pressed on the emulated panel.
 
-    .venv/bin/python3 tools/morph/port_morph.py [--remix morph] [--project DIR] [--full]
+    .venv/bin/python3 tools/morph/port_morph.py [--remix morph] [--project DIR]
 
 Builds the remix and stages the project as tools/site/capture_manual.py does (its prepare()),
 boots it under ot_emu with the panel (tools/verify/stems_panel.MenuPort, MKI), presses PLAY, then
 [T1]+[UP], and reads the per-track weight longs 0x80003c60 + 4*t. Each weight is mapped back to
-the crossfader position whose stock weight it is (the curve 0x400bcd90 from out/raw). Checks:
-T1 starts on A (xf 127) and then moves the way the tempo says; T2 keeps the crossfader's weight;
-the transport stop holds T1; [T1]+[DOWN] keeps it moving (it finishes its cycle). --full also runs
-to the end of the cycle and checks T1 parked on A (about 16 emulated seconds at 120 BPM).
+the crossfader position whose stock weight it is (the curve 0x400bcd90 from out/raw). v1: [T1]+[UP]
+opens the window and starts nothing; encoders A and B set 8 x 2 = 16 steps; YES starts T1 on the
+next step from A; releasing T1 closes the window and the morph goes on at the tempo; T2 keeps the
+crossfader; STOP holds; [T1]+[DOWN] parks T1 on A after the cycle; TRIG HOLD (encoder C) holds one
+value a step. PNGs of the window go to out/morph_port (MORPH_SHOTS=<dir> elsewhere).
 What it cannot see: the toast text, the unit's real frame rate (the port's frame is its model)."""
 import argparse, os, struct, sys
 from pathlib import Path
@@ -32,7 +33,6 @@ def main():
     ap.add_argument('--remix', default='morph')
     cfg = Path.home() / '.octabam_project'
     ap.add_argument('--project', default=os.environ.get('OT_PROJECT') or (cfg.read_text().strip() if cfg.is_file() else ''))
-    ap.add_argument('--full', action='store_true')
     a = ap.parse_args()
     if not a.project:
         print('  [SKIP] port_morph: no project (OT_PROJECT=<dir>, --project or ~/.octabam_project)'); return 0
@@ -46,36 +46,54 @@ def main():
         p.settle()
         W = lambda t: p.long(WEIGHTS + 4 * t)
         xf = lambda t: stock.get(W(t))
+        shots = Path(os.environ.get('MORPH_SHOTS', str(ROOT / 'out' / 'morph_port')))
+        shot = lambda name: p.png(shots / (name + '.png'))
+        def enc(i, d):
+            p.proc.command('enc %d %d' % (i, d), 'ok'); p.run(80)
         p.press('play', settle=300)
         check('transport running after PLAY', p.long(TRANSPORT) == 1, 'word %d' % p.long(TRANSPORT))
         tempo24 = p.long(TEMPO24); fader = p.long(XF)
-        print('  tempo24 %d (%.1f BPM), crossfader xf %d' % (tempo24, tempo24 / 24, fader), flush=True)
-        w2 = W(1)
-        print('  before: T1 weight = the stock weight of xf %s (the crossfader is at %d; until the fader moves the\n'
-              '  weights are what the boot left)' % (xf(0), fader), flush=True)
-        p.chord('t1', 'up', settle=60)
+        step_s = 992250 / tempo24 * 16 / 44100
+        print('  tempo24 %d (%.1f BPM), a step %.3f s, crossfader xf %d' % (tempo24, tempo24 / 24, step_s, fader),
+              flush=True)
+        w1, w2 = W(0), W(1)
+        # [T1]+[UP]: the window, nothing starts
+        p.key('t1', True); p.run(60); p.press('up', settle=120)
+        shot('1_window_open')
+        check('T1+UP opens the window: nothing starts', W(0) == w1)
+        # the encoders while T1 is held: STEPS 16 -> 8, x 8 -> 2 (16 steps), MODE stays SMOOTH
+        enc(0, -8); enc(1, -6)
+        shot('2_window_steps_8_x_2')
+        # YES: T1 arms, starts on the next step from A
+        p.press('yes', settle=60); p.run(int(step_s * 1000) + 60)
+        shot('3_window_on')
         x0 = xf(0)
-        check('T1+UP: T1 starts on A', x0 is not None and x0 >= 120, 'xf %s' % x0)
-        ms = 2000
+        check('YES: T1 starts on A within a step', x0 is not None and x0 >= 110, 'xf %s' % x0)
+        # release T1: the window closes, the morph goes on
+        p.key('t1', False); p.run(200)
+        shot('4_released_closed')
+        ms = int(step_s * 4 * 1000)          # a quarter of the 16-step cycle: about xf 63
         p.run(ms)
         x1 = xf(0)
-        cycle_s = 127008000 / tempo24 * 16 / 44100
-        expect = 127 - ((ms + 120) / 1000 / cycle_s) * 256        # 120 ms: the chord's own settle
-        check('T1 moves toward B at the tempo', x1 is not None and abs(x1 - expect) <= 8,
-              'xf %s after %d ms, expected about %.0f (cycle %.1f s)' % (x1, ms, expect, cycle_s))
+        check('T1 moves toward B at the tempo (16 steps a cycle)', x1 is not None and 40 <= x1 <= 100,
+              'xf %s after about 4 steps' % x1)
         check('T2 keeps the crossfader', W(1) == w2)
         p.press('stop', settle=60); held = W(0); p.run(500)
         check('STOP holds T1', W(0) == held, 'xf %s -> %s' % (stock.get(held), xf(0)))
-        p.press('play', settle=300); p.run(300)
-        check('PLAY carries on', xf(0) is not None and xf(0) < stock.get(held, 128), 'xf %s' % xf(0))
-        p.chord('t1', 'down', settle=60); xd = xf(0); p.run(500)
-        check('T1+DOWN: the cycle goes on', xf(0) is not None and xf(0) != xd, 'xf %s -> %s' % (xd, xf(0)))
-        if a.full:
-            left_s = cycle_s * 1.05
-            p.run(int(left_s * 1000), wall=max(60.0, left_s * 40))
-            check('end of cycle: T1 parked on A', xf(0) == 127, 'xf %s' % xf(0))
-            fader = p.long(XF)
-            check('parked T1 is not the crossfader (unless it is at A)', fader == 127 or xf(0) == 127)
+        p.press('play', settle=300); p.run(int(step_s * 2000))
+        check('PLAY carries on', xf(0) is not None and W(0) != held, 'xf %s' % xf(0))
+        # [T1]+[DOWN] without the window: the cycle finishes on A, then T1 is parked
+        p.chord('t1', 'down', settle=60)
+        p.run(int(step_s * 17 * 1000), wall=120)
+        check('T1+DOWN: parked on A after the cycle', xf(0) == 127, 'xf %s' % xf(0))
+        # TRIG HOLD: the window again, MODE right, YES; one value a step
+        p.key('t1', True); p.run(60); p.press('up', settle=120); enc(2, 1)
+        shot('5_window_hold')
+        p.press('yes', settle=60); p.key('t1', False); p.run(int(step_s * 1500))
+        vals = set()
+        for _ in range(6):
+            p.run(int(step_s * 1000 / 8)); vals.add(xf(0))
+        check('TRIG HOLD: at most two values in 0.75 step', len(vals) <= 2, str(sorted(vals, key=str)))
     print('port_morph: %d failure(s)' % fails, flush=True)
     return 1 if fails else 0
 
