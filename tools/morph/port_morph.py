@@ -67,16 +67,18 @@ def main():
         # YES: T1 arms, starts on the next step from A
         p.press('yes', settle=60); p.run(int(step_s * 1000) + 60)
         shot('3_window_on')
+        # the triangle: xf = 127 - 127 * steps / 8 on the way to B (16-step cycle), about 16 a step
+        tri = lambda s: int(round(127 - 127 * min(s, 8) / 8))
         x0 = xf(0)
-        check('YES: T1 starts on A within a step', x0 is not None and x0 >= 110, 'xf %s' % x0)
+        # YES + about two steps: started from A, so about 127 - 2 x 16 (not yet B)
+        check('YES: T1 starts from A and moves', x0 is not None and 70 <= x0 <= 120, 'xf %s' % x0)
         # release T1: the window closes, the morph goes on
         p.key('t1', False); p.run(200)
         shot('4_released_closed')
-        ms = int(step_s * 4 * 1000)          # a quarter of the 16-step cycle: about xf 63
-        p.run(ms)
+        p.run(int(step_s * 2 * 1000))        # since YES: ~2 + 1.6 + 2 = ~5.6 steps -> xf ~38
         x1 = xf(0)
-        check('T1 moves toward B at the tempo (16 steps a cycle)', x1 is not None and 40 <= x1 <= 100,
-              'xf %s after about 4 steps' % x1)
+        check('T1 moves toward B at the tempo (16 steps a cycle)', x1 is not None and abs(x1 - tri(5.6)) <= 24,
+              'xf %s after about 5.6 steps (expected ~%d)' % (x1, tri(5.6)))
         check('T2 keeps the crossfader', W(1) == w2)
         p.press('stop', settle=60); held = W(0); p.run(500)
         check('STOP holds T1', W(0) == held, 'xf %s -> %s' % (stock.get(held), xf(0)))
