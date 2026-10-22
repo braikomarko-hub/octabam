@@ -1,9 +1,11 @@
-"""MORPH v0 -- [TRACK]+[UP] / [TRACK]+[DOWN]: a track's scene morph (A -> B -> A) runs by itself.
+"""MORPH v1 -- [TRACK]+[UP] / [TRACK]+[DOWN]: a track's scene morph (A -> B -> A) runs by itself.
 
-A morphing track's A/B weight comes from a triangle of one cycle = 128 sequencer 16th steps,
-always starting on scene A, instead of from the crossfader; the other tracks keep the crossfader.
-[TRACK]+[DOWN] lets the cycle finish on A and parks the track there until the crossfader reaches
-its A end. Inspired by the Korg Electribe's Motion Sequence. No settings and nothing saved (v0).
+A morphing track's A/B weight comes from a triangle of one cycle = STEPS x x sequencer 16th steps
+(default 16 x 8 = 128; STEPS 0 = the track's length), counted on the sequencer's step word, always
+starting on scene A on the step after the keys, instead of from the crossfader; the other tracks
+keep the crossfader. MODE SMOOTH or TRIG HOLD. [TRACK]+[DOWN] lets the cycle finish on A and parks
+the track there until the crossfader reaches its A end. Inspired by the Korg Electribe's Motion
+Sequence. Not built yet: the settings window, the menu row for the master switch, saving.
 
 Sites, measured from the user's 1.40C (base 0x40000400; modules/morph/README.md):
   * the frame builder at 0x4000cc62 (`move.l #96,%macsr ; lea 12(%sp),%sp`, 10 bytes): once a
@@ -32,14 +34,15 @@ MODULE = Module(
     category=Category.PARTS,
     author="MaMarko",
     author_url="https://github.com/braikomarko-hub",
-    doc=("Hold a track key and press UP: that track's scene morph runs by itself, A -> B -> A over "
-         "128 steps, starting on A; the other tracks keep the crossfader. Track + DOWN finishes the "
-         "cycle on A and parks the track there until the crossfader reaches A. Inspired by the Korg "
-         "Electribe's Motion Sequence."),
-    proof=Proof.CHECK,
-    proof_note=("v0 written 21 Oct 2026: tools/morph/test_morph.py runs morph.s from its source text in "
-                "cfsim (the keys, the triangle and its period, stop on A, parking, re-attach, the stock "
-                "weight formula); make check and the unit pending"),
+    doc=("Hold a track key and press UP: from the next step that track's scene morph runs by itself, "
+         "A -> B -> A over STEPS x x steps, starting on A; the other tracks keep the crossfader. "
+         "Track + DOWN finishes the cycle on A and parks the track there until the crossfader reaches "
+         "A. Inspired by the Korg Electribe's Motion Sequence."),
+    proof=Proof.HARDWARE,
+    proof_note=("v0 on the owner's MKI, image ACIDV73MP (aCiDtRacK + MORPH), 21 Oct 2026: the keys, the "
+                "morph of the held track, the others on the fader, parking on A. v1 (the step clock, "
+                "STEPS x x, TRIG HOLD, the master switch): tools/morph/test_morph.py, 35/35 in cfsim; "
+                "the port and the unit pending"),
     linked=(
         Linked("morph", os.path.join(_HERE, "morph.s"), dram=True),
     ),
