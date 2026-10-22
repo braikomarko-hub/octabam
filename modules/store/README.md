@@ -41,6 +41,7 @@ link cannot find stops the build. A client declares `requires=("STORE",)`.
 | KITS (`kits`) | loadall_pre/post, loadmask_pre/post, newproj, bankw_post, pstore_pre/post, preload_post, partsaved, partclear |
 | MIDI SCENES (`scn`) | loadall_pre/post, loadmask_pre/post, newproj, bankw_post, pstore_pre/post, preload_post, tocs1, fromcs1, partclear |
 | PERSISTENT BUFFERS (`pbf`) | loadall_post, loadmask_post, pstore_pre, preload_post |
+| MORPH (`mrp`) | loadall_post, loadmask_post, newproj, bankw_post, pstore_pre/post, preload_post |
 
 ## Caller census
 
@@ -86,7 +87,7 @@ LEVEL scrolls the list; YES answers; NO closes it without an answer, leaving the
 entries listed and asking no more until the next load. No answer touches the
 card: the callbacks run in the UI task and the save in the engine task (a file
 copy called through the port's `--call` never returned). Client ids: 0 PLOCKS P2
-(argument = the bank), 1 KITS, 2 MIDI SCENES, 3 PERSISTENT BUFFERS. PLOCKS P2 used
+(argument = the bank), 1 KITS, 2 MIDI SCENES, 3 PERSISTENT BUFFERS, 4 MORPH. PLOCKS P2 used
 to read a refused `p2lkNN.work` as empty and overwrite it at the next bank write.
 
 ## Measured

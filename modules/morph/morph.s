@@ -5,16 +5,19 @@
 | tracks keep the crossfader. [TRACK]+[DOWN] lets the cycle finish on A; the track then stays
 | PARKED on A until the crossfader reaches its A end (xf 127), and only then follows the fader.
 |
-| v1 (22 Oct 2026; v0 on the owner's MKI, ACIDV73MP, 21 Oct: the triangle, the keys, the parking):
-|   * per track: STEPS (0 = the track's pattern length, 1..64), x (1..8), MODE (SMOOTH / TRIG
-|     HOLD); N = STEPS * x, at most 512. The defaults, 16 x 8 SMOOTH, are v0's 128 steps.
+| v1 (22 Oct 2026; v0 on the owner's MKI, ACIDV73MP, 21 Oct: the triangle, the keys, the parking;
+| v1 on the unit as ACIDV74MP, 22 Oct):
+|   * per track: STEPS (0 = the track's pattern length, 1..64), x (1..16, or 41.625 for the
+|     insistent), MODE (SMOOTH / TRIG HOLD); N = STEPS * x, at most 1024 (2664 for 41.625). The
+|     defaults, 16 x 8 SMOOTH, are v0's 128 steps.
 |   * the cycle follows the sequencer's step word instead of counting frames: k = the steps since
 |     the start, so TRIG HOLD changes exactly on the steps and nothing drifts over many cycles;
 |     SMOOTH adds the fraction of the step from the frames since the last step and the tempo.
 |   * a start waits for the next step (ARMED), so the cycle begins on the grid.
-|   * a master switch (mp_master): off, every morph finishes its cycle on A, an armed one is
-|     dropped and [TRACK]+[UP] is refused (MORPH IS OFF).
-|   The settings window, the menu row for the switch and the saving come next (the project spec).
+|   * the window ([TRACK]+[UP], below) arms the held tracks; they start on the step after the
+|     track keys are released.
+|   * the settings and which tracks morph are saved with the project (morph.work, through STORE,
+|     below); a loaded project's morphs start again from A on the first step after PLAY.
 |
 | Measured from the user's 1.40C (morph_disasm.txt, 21 Oct 2026; base 0x40000400):
 |   * per-track weight longs 0x80003c60 + 4*t, ten of them (8 tracks + 2 unknown). Written only by
@@ -272,11 +275,7 @@ morph_up:
         bne     mw_close
         move.l  HELD,%d1
         beq     mu_9
-        tst.b   mp_master
-        bne     mu_1
-        move.l  #S_OFF,%d0
-        bra     toast
-mu_1:   lea     mp_state,%a0            | every held track: armed in the window (one already
+        lea     mp_state,%a0            | every held track: armed in the window (one already
 mu_2:   btst    #0,%d1                  | morphing stays on; one stopping carries on)
         beq     mu_3
         bsr     mp_hold1
@@ -357,20 +356,6 @@ ms_1:   subq.l  #S_ARMED-S_RUN,%d0
         bne     ms_2
 ms_3:   clr.b   (%a0)
 ms_2:   rts
-
-| morph_master(on) -- the master switch (the menu row, next): off stops every track as
-| [TRACK]+[DOWN] would. Clobbers d0, d1, a0.
-        .globl  morph_master
-morph_master:
-        move.l  4(%sp),%d0
-        move.b  %d0,mp_master
-        bne     mm_9
-        moveq   #-1,%d1
-        lsr.l   #8,%d1
-        lsr.l   #8,%d1
-        lsr.l   #8,%d1                  | 0xff: every track
-        bsr     mp_stopmask
-mm_9:   rts
 
 | ---------------------------------------------------------------- the window
 | [TRACK]+[UP] opens a TEMPO-class window over the page for the tracks held at that moment (the
@@ -811,7 +796,6 @@ mwf_2:  addq.l  #1,%d1
         rts
 
 S_STOP_T: .asciz "MORPH STOP"
-S_OFF:  .asciz  "MORPH IS OFF"
 T_TITLE: .asciz "MORPH"
 L_MORPH: .asciz "MORPH"
 L_STEPS: .asciz "STEPS (A)"
@@ -855,6 +839,326 @@ MW_ENCS:
         .byte   0xff, 0
         .long   0, 0, 0, 0, 0
 
+| ---------------------------------------------------------------- saving (STORE's client)
+| morph.work beside the bank files: 'MRPW', version 1, payload length 40, CRC-32 of the payload
+| (zlib's, store_crc32); then the payload: mp_set (8 tracks x STEPS, x, MODE, pad), one byte of the
+| tracks that morph (bit t: running, armed or held in the window), 7 zero bytes. Written when the
+| payload differs from the one last read or written (mp_saved), at the bank writer and the project
+| store; copied to morph.strd at the store and back at a reload, as MIDI SCENES keeps scenes.work.
+| A file that is not that is never written over: STORE lists it (client 4) and asks.
+| STORE's handlers may clobber every register (modules/store/README.md).
+        .globl  mrp_st_loadall_post, mrp_st_loadmask_post, mrp_st_newproj, mrp_st_bankw_post
+        .globl  mrp_st_pstore_pre, mrp_st_pstore_post, mrp_st_preload_post, mrp_st_answer
+| store_path, store_fopen, store_fread, store_fwrite, store_fclose, store_crc32 and store_refuse
+| are STORE's (undefined here: the link resolves them).
+        .set    MP_MAGIC, 0x4d525057     | 'MRPW'
+        .set    MP_LEN,   40
+        .set    MP_CLIENT,4              | STORE's CLIENT_IDS
+        .set    F_COPY,   0x40016388     | (dst path, src path, 0) -> < 0 error (MIDI SCENES)
+
+| mp_build -- the payload of the current settings and states into mp_buf. Clobbers d0-d2, a0, a1.
+mp_build:
+        lea     mp_set,%a0
+        lea     mp_buf,%a1
+        moveq   #8,%d1
+mb_1:   move.l  (%a0)+,(%a1)+
+        subq.l  #1,%d1
+        bne     mb_1
+        moveq   #0,%d0                  | the tracks that morph
+        moveq   #7,%d1
+        lea     mp_state,%a0
+mb_2:   mvz.b   (%a0,%d1.l),%d2
+        subq.l  #S_RUN,%d2
+        beq     mb_on
+        subq.l  #S_ARMED-S_RUN,%d2
+        beq     mb_on
+        subq.l  #S_HELD-S_ARMED,%d2
+        bne     mb_3
+mb_on:  moveq   #1,%d2
+        lsl.l   %d1,%d2
+        or.l    %d2,%d0
+mb_3:   subq.l  #1,%d1
+        bpl     mb_2
+        move.l  %d0,%d1
+        lsl.l   #8,%d1
+        lsl.l   #8,%d1
+        lsl.l   #8,%d1                  | the mask in the first byte, three zero bytes
+        move.l  %d1,(%a1)+
+        clr.l   (%a1)
+        rts
+
+| mp_save -- write morph.work when the payload differs from mp_saved. Clobbers everything.
+mp_save:
+        tst.l   mp_nowrite
+        bne     mps_9
+        bsr     mp_build
+        lea     mp_buf,%a0
+        lea     mp_saved,%a1
+        moveq   #MP_LEN/4,%d1
+mps_1:  move.l  (%a0)+,%d0
+        cmp.l   (%a1)+,%d0
+        bne     mps_2
+        subq.l  #1,%d1
+        bne     mps_1
+mps_9:  rts                             | nothing changed
+mps_2:  tst.l   mp_backup
+        beq     mps_3
+        clr.l   mp_backup               | the refused file kept as morph.bak first
+        lea     FMT_MWORK,%a0
+        lea     mp_psrc,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        lea     FMT_MBAK,%a0
+        lea     mp_path,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        clr.l   -(%sp)
+        pea     mp_psrc
+        pea     mp_path
+        jsr     F_COPY
+        lea     12(%sp),%sp
+mps_3:  lea     mp_buf,%a0
+        moveq   #MP_LEN,%d0
+        moveq   #0,%d1
+        jsr     store_crc32
+        lea     mp_hdr,%a0
+        move.l  %d0,12(%a0)
+        move.l  #MP_MAGIC,%d0
+        move.l  %d0,(%a0)
+        moveq   #1,%d0
+        move.l  %d0,4(%a0)
+        moveq   #MP_LEN,%d0
+        move.l  %d0,8(%a0)
+        lea     FMT_MWORK,%a0
+        lea     mp_path,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        lea     mp_path,%a0
+        lea     MP_MODE_W,%a1
+        lea     mp_ctx,%a2
+        jsr     store_fopen
+        tst.l   %d0
+        bmi     mps_8
+        lea     mp_hdr,%a0
+        moveq   #16,%d0
+        jsr     store_fwrite
+        move.l  %d0,%d2
+        lea     mp_buf,%a0
+        moveq   #MP_LEN,%d0
+        jsr     store_fwrite
+        move.l  %d0,%d3
+        jsr     store_fclose
+        subq.l  #1,%d2
+        bne     mps_8
+        subq.l  #1,%d3
+        bne     mps_8
+        lea     mp_buf,%a0              | written: the payload on the card
+        lea     mp_saved,%a1
+        moveq   #MP_LEN/4,%d1
+mps_4:  move.l  (%a0)+,(%a1)+
+        subq.l  #1,%d1
+        bne     mps_4
+        rts
+mps_8:  addq.l  #1,mp_ioerr
+        rts
+
+| mp_load -- read morph.work and apply it; no file: the defaults; a bad file: the defaults, and
+| the file is listed with STORE and never written over. Clobbers everything.
+mp_load:
+        clr.l   mp_nowrite
+        clr.l   mp_backup
+        lea     FMT_MWORK,%a0
+        lea     mp_path,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        lea     mp_path,%a0
+        lea     MP_MODE_R,%a1
+        lea     mp_ctx,%a2
+        jsr     store_fopen
+        tst.l   %d0
+        bmi     mp_defaults             | no file
+        lea     mp_hdr,%a0
+        moveq   #16,%d0
+        jsr     store_fread
+        subq.l  #1,%d0
+        bne     mpl_bad
+        lea     mp_hdr,%a0
+        move.l  (%a0),%d0
+        cmp.l   #MP_MAGIC,%d0
+        bne     mpl_bad
+        moveq   #1,%d0
+        cmp.l   4(%a0),%d0
+        bne     mpl_bad
+        moveq   #MP_LEN,%d0
+        cmp.l   8(%a0),%d0
+        bne     mpl_bad
+        lea     mp_buf,%a0
+        moveq   #MP_LEN,%d0
+        jsr     store_fread
+        subq.l  #1,%d0
+        bne     mpl_bad
+        jsr     store_fclose
+        lea     mp_buf,%a0
+        moveq   #MP_LEN,%d0
+        moveq   #0,%d1
+        jsr     store_crc32
+        cmp.l   mp_hdr+12,%d0
+        bne     mpl_crc
+        bra     mp_apply
+mpl_bad:
+        jsr     store_fclose
+mpl_crc:
+        addq.l  #1,mp_bad
+        moveq   #1,%d0
+        move.l  %d0,mp_nowrite
+        moveq   #MP_CLIENT,%d0
+        moveq   #0,%d1
+        jsr     store_refuse
+        bra     mp_defaults
+
+| mp_defaults -- every track 16 x 8 SMOOTH and on the fader; mp_saved = that payload, so an
+| untouched project gets no file.
+mp_defaults:
+        lea     mp_buf,%a0
+        moveq   #8,%d1
+        move.l  #0x10080000,%d0         | 16, 8, SMOOTH, pad
+mpd_1:  move.l  %d0,(%a0)+
+        subq.l  #1,%d1
+        bne     mpd_1
+        clr.l   (%a0)+
+        clr.l   (%a0)
+| mp_apply -- mp_buf (a payload) into mp_set and the states, each value clamped; mp_saved = it.
+| The tracks that morphed are armed: they start from A on the first step after PLAY. The others
+| go to the fader, a track that was not on the fader by way of PARK (held on A until the fader
+| is at A, as after a stop: its weight is not left where its morph was).
+mp_apply:
+        lea     mp_buf,%a0
+        lea     mp_set,%a1
+        moveq   #0,%d1                  | t
+mpa_1:  mvz.b   (%a0),%d0               | STEPS 0..64
+        cmp.l   #64,%d0
+        bls     mpa_2
+        moveq   #16,%d0
+mpa_2:  move.b  %d0,(%a1)
+        mvz.b   1(%a0),%d0              | x 1..16, X_EGG
+        cmp.l   #X_EGG,%d0
+        bls     mpa_3
+        moveq   #8,%d0
+mpa_3:  tst.l   %d0
+        bne     mpa_4
+        moveq   #8,%d0
+mpa_4:  move.b  %d0,1(%a1)
+        mvz.b   2(%a0),%d0              | MODE 0..1
+        moveq   #1,%d2
+        cmp.l   %d2,%d0
+        bls     mpa_5
+        moveq   #0,%d0
+mpa_5:  move.b  %d0,2(%a1)
+        clr.b   3(%a1)
+        addq.l  #4,%a0
+        addq.l  #4,%a1
+        addq.l  #1,%d1
+        moveq   #8,%d0
+        cmp.l   %d0,%d1
+        bne     mpa_1
+        mvz.b   (%a0),%d3               | the tracks that morph
+        lea     mp_state,%a0
+        lea     mp_k,%a1
+        moveq   #0,%d1
+mpa_6:  clr.l   (%a1)+
+        btst    %d1,%d3
+        beq     mpa_7
+        moveq   #S_ARMED,%d0
+        bra     mpa_8
+mpa_7:  mvz.b   (%a0),%d0
+        beq     mpa_9                   | on the fader: stays
+        moveq   #S_PARK,%d0
+mpa_8:  move.b  %d0,(%a0)
+mpa_9:  addq.l  #1,%a0
+        addq.l  #1,%d1
+        moveq   #8,%d0
+        cmp.l   %d0,%d1
+        bne     mpa_6
+        bsr     mp_build                | what is on the card (clamped values: a rewrite if any was)
+        lea     mp_buf,%a0
+        lea     mp_saved,%a1
+        moveq   #MP_LEN/4,%d1
+mpa_10: move.l  (%a0)+,(%a1)+
+        subq.l  #1,%d1
+        bne     mpa_10
+        rts
+
+| ---- STORE's events
+mrp_st_loadall_post:
+mrp_st_loadmask_post:
+        bra     mp_load
+
+mrp_st_newproj:
+        clr.l   mp_nowrite
+        clr.l   mp_backup
+        bra     mp_defaults
+
+mrp_st_bankw_post:
+mrp_st_pstore_pre:
+        bra     mp_save
+
+mrp_st_pstore_post:                     | morph.work -> morph.strd (the saved project)
+        tst.l   mp_nowrite
+        bne     mrs_9
+        lea     FMT_MSTRD,%a0
+        lea     mp_psrc,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        lea     FMT_MWORK,%a0
+        lea     mp_path,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        clr.l   -(%sp)
+        pea     mp_path
+        pea     mp_psrc
+        jsr     F_COPY
+        lea     12(%sp),%sp
+mrs_9:  rts
+
+mrp_st_preload_post:                    | the saved project back: morph.strd -> morph.work, read
+        lea     FMT_MWORK,%a0
+        lea     mp_psrc,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        lea     FMT_MSTRD,%a0
+        lea     mp_path,%a1
+        moveq   #0,%d0
+        jsr     store_path
+        clr.l   -(%sp)
+        pea     mp_path
+        pea     mp_psrc
+        jsr     F_COPY
+        lea     12(%sp),%sp
+        tst.l   %d0
+        bmi     mrs_9                   | no saved copy: as it is
+        bra     mp_load
+
+| mrp_st_answer: d0 = IGNORE (0) / OVERWRITE (1) / BACKUP (2) for a refused morph.work. Both
+| writes happen at the next save (the answer runs in the UI task, the card is the engine's).
+mrp_st_answer:
+        tst.l   %d0
+        beq     mra_9
+        moveq   #2,%d1
+        cmp.l   %d1,%d0
+        bne     mra_1
+        moveq   #1,%d1
+        move.l  %d1,mp_backup
+mra_1:  clr.l   mp_nowrite
+        moveq   #-1,%d0                 | mp_saved matches nothing: the next save writes
+        move.l  %d0,mp_saved
+mra_9:  rts
+
+FMT_MWORK: .asciz "%s/morph.work"
+FMT_MSTRD: .asciz "%s/morph.strd"
+FMT_MBAK:  .asciz "%s/morph.bak"
+MP_MODE_R: .asciz "r"
+MP_MODE_W: .asciz "w"
+
 | ---------------------------------------------------------------- the [TRACK]-held key table
 | The stock table 0x400d1594 record for record (0x1a bytes: code, 0, press, release, 16 zero
 | bytes), UP and DOWN added before the terminator.
@@ -873,7 +1177,7 @@ mp_keys:
 
 | ---------------------------------------------------------------- state (DRAM, writable)
         .balign 4
-        .globl  mp_set, mp_master
+        .globl  mp_set
 mp_state:  .byte 0, 0, 0, 0, 0, 0, 0, 0
 mp_k:      .long 0, 0, 0, 0, 0, 0, 0, 0     | steps since the cycle began
 mp_lastw:  .long 0                          | the step word at the last frame
@@ -887,7 +1191,6 @@ mp_set:    .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
-mp_master: .byte 1                          | the master switch
         .balign 4
 mw_win:    .long 0                          | the window, 0 = closed
 mw_timer:  .long -1                         | its soft timer slot
@@ -899,3 +1202,17 @@ mw_rx:     .long 0
 mw_ry:     .long 0
 mw_rstr:   .long 0
 mw_buf:    .space 24
+        .balign 4
+| saving (morph.work)
+mp_saved:  .byte 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0     | the payload on the card
+           .byte 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0     | (no file: the defaults)
+           .long 0, 0
+mp_buf:    .space 40
+mp_hdr:    .space 16
+mp_nowrite: .long 0                         | morph.work refused: never written over
+mp_backup: .long 0                          | the next write first copies it to morph.bak
+mp_bad:    .long 0                          | morph.work refused (count)
+mp_ioerr:  .long 0                          | morph.work not written (count)
+mp_ctx:    .space 4120                      | STORE_CTX: the file object and its 4 KB buffer
+mp_path:   .space 260
+mp_psrc:   .space 260

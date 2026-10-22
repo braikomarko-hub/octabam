@@ -8,7 +8,7 @@ REMIX = Remix(
     proof_note="v0, 21 Oct 2026: tools/morph/test_morph.py (source level) and tools/morph/port_morph.py "
                "(under the port, with a project); not flashed",
     doc="MORPH (track + UP / DOWN: the scene morph by itself) with the stock effects.",
-    modules=("MORPH", "FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER",
+    modules=("MORPH", "STORE", "FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER",
              "CHORUS", "SPATIALIZER", "COMB FILTER", "COMPRESSOR", "LO-FI",
              "DELAY", "PLATE REV", "SPRING REV", "DARK REV"),
     fallback="NONE",

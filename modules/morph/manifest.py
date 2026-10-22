@@ -1,12 +1,13 @@
-"""MORPH v1 -- [TRACK]+[UP] / [TRACK]+[DOWN]: a track's scene morph (A -> B -> A) runs by itself.
+"""MORPH -- [TRACK]+[UP] / [TRACK]+[DOWN]: a track's scene morph (A -> B -> A) runs by itself.
 
 A morphing track's A/B weight comes from a triangle of one cycle = STEPS x x sequencer 16th steps
 (default 16 x 8 = 128; STEPS 0 = the track's length), counted on the sequencer's step word, always
 starting on scene A on the step after the keys, instead of from the crossfader; the other tracks
 keep the crossfader. MODE SMOOTH or TRIG HOLD. [TRACK]+[DOWN] lets the cycle finish on A and parks
 the track there until the crossfader reaches its A end. Inspired by the Korg Electribe's Motion
-Sequence. [TRACK]+[UP] opens the window (A STEPS, B x, C MODE, YES on/off). Not built yet: the
-menu row for the master switch, saving.
+Sequence. [TRACK]+[UP] opens the window (A STEPS, B x 1..16, C MODE) and arms the held tracks;
+releasing the track keys starts them on the next step. The settings and which tracks morph are
+saved with the project in morph.work (a STORE client, modules/store).
 
 Sites, measured from the user's 1.40C (base 0x40000400; modules/morph/README.md):
   * the frame builder at 0x4000cc62 (`move.l #96,%macsr ; lea 12(%sp),%sp`, 10 bytes): once a
@@ -38,12 +39,12 @@ MODULE = Module(
     doc=("Hold a track key and press UP: from the next step that track's scene morph runs by itself, "
          "A -> B -> A over STEPS x x steps, starting on A; the other tracks keep the crossfader. "
          "Track + DOWN finishes the cycle on A and parks the track there until the crossfader reaches "
-         "A. Inspired by the Korg Electribe's Motion Sequence."),
+         "A. Settings saved with the project. Inspired by the Korg Electribe's Motion Sequence."),
     proof=Proof.HARDWARE,
-    proof_note=("v0 on the owner's MKI, image ACIDV73MP (aCiDtRacK + MORPH), 21 Oct 2026: the keys, the "
-                "morph of the held track, the others on the fader, parking on A. v1 (the step clock, "
-                "STEPS x x, TRIG HOLD, the master switch, the window): tools/morph/test_morph.py, 52/52 in cfsim; "
-                "the port and the unit pending"),
+    proof_note=("v1 on the owner's MKI, image ACIDV74MP (aCiDtRacK + MORPH), 22 Oct 2026: the window, "
+                "the step clock, STEPS x x, SMOOTH and TRIG HOLD, several tracks at once, stop and parking "
+                "on A (v0: ACIDV73MP, 21 Oct). The release start, x to 16 and saving: "
+                "tools/morph/test_morph.py and tools/morph/port_morph.py; the unit pending"),
     linked=(
         Linked("morph", os.path.join(_HERE, "morph.s"), dram=True),
     ),
@@ -56,6 +57,7 @@ MODULE = Module(
         SymbolRef(KEYS_FIELD, KEYS_STOCK, "morph", "mp_keys",
                   "[TRACK]-held key layer: the stock table plus UP (MORPH ON) and DOWN (MORPH STOP)"),
     ),
+    requires=("STORE",),
     conflicts=(
         ("REC_TRIG_MUTE", "it repoints the YES/NO records of the stock [TRACK]-layer table "
                           "0x400d1594, which MORPH replaces with its own copy (its YES/NO would "

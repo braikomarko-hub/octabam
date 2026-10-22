@@ -79,8 +79,43 @@ def h_lpop(cpu):
 def h_timer(cpu): s = 7 + len(ui['timers']); ui['timers'][s] = (arg(cpu, 0), arg(cpu, 1)); cpu.d[0] = s
 def h_untimer(cpu): ui['untimers'].append(arg(cpu, 0)); ui['timers'].pop(arg(cpu, 0), None)
 noop = lambda c: None
+# ---- STORE's file calls, mocked: a dict of paths (modules/store/store.s: registers in, d0 out)
+STORE = dict(store_path=0x4f000000, store_fopen=0x4f000010, store_fread=0x4f000020,
+             store_fwrite=0x4f000030, store_fclose=0x4f000040, store_crc32=0x4f000050,
+             store_refuse=0x4f000060)
+F_COPY = 0x40016388
+files, opened, refused, writes = {}, {}, [], []
+def s_path(cpu):
+    fmt = cstr(cpu.a[0]); out = fmt.replace('%s', '/P')
+    for j, ch in enumerate(out.encode() + b'\0'): mem.w(cpu.a[1] + j, 'b', ch)
+def s_fopen(cpu):
+    path, mode = cstr(cpu.a[0]), cstr(cpu.a[1])
+    if mode == 'r' and path not in files: cpu.d[0] = 0xffffffff; return
+    opened[cpu.a[2]] = dict(path=path, mode=mode, pos=0, data=bytearray(files.get(path, b'')) if mode == 'r' else bytearray())
+    cpu.d[0] = 0
+def s_fread(cpu):
+    f = opened[cpu.a[2]]; n = cpu.d[0]
+    if f['pos'] + n > len(f['data']): cpu.d[0] = 0; return
+    for j in range(n): mem.w(cpu.a[0] + j, 'b', f['data'][f['pos'] + j])
+    f['pos'] += n; cpu.d[0] = 1
+def s_fwrite(cpu):
+    f = opened[cpu.a[2]]; f['data'] += bytes(mem.r(cpu.a[0] + j, 'b') for j in range(cpu.d[0])); cpu.d[0] = 1
+def s_fclose(cpu):
+    f = opened.pop(cpu.a[2], None)
+    if f and f['mode'] == 'w': files[f['path']] = bytes(f['data']); writes.append(f['path'])
+def s_crc(cpu):
+    import zlib
+    cpu.d[0] = zlib.crc32(bytes(mem.r(cpu.a[0] + j, 'b') for j in range(cpu.d[0])), cpu.d[1])
+def s_refuse(cpu): refused.append((cpu.d[0], cpu.d[1]))
+def f_copy(cpu):
+    dst, src = cstr(arg(cpu, 0)), cstr(arg(cpu, 1))
+    if src in files: files[dst] = files[src]; cpu.d[0] = 0
+    else: cpu.d[0] = 0xffffffff
 mem = Mem()
-cpu = CPU(SRC, mem, hooks={NOTIFY: notify, RESUME: noop, WCREATE: h_wcreate, WFRAME: noop,
+cpu = CPU(SRC, mem, defsyms=STORE, hooks={STORE['store_path']: s_path, STORE['store_fopen']: s_fopen,
+                           STORE['store_fread']: s_fread, STORE['store_fwrite']: s_fwrite,
+                           STORE['store_fclose']: s_fclose, STORE['store_crc32']: s_crc,
+                           STORE['store_refuse']: s_refuse, F_COPY: f_copy,NOTIFY: notify, RESUME: noop, WCREATE: h_wcreate, WFRAME: noop,
                            WDESTROY: h_wdestroy, CLEAR: h_clear, TEXT: h_text, TWIDTH: h_twidth,
                            RULE: noop, INVERT: noop, SPRINTF: h_sprintf, LPUSH: h_lpush, LPOP: h_lpop,
                            TIMER: h_timer, UNTIMER: h_untimer})
@@ -141,7 +176,7 @@ FPS = 992250 / (BPM * 24)           # frames a step
 frame(10)
 check('idle_leaves_every_weight', all(weight(t) == 0x12345678 for t in range(8)))
 check('defaults_are_v0', all(mem.r(C['mp_set'] + 4 * t, 'b') == 16 and mem.r(C['mp_set'] + 4 * t + 1, 'b') == 8
-                            for t in range(8)) and mem.r(C['mp_master'], 'b') == 1)
+                            for t in range(8)))
 key('morph_down', 0b1)
 check('down_on_a_fader_track_does_nothing', state(0) == 0)
 
@@ -259,20 +294,6 @@ settings(4, 1, 1, 1); start(0b10000); to_next_step(); frame(); a = xf_of(4); to_
 check('n_1_trig_hold_is_a', a == 127 and xf_of(4) == 127)
 
 # ---- the master switch
-def master(on):
-    mem.w(SP - 4, 'l', on); cpu.a[7] = SP - 4; cpu.call('morph_master')
-mem.w(XF, 'l', 64)                  # the fader away from A: the stopped tracks stay parked
-master(0)
-check('master_off_stops_every_morph', state(3) == 2 and state(4) == 2)
-n = toasts[:]; start(0b100000)
-check('master_off_refuses_up', state(5) == 0 and text(toasts[-1]) == 'MORPH IS OFF')
-n = 0
-while (state(3) == 2 or state(4) == 2) and n < 600 * FPS: frame(); n += 1
-check('master_off_morphs_end_on_a', state(3) == 3 and xf_of(3) == 127 and state(4) == 3,
-      'states %d %d, xf %s, %d frames' % (state(3), state(4), xf_of(3), n))
-master(1); start(0b100000)
-check('master_on_again', state(5) == 4)
-
 # ---- the window: encoders, release of the track keys, DOWN, several tracks
 mem.w(XF, 'l', 64)
 key('morph_up', 0b11000000)          # T7 and T8
@@ -321,6 +342,50 @@ key('morph_up', 0b1); cpu.a[7] = SP; cpu.call('mw_closed')      # another TEMPO-
 check('evicted_drops_layer_and_timer', win() == 0 and not ui['layers'] and not ui['timers'])
 key('morph_up', 0, 1)
 check('up_with_no_track_held_does_nothing', win() == 0)
+
+# ---- saving: morph.work through STORE
+import zlib
+def ev(name): cpu.a[7] = SP; cpu.call('mrp_st_' + name)
+def setall(states):
+    for i, s in enumerate(states): mem.w(C['mp_state'] + i, 'b', s)
+W, S = '/P/morph.work', '/P/morph.strd'
+files.clear(); writes.clear()
+for i in range(8): settings(i, 16, 8, 0)
+setall([0] * 8); ev('newproj'); ev('bankw_post')
+check('save_untouched_writes_nothing', not writes and W not in files)
+settings(0, 8, 2, 1); settings(4, 0, 17, 0); setall([1, 0, 0, 0, 4, 0, 3, 0]); ev('bankw_post')
+f = files.get(W, b'')
+ok = (len(f) == 56 and f[:4] == b'MRPW' and struct.unpack('>III', f[4:16]) == (1, 40, zlib.crc32(f[16:]))
+      and f[16:20] == bytes([8, 2, 1, 0]) and f[32:36] == bytes([0, 17, 0, 0]) and f[48] == 0b10001
+      and f[49:] == bytes(7))
+check('save_writes_morph_work', ok, f.hex())
+n = len(writes); ev('pstore_pre')
+check('save_unchanged_writes_once', len(writes) == n)
+ev('pstore_post')
+check('store_copies_to_strd', files.get(S) == f)
+settings(0, 16, 8, 0); settings(4, 16, 8, 0); setall([0, 1, 0, 0, 0, 0, 0, 0])
+ev('loadall_post')
+check('load_restores_settings', [mem.r(C['mp_set'] + i, 'b') for i in range(4)] == [8, 2, 1, 0]
+      and mem.r(C['mp_set'] + 17, 'b') == 17)
+check('load_arms_the_morphing_tracks', [state(i) for i in range(8)] == [4, 3, 0, 0, 4, 0, 0, 0],
+      str([state(i) for i in range(8)]))
+n = len(writes); ev('bankw_post')
+check('load_then_save_writes_nothing', len(writes) == n)
+settings(1, 32, 4, 0); ev('bankw_post')
+check('a_change_writes', len(writes) == n + 1 and files[W] != files[S])
+ev('preload_post')
+check('reload_returns_to_the_saved_copy', files[W] == files[S] and mem.r(C['mp_set'] + 4, 'b') == 16)
+files[W] = files[W][:20] + b'\x63' + files[W][21:]                  # a bad CRC
+refused.clear(); good = files[W]; ev('loadall_post')
+check('bad_file_is_refused', refused == [(4, 0)] and mem.r(C['mp_set'], 'b') == 16
+      and all(state(i) in (0, 3) for i in range(8)))
+settings(2, 5, 5, 0); ev('bankw_post')
+check('refused_file_is_never_written_over', files[W] == good)
+cpu.d[0] = 2; cpu.a[7] = SP; cpu.call('mrp_st_answer'); ev('bankw_post')
+check('backup_answer_keeps_bak_then_writes', files.get('/P/morph.bak') == good and files[W] != good
+      and files[W][:4] == b'MRPW')
+del files[W]; setall([1, 0, 0, 0, 0, 0, 0, 0]); ev('loadmask_post')
+check('no_file_defaults_and_parks', mem.r(C['mp_set'] + 9, 'b') == 8 and state(0) == 3)
 
 print('%d failure(s)' % fails)
 sys.exit(1 if fails else 0)
