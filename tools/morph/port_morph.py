@@ -49,7 +49,7 @@ def main():
         shots = Path(os.environ.get('MORPH_SHOTS', str(ROOT / 'out' / 'morph_port')))
         shot = lambda name: p.png(shots / (name + '.png'))
         def enc(i, d):
-            p.proc.command('enc %d %d' % (i, d), 'ok'); p.run(80)
+            p.proc.command('knob %#04x %d' % (0x30 + i, d), 'ok'); p.run(80)
         p.press('play', settle=300)
         check('transport running after PLAY', p.long(TRANSPORT) == 1, 'word %d' % p.long(TRANSPORT))
         tempo24 = p.long(TEMPO24); fader = p.long(XF)
