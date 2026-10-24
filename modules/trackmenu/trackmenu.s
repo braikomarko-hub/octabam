@@ -165,6 +165,7 @@ tm_tick:
         moveq   #LONG,%d1
         cmp.l   %d1,%d0
         blt     tk_9
+tk_long:                                | the time is up (a label for the port's --watch-pc)
         bsr     tm_anywin               | another window on screen: wait for it to go
         bne     tk_9
         move.l  tm_cand,%d0
@@ -280,6 +281,7 @@ tw_2:   pea     tm_closed
         move.l  tm_ww,%d0
         move.l  %d0,-(%sp)
         jsr     WCREATE
+tw_got:                                 | d0 = WCREATE's window (a label for --watch-pc)
         lea     24(%sp),%sp
         move.l  %d0,tm_win
         beq     tw_9

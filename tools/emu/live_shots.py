@@ -20,6 +20,9 @@ Blank lines and `#` comments are ignored. A `shot` settles 0.6 s first so
 the screen has drawn; `key`/`chord`/`enc` settle 0.25 s after. The LCD
 plane is written by the port every 30 ms while dirty, so shots are the
 screen as the firmware left it. `--keep-card` keeps out/live/card.img.
+`--watch tm_open,0x4005829c` arms the port's --watch-pc on those addresses
+(a name is looked up in the remix's runtime, out/platform/runtime/runtime.elf);
+the hits are printed at the end of out/live/port.txt.
 """
 import argparse, os, pathlib, shutil, subprocess, sys, tempfile, time
 
@@ -75,6 +78,8 @@ def main():
     ap.add_argument("--audio-in", default="", help="ot_emu --audio-in: a WAV onto RX0, or 'tones'")
     ap.add_argument("--main-level", default="64",
                     help="ot_emu --main-level, posted after the load ('off' = never; the port only defaults it under --interactive, and unposted every voice is silent -- O9b)")
+    ap.add_argument("--watch", default="",
+                    help="ot_emu --watch-pc: addresses or runtime symbols, comma separated")
     a = ap.parse_args()
 
     if not a.project:
@@ -94,6 +99,24 @@ def main():
         sys.exit(f"live_shots: building {a.remix} failed:\n{(r.stdout + r.stderr)[-1500:]}")
     image = OUT / "image.bin"
     shutil.copy2(ROOT / "out/mainos_bus.bin", image)
+    watch = []
+    if a.watch:
+        elf = ROOT / "out/platform/runtime/runtime.elf"
+        syms = {}
+        if elf.exists():
+            nm = subprocess.run(["m68k-elf-nm", str(elf)], capture_output=True, text=True).stdout
+            for f in (l.split() for l in nm.splitlines()):
+                if len(f) == 3:
+                    syms[f[2]] = int(f[0], 16)
+        for w in a.watch.split(","):
+            w = w.strip()
+            if w[:2].lower() == "0x":
+                watch.append(int(w, 16))
+            elif w in syms:
+                watch.append(syms[w])
+                print(f"watch      : {w} = 0x{syms[w]:08x}")
+            else:
+                sys.exit(f"live_shots: --watch {w}: not in {elf}")
 
     raw = (pdir / "project.work").read_bytes()
     import re
@@ -116,6 +139,8 @@ def main():
         cmd += ["--audio-in", a.audio_in]
     if a.main_level != "off":
         cmd += ["--main-level", a.main_level]
+    if watch:
+        cmd += ["--watch-pc", ",".join(f"0x{v:x}" for v in watch)]
     with open(log, "w") as lf:
         port = subprocess.Popen(cmd, cwd=ROOT, stdout=lf, stderr=subprocess.STDOUT)
         keep = os.open(fifo, os.O_RDWR)              # holds the FIFO open for the port
