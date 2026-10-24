@@ -1,7 +1,7 @@
-"""TRACK MENU v0 -- hold a track key ~1 s: that track's menu (MORPH and EUCLACID pages).
+"""TRACK MENU v1 -- hold a track key ~1 s: that track's menu (a chooser, then MORPH, EUCLACID or ERGOSUM).
 
-A prototype of the navigation only: LEFT / RIGHT change page, the knobs change the settings, the
-same track key closes ("Tn START" is only shown), NO closes. Nothing reads the settings yet and
+A prototype of the navigation only: UP / DOWN and YES choose, the knobs (the stock's) change the
+settings, the same track key closes ("Tn START" is only shown), NO goes back. Nothing reads the settings yet and
 nothing is saved: MORPH keeps its own [TRACK]+[UP] window, no Euclidean pattern is printed.
 Provisional name: the owner will name the module when MORPH and EUCLACID live in it.
 
@@ -41,9 +41,9 @@ MODULE = Module(
     category=Category.PARTS,
     author="MaMarko",
     author_url="https://github.com/braikomarko-hub",
-    doc=("Hold a track key about a second: that track's menu opens and stays open. LEFT / RIGHT turn "
-         "the page (MORPH, EUCLACID, EUCL LIVE), the knobs set the values, the same track key closes it. "
-         "v0 is the navigation only: nothing reads the values yet."),
+    doc=("Hold a track key about a second: a small chooser (MORPH, EUCLACID, ERGOSUM); YES opens that "
+         "function's page with its settings as the stock knobs; the same track key closes it. "
+         "v1 is the navigation only: nothing reads the values yet."),
     proof=Proof.CHECK,
     proof_note="prototype: tools/trackmenu/test_trackmenu.py (the source under cfsim); not yet on the unit",
     linked=(

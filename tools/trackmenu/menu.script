@@ -1,39 +1,64 @@
 # tools/emu/live_shots.py trackmenu --script tools/trackmenu/menu.script --output-dir <dir>
-# The TRACK MENU on the port: a short tap does nothing, the long press opens, the pages, the knobs,
-# the flash, the same track key closes, and MORPH's own window still opens with [TRACK]+[UP].
-shot trackmenu/0_main
+# The TRACK MENU v1 on the port: a short tap does nothing, the long press opens the chooser, YES
+# opens a function's page (the stock knobs), NO goes back, the same track key starts and closes,
+# reopening lands on the function last used, and MORPH's own window still opens with [TRACK]+[UP].
+# The holds are long (5 s): on a slow machine the port runs slower than the wall clock.
+shot trackmenu/00_main
 key 0x14
-shot trackmenu/1_short_tap_nothing
+shot trackmenu/01_short_tap_nothing
 hold 0x14
-wait 1.6
-shot trackmenu/2_long_press_morph
+wait 5
+shot trackmenu/02_long_press_chooser
 release 0x14
-wait 0.3
-shot trackmenu/3_released_still_open
+wait 1
+shot trackmenu/03_released_still_open
+key 0x20
+shot trackmenu/04_chooser_euclacid
+key 0x31
+wait 1
+shot trackmenu/05_euclacid_page
+enc 0 3
+enc 4 2
+shot trackmenu/06_euclacid_knobs
+key 0x31
+shot trackmenu/07_print_flash
+key 0x21
+wait 1
+shot trackmenu/08_euclacid_setup
+key 0x32
+wait 1
+shot trackmenu/09_no_back_to_chooser
+key 0x33
+key 0x31
+wait 1
+shot trackmenu/10_morph_page
 enc 0 4
 enc 2 1
-enc 3 1
-shot trackmenu/4_morph_knobs
-key 0x21
-shot trackmenu/5_euclacid
-enc 0 3
-key 0x31
-shot trackmenu/6_print_flash
-key 0x21
-shot trackmenu/7_eucl_live
-key 0x13
-shot trackmenu/8_other_track_swallowed
-key 0x14
-wait 0.1
-shot trackmenu/9_same_track_start
-wait 1.5
-hold 0x14
-wait 1.6
-release 0x14
-shot trackmenu/10_reopen_remembers_page
+shot trackmenu/11_morph_knobs
 key 0x32
-shot trackmenu/11_no_closes
+key 0x20
+key 0x20
+key 0x31
+wait 1
+shot trackmenu/12_ergosum_page
+enc 1 3
+enc 0 2
+shot trackmenu/13_ergosum_knobs
+key 0x13
+shot trackmenu/14_other_track_swallowed
+key 0x14
+wait 1
+shot trackmenu/15_same_track_start
+wait 10
+hold 0x14
+wait 5
+release 0x14
+wait 1
+shot trackmenu/16_reopen_on_ergosum
+key 0x32
+wait 1
+shot trackmenu/17_no_closes
 chord 0x14 0x33
-shot trackmenu/12_morph_window_still_works
+shot trackmenu/18_morph_window_still_works
 key 0x32
 quit

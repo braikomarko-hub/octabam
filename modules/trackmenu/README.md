@@ -1,29 +1,34 @@
-# TRACK MENU (v0, prototype)
+# TRACK MENU (v1, prototype)
 
 Hold a track key about a second, with no other key: that track's menu opens, and stays open when
-the key is let go.
+the key is let go. First a small chooser (as the stock TRACKS / CHROMATIC / SLOTS list), then the
+chosen function's page, its settings drawn as the stock's own knobs.
 
 ```
- T held ~1 s ──► ┌█ T5 MORPH ████ 1/3 █┐
-                 │ A STEPS          16  │   LEFT / RIGHT: the page
-                 │ B x               8  │   knobs: the values
-                 │ C MODE       SMOOTH  │   the SAME track key: close ("T5 START")
-                 │ D MORPH         OFF  │   NO: close, nothing starts
-                 └──────────────────────┘
+ T held ~1 s ──► ┌────────────┐   UP / DOWN: the choice     YES ──► █ T5 EUCLACID ████████ 1/2 █
+                 │█ MORPH    █│   YES: its page                     PLSA   ROTA   PLSB
+                 │  EUCLACID  │   NO or the same T: closed           (o)    (o)    (o)
+                 │  ERGOSUM   │                                       4      0      0
+                 └────────────┘                                     ROTB   SLDE   SROT ...
 ```
+
+On a page: the knobs set the values; LEFT / RIGHT turn EUCLACID's two pages; the SAME track key
+closes ("T5 START"); NO goes back to the chooser; on EUCLACID YES flashes PRINT and CUE flashes
+UNDO in the title bar. The chooser opens on the function last used on that track.
 
 | page | A | B | C | D | E | F |
 |---|---|---|---|---|---|---|
-| MORPH | STEPS (TRK, 1..64) | x (1..16) | MODE (SMOOTH / HOLD) | MORPH (OFF / ARMED) | | |
-| EUCLACID | PULSES A | ROTATE A | PULSES B | ROTATE B | SLIDES | ROT SLIDE |
-| EUCL LIVE | MODE (EUCLID / GOLDEN / DENSITY / NESTED) | A+B (OR XOR AND A-B) | LIVE (OFF ROT DENS MUTA OPER) | SLIDE ON NOTE | EVERY BARS (1..64) | |
+| MORPH | STEP (TRK, 1..64) | MULT (1..16) | MODE (SMTH / HOLD) | MRPH (OFF / ARM) | | |
+| EUCLACID 1/2 | PLSA | ROTA | PLSB | ROTB | SLDE | SROT |
+| EUCLACID 2/2 | MODE (EUCL / GOLD / DENS / NEST) | A+B (OR XOR AND A-B) | LIVE (OFF ROT DENS MUTA OPER) | ONLY (OFF / ON) | EVRY (1..64) | |
+| ERGOSUM | MODE (LIN XY SNAKE DIAG) | RATI (1:1 .. 5:7) | SNAK (1..16) | ARM (OFF / ARM) | | |
 
-On the EUCLACID pages YES flashes PRINT and CUE flashes UNDO in the title bar. The page is
-remembered per track while the unit is on.
+MORPH's page shows its cycle under the knobs ("CYCLE 128 STEPS"), as MORPH's own window does.
+The knob values are at most five characters (the stock knob's buffer, `docs/firmware/PARAM_PAGES.md`).
 
-**v0 is the navigation only.** Nothing reads these values yet: MORPH keeps its own settings and
-window, no pattern is printed, nothing starts, nothing is saved. The name is provisional: the
-module gets its own when MORPH and EUCLACID live in it.
+**v1 is the navigation only.** Nothing reads these values yet: MORPH keeps its own settings and
+window, no pattern is printed, ERGOSUM has no engine, nothing starts, nothing is saved. The name is
+provisional.
 
 Code: written by Claude (Anthropic); idea, design and tests on the Octatrack: MaMarko.
 
@@ -36,20 +41,27 @@ Code: written by Claude (Anthropic); idea, design and tests on the Octatrack: Ma
   key rows `0x46100b18`). FUNC or CUE down at the press, another key, another track, the release,
   or MIDI mode: no menu. Another window on screen: it waits for it to go.
 - The menu is a TEMPO-class window (as MORPH's) with its own input layer over everything: LEFT,
-  RIGHT, YES, NO, CUE, the track keys and the knobs; trigs, page keys, FUNC, PATTERN, BANK, REC,
-  MIDI, TEMPO, UP, DOWN and LEVEL are swallowed; PLAY and STOP keep working.
+  RIGHT, UP, DOWN, YES, NO, CUE, the track keys and the knobs; trigs, page keys, FUNC, PATTERN,
+  BANK, REC, MIDI, TEMPO and LEVEL are swallowed; PLAY and STOP keep working. The chooser (64 x 30)
+  and the page (116 x 64) are two sizes of window: going between them destroys one and creates the
+  other, with the layer and the timer kept (`tm_swap` keeps the closed callback out of it).
+- The knobs are the stock PLAYBACK knob `0x400479b4(x, y, slot, value, flags 8, fmt, surface)`
+  (as `modules/cxosc/page.s` calls it), the name centred on x + 9 at y + 20 as the stock renderer
+  draws it; each list has a formatter fmt(buf, value).
 - The held track key keeps the stock handlers while the layer is pushed, so its release reaches the
   stock; once it is up the layer is pushed again so the next press of that key is the menu's.
 
 ## Measured
 
 - `tools/trackmenu/test_trackmenu.py`: the source under cfsim with a mocked firmware: the long press
-  and everything that cancels it, the pages, every knob's range, the flash, closing, the
-  remembered page, registers kept (52 checks).
+  and everything that cancels it, the chooser, the pages, every knob's range and label, the flash,
+  the window swap, closing, the remembered function, registers kept (79 checks).
 
 ## On the unit
 
-Not yet.
+- v0 (one window, pages with LEFT / RIGHT, rows of text) on the owner's MKI, 24 Oct 2026, loaded
+  with REMIX SWITCH: opens with the long press, every key answers. The owner asked for v1's shape.
+- v1: not yet.
 
 ## Open
 
