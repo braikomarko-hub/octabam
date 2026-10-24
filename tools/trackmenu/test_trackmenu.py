@@ -6,7 +6,7 @@ rows, the window table, the window, text, layer and timer routines are plain mem
 What it proves: the long press (opens after ~1 s alone, not before; cancelled by the release, by
 another key, by another track; refused with FUNC or CUE down, and in MIDI mode; waits for another
 window to go), that the stock handler sees every press first, the layer's re-push once T is up;
-the chooser (64 x 30, MORPH / EUCLACID / ERGOSUM, the choice's row inverted, UP / DOWN wrapping,
+the chooser (64 x 32, MORPH / EUCLACID / ERGOSUM, the choice's row inverted, UP / DOWN wrapping,
 opening on the function last used on that track); YES opening the page in a 116 x 64 window with
 the layer and the timer kept across the swap; each page's title, its knobs (the stock knob called
 with x, y, slot, value, flags 8 and a formatter whose label is checked), their positions, every
@@ -57,7 +57,9 @@ def h_stock(cpu):                    # the stock track handler: HELD follows the
     t = code - 0x10
     h = mem.r(HELD, 'l')
     mem.w(HELD, 'l', h | (1 << t) if ev == 1 else h & ~(1 << t))
-def h_wcreate(cpu): ui['win_args'] = [arg(cpu, i) for i in range(6)]; ui['creates'] += 1; cpu.d[0] = WIN
+def h_wcreate(cpu):                  # the stock calls the replaced window's closed callback from in
+    ui['win_args'] = [arg(cpu, i) for i in range(6)]; ui['creates'] += 1; cpu.d[0] = WIN   # here
+    ui.setdefault('swap_at_create', []).append(cpu.mem.r(cpu.consts['tm_swap'], 'l'))
 def h_wdestroy(cpu): mem.w(arg(cpu, 0), 'l', 0); ui['destroyed'] = ui.get('destroyed', 0) + 1
 def h_clear(cpu): ui['texts'] = []; ui['inverts'] = []; ui['knobs'] = []
 def h_knob(cpu): ui['knobs'].append(tuple(s32(arg(cpu, i)) for i in range(7)))
@@ -192,10 +194,10 @@ check('stock_handler_first', ui['stock'][-1] == (0x14, 1))
 press(0x14); ticks(int(C['LONG']) - 2)
 check('not_open_before_the_time', win() == 0 and len(ui['timers']) == 1)
 ticks(3)
-check('long_press_opens_the_chooser', win() == WIN and ui['win_args'][:2] == [64, 30] and ui['win_args'][4] == 5
+check('long_press_opens_the_chooser', win() == WIN and ui['win_args'][:2] == [64, 32] and ui['win_args'][4] == 5
       and C['TM_LAYER'] in ui['layers'], ui['win_args'])
 check('chooser_lists_the_three', chooser() == ['MORPH', 'EUCLACID', 'ERGOSUM'], chooser())
-check('chooser_rows', sorted({y for x, y, s in ui['texts']}, reverse=True) == [19, 11, 3])
+check('chooser_rows', sorted({y for x, y, s in ui['texts']}, reverse=True) == [21, 13, 5])
 check('chooser_on_morph', chosen() == 'MORPH' and ui['inverts'][0][2] == 61, ui['inverts'])
 check('chooser_draws_no_knob', not ui['knobs'])
 pushes = ui['pushes']
@@ -219,6 +221,7 @@ creates, pops, timers = ui['creates'], ui['pops'], dict(ui['timers'])
 menu_key('tm_yes', 0x31)
 check('yes_opens_the_page', win() == WIN and ui['win_args'][:2] == [116, 64] and ui['creates'] == creates + 1
       and ui.get('destroyed', 0) >= 1, ui['win_args'])
+check('swap_guard_up_across_wcreate', ui['swap_at_create'][-1] == 1, ui['swap_at_create'])
 check('swap_keeps_layer_and_timer', ui['pops'] == pops and C['TM_LAYER'] in ui['layers'] and ui['timers'] == timers)
 check('euclacid_title', line(54) == 'T5 EUCLACID 1/2', line(54))
 check('title_bar_inverted', ui['inverts'] and ui['inverts'][0][1] <= 54 and ui['inverts'][0][3] >= 60, ui['inverts'])
@@ -257,7 +260,7 @@ check('up_does_nothing_on_a_page', line(54) == 'T5 EUCLACID 1/2')
 
 # ---- NO: back to the chooser; MORPH's page
 menu_key('tm_no', 0x32)
-check('no_back_to_chooser', win() == WIN and ui['win_args'][:2] == [64, 30] and chosen() == 'EUCLACID'
+check('no_back_to_chooser', win() == WIN and ui['win_args'][:2] == [64, 32] and chosen() == 'EUCLACID'
       and C['TM_LAYER'] in ui['layers'] and ui['timers'], ui['win_args'])
 menu_key('tm_up', 0x33); menu_key('tm_yes', 0x31)
 check('morph_title_has_no_page_number', line(54) == 'T5 MORPH', line(54))
@@ -294,7 +297,7 @@ menu_key('tm_trk', 0x14)
 check('same_track_starts_from_a_page', win() == 0 and ui['toasts'] == ['T5 START'] and not ui['timers']
       and C['TM_LAYER'] not in ui['layers'], ui['toasts'])
 press(0x14); ticks(int(C['LONG']) + 1)
-check('reopens_on_the_last_function', ui['win_args'][:2] == [64, 30] and chosen() == 'ERGOSUM', chosen())
+check('reopens_on_the_last_function', ui['win_args'][:2] == [64, 32] and chosen() == 'ERGOSUM', chosen())
 release(0x14); ticks(1)
 menu_key('tm_yes', 0x31)
 check('values_remembered', labels() == ['SNAKE', '5:7', '16', 'OFF'], labels())

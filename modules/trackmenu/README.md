@@ -42,9 +42,12 @@ Code: written by Claude (Anthropic); idea, design and tests on the Octatrack: Ma
   or MIDI mode: no menu. Another window on screen: it waits for it to go.
 - The menu is a TEMPO-class window (as MORPH's) with its own input layer over everything: LEFT,
   RIGHT, UP, DOWN, YES, NO, CUE, the track keys and the knobs; trigs, page keys, FUNC, PATTERN,
-  BANK, REC, MIDI, TEMPO and LEVEL are swallowed; PLAY and STOP keep working. The chooser (64 x 30)
+  BANK, REC, MIDI, TEMPO and LEVEL are swallowed; PLAY and STOP keep working. The chooser (64 x 32)
   and the page (116 x 64) are two sizes of window: going between them destroys one and creates the
-  other, with the layer and the timer kept (`tm_swap` keeps the closed callback out of it).
+  other, with the layer and the timer kept. `tm_swap` keeps the closed callback out of it across
+  WDESTROY **and** WCREATE: the stock WCREATE calls the closed callback of the window it replaces
+  even after WDESTROY (measured under the port, 25 Oct 2026, `live_shots.py --watch`: `tm_closed`
+  called from `0x400582e2` on the chooser -> page swap, which popped the layer and stopped the timer).
 - The knobs are the stock PLAYBACK knob `0x400479b4(x, y, slot, value, flags 8, fmt, surface)`
   (as `modules/cxosc/page.s` calls it), the name centred on x + 9 at y + 20 as the stock renderer
   draws it; each list has a formatter fmt(buf, value).
@@ -55,7 +58,10 @@ Code: written by Claude (Anthropic); idea, design and tests on the Octatrack: Ma
 
 - `tools/trackmenu/test_trackmenu.py`: the source under cfsim with a mocked firmware: the long press
   and everything that cancels it, the chooser, the pages, every knob's range and label, the flash,
-  the window swap, closing, the remembered function, registers kept (79 checks).
+  the window swap (the guard up across WCREATE), closing, the remembered function, registers kept
+  (81 checks).
+- Under the port (owner's Mac, 25 Oct 2026): the long press opens the chooser (held 8 s of wall
+  clock: the port runs slower than real time; 5 s was not always enough).
 
 ## On the unit
 

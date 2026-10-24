@@ -81,8 +81,8 @@
         .set    WINW,     116           | the page
         .set    WINH,     64
         .set    LISTW,    64            | the chooser, as small as the stock TRACKS list
-        .set    LISTH,    30
-        .set    L_Y0,     19            | its rows, 8 px apart: 19 11 3
+        .set    LISTH,    32            | (30 put ERGOSUM on the bottom frame: port photo, 25 Oct)
+        .set    L_Y0,     21            | its rows, 8 px apart: 21 13 5
         .set    L_X,      6
         .set    Y_TITLE,  54
         .set    X_LAB,    6
@@ -263,14 +263,13 @@ tm_win_page:
         moveq   #WINH,%d1
 tw_1:   move.l  %d0,tm_ww
         move.l  %d1,tm_wh
-        tst.l   tm_win
-        beq     tw_2
-        moveq   #1,%d0
-        move.l  %d0,tm_swap
-        pea     tm_win
+        moveq   #1,%d0                  | the swap guard stays up across WDESTROY AND WCREATE:
+        move.l  %d0,tm_swap             | the stock WCREATE calls the closed callback of the window
+        tst.l   tm_win                  | it replaces even after WDESTROY (measured under the port,
+        beq     tw_2                    | 25 Oct 2026: tm_closed from 0x400582e2 on the chooser ->
+        pea     tm_win                  | page swap popped the layer and stopped the timer)
         jsr     WDESTROY
         addq.l  #4,%sp
-        clr.l   tm_swap
         clr.l   tm_win
 tw_2:   pea     tm_closed
         pea     5                       | TEMPO class, as MORPH and EUCLID FILL
@@ -283,6 +282,7 @@ tw_2:   pea     tm_closed
         jsr     WCREATE
 tw_got:                                 | d0 = WCREATE's window (a label for --watch-pc)
         lea     24(%sp),%sp
+        clr.l   tm_swap
         move.l  %d0,tm_win
         beq     tw_9
         move.l  %d0,-(%sp)

@@ -2,12 +2,12 @@
 # The TRACK MENU v1 on the port: a short tap does nothing, the long press opens the chooser, YES
 # opens a function's page (the stock knobs), NO goes back, the same track key starts and closes,
 # reopening lands on the function last used, and MORPH's own window still opens with [TRACK]+[UP].
-# The holds are long (5 s): on a slow machine the port runs slower than the wall clock.
+# The holds are long (8 s): on a slow machine the port runs slower than the wall clock.
 shot trackmenu/00_main
 key 0x14
 shot trackmenu/01_short_tap_nothing
 hold 0x14
-wait 5
+wait 8
 shot trackmenu/02_long_press_chooser
 release 0x14
 wait 1
@@ -51,7 +51,7 @@ wait 1
 shot trackmenu/15_same_track_start
 wait 10
 hold 0x14
-wait 5
+wait 8
 release 0x14
 wait 1
 shot trackmenu/16_reopen_on_ergosum
