@@ -945,6 +945,7 @@ def main():
              # DISTORX on SPATIALIZER's id, dEVILish on PHASER's, dB666 on EQUALIZER's, TAPE ECHO on
              # SPRING REV's; their DSP words come from the others the remix does not list
              "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "CHORUS", "PLATE REV", "SPRING REV"),
+             "trackmenu": (),   # TRACK_MENU, BOOT_SMILE, MORPH, STORE: ColdFire only; all 14 stock effects stay
              "rig": _rig,
              "character-txtr": _rig,   # octabam-bus with the TXTR station
              "octabam-bus": _rig,

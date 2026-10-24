@@ -13,8 +13,6 @@ import math
 import os
 import sys
 
-from PIL import Image, ImageDraw
-
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "tools", "emu"))
 import lcd_view  # noqa: E402
@@ -28,6 +26,7 @@ TOTAL_MS = round((GROW + HOLD + MELT + BLANK) * 1000)        # 3,800 ms: the sto
 def face(r):
     """The classic acid house smiley in pixels, filled: a white disc, two tall black eyes, a wide
     black smile with its little creases. r = the radius; every size is drawn from the same shapes."""
+    from PIL import Image, ImageDraw   # only to draw (and regenerate); the test reads bootsmile.s without it
     im = Image.new("1", (W, H), 0)
     d = ImageDraw.Draw(im)
     if r < 1:
@@ -52,6 +51,7 @@ def face(r):
 
 def frames():
     """The distinct frames and the slot table (frame index per 50 ms, None = black)."""
+    from PIL import Image
     out, slots = [], []
     n = round(GROW * FPS)
     for i in range(1, n + 1):
@@ -141,6 +141,7 @@ def main():
     open(path, "w").write("\n".join(lines) + "\n")
     print(f"{path}: {len(fr)} frames, {len(slots)} slots, loop limit {limit} (stock 559)")
     if "--gif" in sys.argv:
+        from PIL import Image
         gif = sys.argv[sys.argv.index("--gif") + 1]
         seq = [(fr[s] if s is not None else Image.new("1", (W, H), 0)) for s in slots]
         big = [f.convert("L").point(lambda v: 235 if v else 12).resize((W * 4, H * 4), Image.NEAREST) for f in seq]

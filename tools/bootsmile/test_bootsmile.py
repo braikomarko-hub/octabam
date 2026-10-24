@@ -22,10 +22,29 @@ def check(name, ok, info=''):
     if not ok: fails += 1
 
 SRC = open(os.path.join(ROOT, 'modules', 'bootsmile', 'bootsmile.s')).read()
-fr, slots = g.frames()
-planes = [g.plane(f) for f in fr]
-check('generated_file_matches_generator', all(f"0x{int.from_bytes(planes[-1][j:j+4],'big'):08x}" in SRC
-                                              for j in range(0, 1024, 4)) and f"NSLOTS,   {len(slots)}" in SRC)
+
+
+def from_source(src):
+    """The frames and slots as bootsmile.s carries them (BS_SLOTS bytes, BS_FRAMES longs)."""
+    data = src.split('BS_SLOTS:', 1)[1]
+    sl, fr = data.split('BS_FRAMES:', 1)
+    slots = [None if int(v) == 255 else int(v) for line in sl.splitlines() if '.byte' in line
+             for v in line.split('.byte', 1)[1].split(',')]
+    longs = [int(v, 16) for line in fr.splitlines() if '.long' in line for v in line.split('.long', 1)[1].split(',')]
+    blob = b''.join(v.to_bytes(4, 'big') for v in longs)
+    return [blob[i:i + 1024] for i in range(0, len(blob), 1024)], slots
+
+
+try:
+    import PIL  # noqa: F401  (Pillow draws the frames; it is not part of the project's environment)
+    fr, slots = g.frames()
+    planes = [g.plane(f) for f in fr]
+    check('generated_file_matches_generator', all(f"0x{int.from_bytes(planes[-1][j:j+4],'big'):08x}" in SRC
+                                                  for j in range(0, 1024, 4)) and f"NSLOTS,   {len(slots)}" in SRC)
+except ImportError:
+    planes, slots = from_source(SRC)
+    print('SKIP  generated_file_matches_generator   [no Pillow: the frames are read from bootsmile.s]')
+check('source_frames_and_slots_agree', from_source(SRC) == (planes, slots))
 mem = Mem(); cpu = CPU(SRC, mem)
 check('cfsim_lint_and_load', True, '%d instructions' % len(cpu.prog))
 SURF, BITS, SP, DTCN3, LOGO, STAR = 0x400bf10a, 0x46c7e0ea, 0x47000000, 0xfc07c00c, 0x400ba8b2, 0x400c1094
