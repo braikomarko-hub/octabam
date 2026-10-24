@@ -1,7 +1,7 @@
 # acidtrack
 
 aCiDtRacK, MaMarko's (Marko Brajković's) live set on the Octatrack MKI: OCTA303 (the OCTA-303 machine),
-dEVILish (Devil Fish), MORPH (the scene morph by itself, saved with the project), TAPE ECHO (repeat98's tape echo, on the ColdFire, in SPRING REV's row), DISTORX (SD-1 / RAT / Turbo RAT), dB666 (side-chain from any track),
+dEVILish (Devil Fish), MORPH (the scene morph by itself, saved with the project), DISTORX (SD-1 / RAT / Turbo RAT), dB666 (side-chain from any track),
 USB (MIDI and AUDIO OUT MASTER) and BRAIN with REMIX SWITCH (other remixes' `.RMX`
 images booted from the card without flashing); DARK REV is the one reverb. PLATE REV, SPRING REV, CHORUS,
 PHASER, SPATIALIZER and EQUALIZER are given up: DISTORX takes SPATIALIZER's id, dEVILish PHASER's,
