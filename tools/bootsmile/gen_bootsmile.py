@@ -26,18 +26,27 @@ TOTAL_MS = round((GROW + HOLD + MELT + BLANK) * 1000)        # 3,800 ms: the sto
 
 
 def face(r):
+    """The classic acid house smiley in pixels, filled: a white disc, two tall black eyes, a wide
+    black smile with its little creases. r = the radius; every size is drawn from the same shapes."""
     im = Image.new("1", (W, H), 0)
     d = ImageDraw.Draw(im)
     if r < 1:
         d.point((CX, CY), 1)
         return im
-    lw = max(1, round(r / 9))
-    d.ellipse((CX - r, CY - r, CX + r, CY + r), outline=1, width=lw)
-    er, ex, ey = max(1, round(r * 0.11)), r * 0.36, r * 0.28
+    d.ellipse((CX - r, CY - r, CX + r, CY + r), fill=1)
+    if r < 5:
+        return im
+    ew, eh = max(1, r * 0.13), max(2, r * 0.27)          # tall oval eyes
     for sx in (-1, 1):
-        d.ellipse((CX + sx * ex - er, CY - ey - er, CX + sx * ex + er, CY - ey + er), fill=1)
-    mr = r * 0.55
-    d.arc((CX - mr, CY - mr * 0.75, CX + mr, CY + mr * 0.95), 20, 160, fill=1, width=lw)
+        ex, ey = CX + sx * r * 0.32, CY - r * 0.28
+        d.ellipse((ex - ew, ey - eh, ex + ew, ey + eh), fill=0)
+    lw = max(1, round(r / 11))
+    mr = r * 0.66                                        # the wide smile
+    d.arc((CX - mr, CY - mr * 0.62, CX + mr, CY + mr * 0.80), 15, 165, fill=0, width=lw)
+    for sx in (-1, 1):                                   # the creases at its ends
+        x0 = CX + sx * mr * 0.97
+        y0 = CY + mr * 0.80 * 0.26 - mr * 0.10
+        d.line((x0 - sx * r * 0.02, y0 - r * 0.10, x0 + sx * r * 0.10, y0 + r * 0.06), fill=0, width=lw)
     return im
 
 
@@ -55,24 +64,41 @@ def frames():
     px = full.load()
     speed = [0.9 + 0.45 * math.sin(x * 0.21 + 1.3) + 0.3 * math.sin(x * 0.57) + 0.2 * math.sin(x * 1.3 + 2)
              for x in range(W)]
-    drip = [speed[x] > 1.35 and x % 3 == 0 for x in range(W)]
+    drip = [x in (44, 52, 61, 70, 79) for x in range(W)]       # five drips, like the poster
     m = round(MELT * FPS)
+    top, bot = CY - R, CY + R
     for i in range(1, m + 1):
         t = i / m
         im = Image.new("1", (W, H), 0)
         q = im.load()
+        d1 = min(1.0, t / 0.45)                          # first the drips grow from the chin
+        t2 = max(0.0, (t - 0.30) / 0.70)                 # then the whole face slides and stretches
         for x in range(W):
-            sag = (t ** 2.2) * 80 * speed[x]
-            col = [y for y in range(H) if px[x, y]]
-            for y in col:
-                ny = int(y + sag * (0.35 + 0.65 * (y - (CY - R)) / (2 * R)))
-                if ny < H:
-                    q[x, ny] = 1
-            if drip[x] and col:
-                y = max(col)
-                ny = int(y + sag * 1.25)
-                for yy in range(y, min(H, ny + 1)):
+            sag = (t2 ** 1.6) * 75 * speed[x]
+            # inverse mapping (no holes): destination y comes from source ys with
+            # y = ys + sag * w(ys), w(ys) = 0.3 + 0.7 * (ys - top) / (2R)  (the chin melts first)
+            k = sag * 0.7 / (2 * R)
+            for y in range(H):
+                ys = (y - sag * 0.3 + k * top) / (1 + k)
+                yi = int(round(ys))
+                if 0 <= yi < H and px[x, yi]:
+                    q[x, y] = 1
+            if drip[x]:
+                col = [y for y in range(H) if px[x, y]]
+                if not col:
+                    continue
+                yb = max(col)
+                yb2 = int(yb + sag * (0.3 + 0.7 * (yb - top) / (2 * R)))
+                length = d1 * (6 + 5 * speed[x]) + sag * 0.6
+                tip = int(yb2 + length)
+                for yy in range(yb2, min(H, tip + 1)):
                     q[x, yy] = 1
+                    if x + 1 < W:
+                        q[x + 1, yy] = 1
+                for dx in (-1, 0, 1, 2):                 # a round drop at the end
+                    for dy in (0, 1):
+                        if 0 <= x + dx < W and 0 <= tip + dy < H and not (dx in (-1, 2) and dy == 1):
+                            q[x + dx, tip + dy] = 1
         out.append(im)
         slots.append(len(out) - 1)
     slots += [None] * round(BLANK * FPS)
