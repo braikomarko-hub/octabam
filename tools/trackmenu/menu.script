@@ -1,0 +1,39 @@
+# tools/emu/live_shots.py trackmenu --script tools/trackmenu/menu.script --output-dir <dir>
+# The TRACK MENU on the port: a short tap does nothing, the long press opens, the pages, the knobs,
+# the flash, the same track key closes, and MORPH's own window still opens with [TRACK]+[UP].
+shot trackmenu/0_main
+key 0x14
+shot trackmenu/1_short_tap_nothing
+hold 0x14
+wait 1.6
+shot trackmenu/2_long_press_morph
+release 0x14
+wait 0.3
+shot trackmenu/3_released_still_open
+enc 0 4
+enc 2 1
+enc 3 1
+shot trackmenu/4_morph_knobs
+key 0x21
+shot trackmenu/5_euclacid
+enc 0 3
+key 0x31
+shot trackmenu/6_print_flash
+key 0x21
+shot trackmenu/7_eucl_live
+key 0x13
+shot trackmenu/8_other_track_swallowed
+key 0x14
+wait 0.1
+shot trackmenu/9_same_track_start
+wait 1.5
+hold 0x14
+wait 1.6
+release 0x14
+shot trackmenu/10_reopen_remembers_page
+key 0x32
+shot trackmenu/11_no_closes
+chord 0x14 0x33
+shot trackmenu/12_morph_window_still_works
+key 0x32
+quit
