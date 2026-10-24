@@ -6,7 +6,7 @@ REMIX = Remix(
     name="trackmenu",
     family="mods", proof=Proof.CHECK,
     proof_note="prototype, 24 Oct 2026: tools/trackmenu/test_trackmenu.py; not yet on the unit",
-    doc="TRACK MENU v0 (hold a track key ~1 s: the track's menu, navigation only) beside MORPH and STORE, "
+    doc="TRACK MENU v0 = ACID BUCKET (hold a track key ~1 s: the track menu; the ERGOSUM page works, the others are navigation only) beside MORPH and STORE, "
         "with the stock effects.",
     modules=("TRACK_MENU", "BOOT_SMILE", "MORPH", "STORE", "FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER",
              "CHORUS", "SPATIALIZER", "COMB FILTER", "COMPRESSOR", "LO-FI",

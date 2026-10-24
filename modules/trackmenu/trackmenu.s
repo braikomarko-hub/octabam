@@ -35,7 +35,7 @@
 | Not seen by the long press: a knob turned while T is held (encoders are not in the key rows).
 
         .text
-        .globl  tm_tpress, tm_tick, tm_set
+        .globl  tm_tpress, tm_tick, tm_set, es_entry, es_next
 
         .macro  KEYREC code, press, release
         .byte   \code, 0
@@ -67,7 +67,9 @@
         .set    TICK,     2             | the soft timer: two ticks, ~17 ms
         .set    LONG,     58            | ~1 s of ticks for the long press
         .set    FLASH,    40            | ~0.7 s: PRINT / UNDO in the title bar
-        .set    NPAGES,   3
+        .set    NPAGES,   4
+        .set    STEPW,    0x800065b2    | the sequencer's step word (u16; MORPH reads it too)
+        .set    BUILDER,  0x4009d1e8    | the trig record builder (track, bank, pattern, step, n)
         .set    T_MASKS,  0x00240000    | rows 4..7 as a long: FUNC 0x2d (bit 21), CUE 0x2a (bit 18)
 
         .set    WINW,     116
@@ -251,12 +253,12 @@ tm_closed:                              | WCREATE's callback: another window of 
         addq.l  #4,%sp
 tc_9:   rts
 
-| tm_cur -- a0 = this track's settings (16 bytes, the page first), a1 = its page record, d0 = the
+| tm_cur -- a0 = this track's settings (32 bytes, the page first), a1 = its page record, d0 = the
 | page. Clobbers d1.
 tm_cur:
         lea     tm_set,%a0
         move.l  tm_t,%d1
-        lsl.l   #4,%d1                  | 16 bytes a track
+        lsl.l   #5,%d1                  | 32 bytes a track
         add.l   %d1,%a0
         mvz.b   (%a0),%d0
         moveq   #NPAGES-1,%d1
@@ -309,8 +311,10 @@ ky_1:   moveq   #1,%d0
         bne     k_9
         move.l  %a0,tm_fstr
         bsr     tm_cur
-        tst.l   %d0
-        beq     k_9                     | the MORPH page: nothing
+        subq.l  #1,%d0
+        moveq   #1,%d1
+        cmp.l   %d1,%d0
+        bhi     k_9                     | MORPH or ERGOSUM: nothing
         moveq   #FLASH,%d0
         move.l  %d0,tm_flash
         bra     tm_draw
@@ -514,6 +518,7 @@ tr_1:   move.l  %d1,%d0
 PAGES:  .long   P_MORPH, ROWS_MORPH, 4
         .long   P_EUCL, ROWS_EUCL, 6
         .long   P_LIVE, ROWS_LIVE, 5
+        .long   P_ERGO, ROWS_ERGO, 4
 ROWS_MORPH:                             | MORPH's window, the same ranges (the 41.625 egg left out)
         ROW     L_STEPS, 1, 0, 64, 2, 0
         ROW     L_MULT,  2, 1, 16, 0, 0
@@ -533,6 +538,14 @@ ROWS_LIVE:                              | EUCLACID's SETUP page, with the new mo
         ROW     L_ONLY, 14, 0, 1, 1, LS_OFFON
         ROW     L_EVRY, 15, 0, 6, 1, LS_EVRY
 
+ROWS_ERGO:                              | ERGOSUM: the trigs read through a 4x4 grid (idea: Make Noise RENE)
+        ROW     L_GMODE, 16, 0, 3, 1, LS_GMODE
+        ROW     L_RATIO, 17, 0, 8, 1, LS_RATIO
+        ROW     L_SNAKE, 18, 1, 16, 0, 0
+        ROW     L_ERGO,  19, 0, 1, 1, LS_OFFON
+
+LS_GMODE: .long V_LIN, V_XY, V_SNAKE, V_DIAG
+LS_RATIO: .long V_R11, V_R12, V_R23, V_R34, V_R13, V_R25, V_R35, V_R37, V_R57
 LS_MODE:  .long V_SMOOTH, V_HOLD
 LS_ARM:   .long V_OFF, V_ARM
 LS_EMODE: .long V_EUCL, V_AUREO, V_DENS, V_NEST
@@ -544,6 +557,24 @@ LS_EVRY:  .long V_1, V_2, V_4, V_8, V_16, V_32, V_64
 P_MORPH:  .asciz "MORPH"
 P_EUCL:   .asciz "EUCLACID"
 P_LIVE:   .asciz "EUCL LIVE"
+P_ERGO:   .asciz "ERGOSUM"
+L_GMODE:  .asciz "A MODE"
+L_RATIO:  .asciz "B RATIO"
+L_SNAKE:  .asciz "C SNAKE"
+L_ERGO:   .asciz "D ERGOSUM"
+V_LIN:    .asciz "LIN"
+V_XY:     .asciz "XY"
+V_SNAKE:  .asciz "SNAKE"
+V_DIAG:   .asciz "DIAG"
+V_R11:    .asciz "1:1"
+V_R12:    .asciz "1:2"
+V_R23:    .asciz "2:3"
+V_R34:    .asciz "3:4"
+V_R13:    .asciz "1:3"
+V_R25:    .asciz "2:5"
+V_R35:    .asciz "3:5"
+V_R37:    .asciz "3:7"
+V_R57:    .asciz "5:7"
 L_STEPS:  .asciz "A STEPS"
 L_MULT:   .asciz "B x"
 L_MODE:   .asciz "C MODE"
@@ -589,6 +620,134 @@ F_TITLE:  .asciz "T%d %s"
 F_PAGE:   .asciz "%d/%d"
 F_NUM:    .asciz "%d"
 F_START:  .asciz "T%d START"
+
+
+| ================================================================ ERGOSUM (the engine)
+| The trig record builder 0x4009d1e8(track @4, bank @8, pattern @12, step @16, n @20) decides the
+| step's trig (1 << step against the track record's trig masks), its condition (0x400a5164) and
+| its locks (measured from the user's 1.40C, 24 Oct 2026). Its two callers: the sequencer tick
+| 0x400a2d7e (step = the track's step byte 0x800064d0 + t, n = the pending slot) and the position
+| refresh 0x4009da20 (n = -1). ERGOSUM replaces the step, on a track whose ERGOSUM is ON, by the
+| grid's cell for the counter k = the sequencer's step word: the trig, its condition, its locks and
+| slides are all the cell's. The step shown and the LEDs stay the real ones.
+|   LIN: the step itself. XY: x = (k / X) mod 4, y = (k / Y) mod 4, cell = 4y + x (RATIO = X:Y).
+|   SNAKE: path n, cell = PATHS[n][k mod 16]. DIAG: the diagonal path (PATHS[4]).
+| The cell keeps the step's block of 16 (step & ~15): a pattern of 32 or 64 steps stays in place,
+| block by block. es_next[t] = the cell of k + 1 in that block (0xff = ERGOSUM off): for OCTA303's
+| tied gate (not read yet).
+es_entry:
+        move.l  4(%sp),%d0              | the track
+        moveq   #7,%d1
+        cmp.l   %d1,%d0
+        bhi     es_go
+        lea     tm_set,%a0
+        lsl.l   #5,%d0
+        add.l   %d0,%a0
+        tst.b   19(%a0)
+        beq     es_off
+        tst.b   16(%a0)
+        beq     es_off                  | LIN: the step as it is
+        move.l  %d2,-(%sp)
+        move.l  %d3,-(%sp)
+        mvz.w   STEPW,%d2               | k
+        bsr     es_map                  | d0 = the cell for k
+        move.l  24(%sp),%d1             | the step (@16, 8 bytes pushed)
+        moveq   #-16,%d3
+        and.l   %d3,%d1                 | its block of 16
+        add.l   %d1,%d0
+        move.l  %d0,24(%sp)
+        addq.l  #1,%d2
+        bsr     es_map                  | the next cell
+        lea     es_next,%a1
+        move.l  12(%sp),%d1             | the track (@4)
+        move.b  %d0,(%a1,%d1.l)
+        move.l  (%sp)+,%d3
+        move.l  (%sp)+,%d2
+        bra     es_go
+es_off: lea     es_next,%a1
+        move.l  4(%sp),%d1
+        moveq   #-1,%d0
+        move.b  %d0,(%a1,%d1.l)
+es_go:  lea     -104(%sp),%sp           | the displaced prologue (lea -0x68 ; movem), then on
+        movem.l %d2-%d7/%a2-%a6,(%sp)
+        jmp     BUILDER+8
+
+| es_map -- d2 = k, a0 = the track's settings: d0 = the cell 0..15. Clobbers d1, d3, a1.
+es_map:
+        mvz.b   16(%a0),%d1             | MODE
+        subq.l  #1,%d1
+        beq     em_xy
+        subq.l  #1,%d1
+        beq     em_snake
+        subq.l  #1,%d1
+        beq     em_diag
+        move.l  %d2,%d0                 | LIN (not reached: es_entry passes the step through)
+        moveq   #15,%d1
+        and.l   %d1,%d0
+        rts
+em_xy:  mvz.b   17(%a0),%d1             | RATIO
+        moveq   #8,%d0
+        cmp.l   %d0,%d1
+        bls     em_x1
+        moveq   #0,%d1
+em_x1:  lea     RATIOS,%a1
+        add.l   %d1,%a1
+        add.l   %d1,%a1
+        mvz.w   %d2,%d0
+        mvz.b   (%a1),%d1               | X
+        divu.w  %d1,%d0                 | k / X (the low word)
+        moveq   #3,%d1
+        and.l   %d1,%d0                 | x
+        mvz.w   %d2,%d3
+        mvz.b   1(%a1),%d1              | Y
+        divu.w  %d1,%d3
+        moveq   #3,%d1
+        and.l   %d1,%d3                 | y
+        lsl.l   #2,%d3
+        add.l   %d3,%d0
+        rts
+em_diag:
+        moveq   #4,%d1
+        bra     em_p
+em_snake:
+        mvz.b   18(%a0),%d1             | SNAKE 1..16
+        subq.l  #1,%d1
+        moveq   #15,%d0
+        cmp.l   %d0,%d1
+        bls     em_p
+        moveq   #0,%d1
+em_p:   lsl.l   #4,%d1
+        lea     PATHS,%a1
+        add.l   %d1,%a1
+        move.l  %d2,%d0
+        moveq   #15,%d1
+        and.l   %d1,%d0
+        mvz.b   (%a1,%d0.l),%d0
+        rts
+
+| RATIO: X, Y (from the most consonant: the beats meet often, to the least -- Descartes,
+| Compendium Musicae)
+RATIOS: .byte   1, 1, 1, 2, 2, 3, 3, 4, 1, 3, 2, 5, 3, 5, 3, 7, 5, 7
+| SNAKE: 16 paths through the grid (cell = 4y + x): rows, snake rows, columns, snake columns,
+| diagonals, anti-diagonals, spiral in, spiral out, the first four reversed, k*5, k*3, k*7,
+| k*11, k*13 (mod 16)
+PATHS:
+        .byte   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+        .byte   0, 1, 2, 3, 7, 6, 5, 4, 8, 9, 10, 11, 15, 14, 13, 12
+        .byte   0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15
+        .byte   0, 4, 8, 12, 13, 9, 5, 1, 2, 6, 10, 14, 15, 11, 7, 3
+        .byte   0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15
+        .byte   3, 2, 7, 11, 6, 1, 0, 5, 10, 15, 14, 9, 4, 8, 13, 12
+        .byte   0, 1, 2, 3, 7, 11, 15, 14, 13, 12, 8, 4, 5, 6, 10, 9
+        .byte   9, 10, 6, 5, 4, 8, 12, 13, 14, 15, 11, 7, 3, 2, 1, 0
+        .byte   15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+        .byte   12, 13, 14, 15, 11, 10, 9, 8, 4, 5, 6, 7, 3, 2, 1, 0
+        .byte   15, 11, 7, 3, 14, 10, 6, 2, 13, 9, 5, 1, 12, 8, 4, 0
+        .byte   0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11
+        .byte   0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14, 1, 4, 7, 10, 13
+        .byte   0, 7, 14, 5, 12, 3, 10, 1, 8, 15, 6, 13, 4, 11, 2, 9
+        .byte   0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5
+        .byte   0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3
 
 | ---- the menu's layer (pushed while it is open): {next, keys, encoders, +12, +16, -1, -1}
         .balign 4
@@ -658,19 +817,20 @@ TM_ENCS:
         .long   0, 0, 0, 0, 0
 
 | ---------------------------------------------------------------- state (DRAM, writable)
-| per track, 16 bytes: page; MORPH: STEPS (0 = TRK), x, MODE, MORPH (armed); EUCLACID: PLSA,
-| ROTA, PLSB, ROTB, SLDE, SROT; EUCL LIVE: MODE, OP, LIVE, ONLY, EVRY. Defaults: MORPH's
-| (16 x 8 SMOOTH) and EUCLACID's (PLSA 4, the rest 0).
+| per track, 32 bytes: page; MORPH: STEPS (0 = TRK), x, MODE, MORPH (armed); EUCLACID: PLSA,
+| ROTA, PLSB, ROTB, SLDE, SROT; EUCL LIVE: MODE, OP, LIVE, ONLY, EVRY; ERGOSUM (16..19): MODE,
+| RATIO, SNAKE (1..16), ON; 20..31 free. Defaults: MORPH's (16 x 8 SMOOTH), EUCLACID's (PLSA 4,
+| the rest 0), ERGOSUM off (XY 1:3 snake 1).
         .balign 4
 tm_set:
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         .balign 4
 tm_win:     .long 0                         | the menu's window, 0 = closed
 tm_timer:   .long -1                        | the soft timer's slot
@@ -689,3 +849,4 @@ tm_ry:      .long 0
 tm_rstr:    .long 0
 tm_buf:     .space 24
 tm_tbuf:    .space 16
+es_next:    .byte  -1, -1, -1, -1, -1, -1, -1, -1

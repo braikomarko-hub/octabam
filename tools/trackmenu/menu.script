@@ -1,6 +1,6 @@
 # tools/emu/live_shots.py trackmenu --script tools/trackmenu/menu.script --output-dir <dir>
 # The TRACK MENU on the port: a short tap does nothing, the long press opens, the pages, the knobs,
-# the flash, the same track key closes, and MORPH's own window still opens with [TRACK]+[UP].
+# the flash, the ERGOSUM page, the same track key closes, and MORPH's own window still opens with [TRACK]+[UP].
 shot trackmenu/0_main
 key 0x14
 shot trackmenu/1_short_tap_nothing
@@ -21,6 +21,11 @@ key 0x31
 shot trackmenu/6_print_flash
 key 0x21
 shot trackmenu/7_eucl_live
+key 0x21
+shot trackmenu/7b_ergosum
+enc 1 2
+enc 3 1
+shot trackmenu/7c_ergosum_on_ratio_3_5
 key 0x13
 shot trackmenu/8_other_track_swallowed
 key 0x14

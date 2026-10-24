@@ -1,4 +1,4 @@
-# TRACK MENU (v0, prototype)
+# TRACK MENU (v0, prototype) -- the owner's name: ACID BUCKET
 
 Hold a track key about a second, with no other key: that track's menu opens, and stays open when
 the key is let go.
@@ -17,15 +17,59 @@ the key is let go.
 | MORPH | STEPS (TRK, 1..64) | x (1..16) | MODE (SMOOTH / HOLD) | MORPH (OFF / ARMED) | | |
 | EUCLACID | PULSES A | ROTATE A | PULSES B | ROTATE B | SLIDES | ROT SLIDE |
 | EUCL LIVE | MODE (EUCLID / GOLDEN / DENSITY / NESTED) | A+B (OR XOR AND A-B) | LIVE (OFF ROT DENS MUTA OPER) | SLIDE ON NOTE | EVERY BARS (1..64) | |
+| ERGOSUM | MODE (LIN / XY / SNAKE / DIAG) | RATIO (1:1 1:2 2:3 3:4 1:3 2:5 3:5 3:7 5:7) | SNAKE (1..16) | ERGOSUM (OFF / ON) | | |
 
 On the EUCLACID pages YES flashes PRINT and CUE flashes UNDO in the title bar. The page is
 remembered per track while the unit is on.
 
-**v0 is the navigation only.** Nothing reads these values yet: MORPH keeps its own settings and
-window, no pattern is printed, nothing starts, nothing is saved. The name is provisional: the
-module gets its own when MORPH and EUCLACID live in it.
+**The MORPH and EUCLACID pages are navigation only.** Nothing reads their values yet: MORPH keeps
+its own settings and window, no pattern is printed, nothing starts. **The ERGOSUM page works** (below).
+Nothing is saved: the settings live while the unit is on.
 
 Code: written by Claude (Anthropic); idea, design and tests on the Octatrack: MaMarko.
+
+## ERGOSUM
+
+The idea: Make Noise RENE, the Cartesian sequencer. The track's 16 steps are a 4x4 grid; with
+ERGOSUM ON the track plays the grid's cell instead of the step: its trig, its trig condition, its
+locks and slides, all of the cell. The step shown and the trig LEDs stay the real ones.
+
+```
+        x ->                 MODE XY, RATIO 1:3: x moves every step, y every 3 steps
+   +--+--+--+--+
+ y | 1| 2| 3| 4|             plays 1 2 3 8 5 6 11 12 9 14 15 16 1 2 3 8 ...
+   | 5| 6| 7| 8|             (the same 16 steps, another order)
+   | 9|10|11|12|
+   |13|14|15|16|
+   +--+--+--+--+
+```
+
+| MODE | the cell for the counter k (the sequencer's step word) |
+|---|---|
+| LIN | the step itself (ERGOSUM ON changes nothing) |
+| XY | x = (k / X) mod 4, y = (k / Y) mod 4, cell = 4y + x; RATIO = X:Y |
+| SNAKE | path SNAKE (1..16): rows, snake rows, columns, snake columns, diagonals, anti-diagonals, spiral in, spiral out, the first four reversed, k*5, k*3, k*7, k*11, k*13 (mod 16) |
+| DIAG | the diagonals path (SNAKE 5) |
+
+RATIO runs from the most consonant to the least, after Descartes' *Compendium Musicae*: the
+sweetness of a consonance follows how often the beats of the two bodies coincide. 1:3 meets every
+3 steps (a short, recognisable loop), 5:7 every 35 (it hardly repeats). The ear decides.
+
+A pattern longer than 16 steps is read block by block: the cell stays in the step's block of 16. A
+track shorter than 16 steps can land on a cell past its end: no trig there.
+
+**How (measured from the user's 1.40C, 24 Oct 2026).** The trig record builder `0x4009d1e8(track,
+bank, pattern, step, n)`, known so far for its locks (STEP_LOCKS.md), is where the step's trig is
+decided: the mask `1 << step` against the track record's trig masks, the trig condition
+`0x400a5164(track, step, cond, ...)`, then the trig's action at `0x46c7a810 + 4t` and the step's
+locks. Its callers: the sequencer tick `0x400a2d7e` (step = the track's step byte `0x800064d0 + t`)
+and the position refresh `0x4009da20`. ERGOSUM displaces its entry (`lea -0x68(sp)` ; `movem.l`, 8
+bytes) and replaces the step argument. `es_next[t]` holds the next cell (0xff off) for OCTA303's
+tied gate, which does not read it yet.
+
+Open: the counter is the master step word, so a track at another speed or scale walks the grid at
+the master's pace; OCTA303's tied gate still looks at the pattern's next step; not yet run under
+the port with the sequencer playing, nor on the unit.
 
 ## How the long press works (measured from the user's 1.40C)
 
@@ -45,7 +89,9 @@ Code: written by Claude (Anthropic); idea, design and tests on the Octatrack: Ma
 
 - `tools/trackmenu/test_trackmenu.py`: the source under cfsim with a mocked firmware: the long press
   and everything that cancels it, the pages, every knob's range, the flash, closing, the
-  remembered page, registers kept (52 checks).
+  remembered page, registers kept; ERGOSUM's entry against a Python model of the grid (every mode,
+  ratio and four snakes, k 0..79 and the word's wrap, three blocks), the arguments the builder
+  receives, the displaced movem, OFF and LIN passing the step, tracks above 7 (69 checks).
 
 ## On the unit
 

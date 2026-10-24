@@ -1,9 +1,13 @@
 """TRACK MENU v0 -- hold a track key ~1 s: that track's menu (MORPH and EUCLACID pages).
 
-A prototype of the navigation only: LEFT / RIGHT change page, the knobs change the settings, the
-same track key closes ("Tn START" is only shown), NO closes. Nothing reads the settings yet and
-nothing is saved: MORPH keeps its own [TRACK]+[UP] window, no Euclidean pattern is printed.
-Provisional name: the owner will name the module when MORPH and EUCLACID live in it.
+A prototype: LEFT / RIGHT change page, the knobs change the settings, the same track key closes
+("Tn START" is only shown), NO closes. Nothing is saved. MORPH keeps its own [TRACK]+[UP] window and
+no Euclidean pattern is printed yet; the ERGOSUM page works: the track's trigs are read through a
+4x4 grid (idea: Make Noise RENE). The owner's name for the menu: ACID BUCKET.
+
+ERGOSUM site, measured from the user's 1.40C (24 Oct 2026): the trig record builder 0x4009d1e8
+(track, bank, pattern, step, n) decides the step's trig, condition (0x400a5164) and locks; its entry
+(lea -0x68(sp) ; movem.l d2-d7/a2-a6) is displaced and the step argument replaced.
 
 Sites, measured from the user's 1.40C (24 Oct 2026; base 0x40000400):
   * the eight track records (codes 0x10..0x17) of the MKI key table 0x400bfc10 and of the MKII
@@ -14,7 +18,7 @@ Sites, measured from the user's 1.40C (24 Oct 2026; base 0x40000400):
 
 import os
 
-from remix.schema import Category, Gate, Kind, Linked, Module, Proof, SymbolRef
+from remix.schema import Category, Detour, Gate, Kind, Linked, Module, Proof, SymbolRef
 
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
 
@@ -42,14 +46,20 @@ MODULE = Module(
     author="MaMarko",
     author_url="https://github.com/braikomarko-hub",
     doc=("Hold a track key about a second: that track's menu opens and stays open. LEFT / RIGHT turn "
-         "the page (MORPH, EUCLACID, EUCL LIVE), the knobs set the values, the same track key closes it. "
-         "v0 is the navigation only: nothing reads the values yet."),
+         "the page (MORPH, EUCLACID, EUCL LIVE, ERGOSUM), the knobs set the values, the same track key "
+         "closes it. ERGOSUM reads the track's trigs through a 4x4 grid (MODE LIN/XY/SNAKE/DIAG, RATIO, "
+         "SNAKE); the other pages are navigation only."),
     proof=Proof.CHECK,
     proof_note="prototype: tools/trackmenu/test_trackmenu.py (the source under cfsim); not yet on the unit",
     linked=(
         Linked("trackmenu", os.path.join(_HERE, "trackmenu.s"), dram=True),
     ),
     symbol_refs=_press_fields(),
+    detours=(
+        Detour(0x4009D1E8, bytes.fromhex("4fefff9848d77cfc"), "trackmenu", "es_entry",
+               "ERGOSUM: the trig record builder's entry (lea -0x68 ; movem): the step through the grid",
+               kind="jmp", pad_to=8),
+    ),
     gates=(
         Gate("tools/trackmenu/test_trackmenu.py", remix_arg=False),
     ),

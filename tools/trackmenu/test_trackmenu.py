@@ -155,7 +155,7 @@ check('not_open_before_the_time', win() == 0 and len(ui['timers']) == 1)
 ticks(3)
 check('long_press_opens', win() == WIN and ui['win_args'][:2] == [116, 64] and ui['win_args'][4] == 5
       and C['TM_LAYER'] in ui['layers'], ui['win_args'])
-check('title', line(54) == 'T5 MORPH 1/3', line(54))
+check('title', line(54) == 'T5 MORPH 1/4', line(54))
 check('title_bar_inverted', ui['inverts'] and ui['inverts'][0][1] <= 54 and ui['inverts'][0][3] >= 60, ui['inverts'])
 check('morph_rows', [line(y) for y in (44, 36, 28, 20)] == ['A STEPS 16', 'B x 8', 'C MODE SMOOTH', 'D MORPH OFF'],
       [line(y) for y in (44, 36, 28, 20)])
@@ -183,11 +183,11 @@ before = list(ui['texts']); enc(5, 3)
 check('knob_without_row_does_nothing', ui['texts'] == before)
 shot('2_morph_edited')
 menu_key('tm_yes', 0x31)
-check('yes_on_morph_page_shows_nothing', line(54) == 'T5 MORPH 1/3', line(54))
+check('yes_on_morph_page_shows_nothing', line(54) == 'T5 MORPH 1/4', line(54))
 
 # ---- pages
 menu_key('tm_right', 0x21)
-check('right_euclacid', line(54) == 'T5 EUCLACID 2/3' and
+check('right_euclacid', line(54) == 'T5 EUCLACID 2/4' and
       [line(y) for y in (44, 36, 28, 20, 12, 4)] == ['A PULSES A 4', 'B ROTATE A 0', 'C PULSES B 0',
                                                      'D ROTATE B 0', 'E SLIDES 0', 'F ROT SLIDE 0'],
       [line(y) for y in (54, 44, 36, 28, 20, 12, 4)])
@@ -200,11 +200,11 @@ shot('4_euclacid_print')
 ticks(int(C['FLASH']) - 1)
 check('flash_lasts', line(54) == 'T5 EUCLACID PRINT')
 ticks(1)
-check('flash_ends', line(54) == 'T5 EUCLACID 2/3', line(54))
+check('flash_ends', line(54) == 'T5 EUCLACID 2/4', line(54))
 menu_key('tm_cue', 0x2a)
 check('cue_flashes_undo', line(54) == 'T5 EUCLACID UNDO', line(54))
 menu_key('tm_right', 0x21)
-check('right_live', line(54) == 'T5 EUCL LIVE 3/3' and
+check('right_live', line(54) == 'T5 EUCL LIVE 3/4' and
       [line(y) for y in (44, 36, 28, 20, 12)] == ['A MODE EUCLID', 'B A+B OR', 'C LIVE OFF',
                                                  'D SLIDE ON NOTE OFF', 'E EVERY BARS 1'],
       [line(y) for y in (54, 44, 36, 28, 20, 12)])
@@ -218,9 +218,26 @@ enc(4, 3); check('every_8', val(12) == '8', val(12))
 enc(4, 10); check('every_64', val(12) == '64', val(12))
 shot('5_eucl_live')
 menu_key('tm_right', 0x21)
-check('right_wraps_to_morph', line(54) == 'T5 MORPH 1/3' and val(44) == '64' and val(20) == 'ARMED')
+check('right_ergosum', line(54) == 'T5 ERGOSUM 4/4' and
+      [line(y) for y in (44, 36, 28, 20)] == ['A MODE XY', 'B RATIO 1:3', 'C SNAKE 1', 'D ERGOSUM OFF'],
+      [line(y) for y in (54, 44, 36, 28, 20)])
+menu_key('tm_yes', 0x31)
+check('yes_on_ergosum_shows_nothing', line(54) == 'T5 ERGOSUM 4/4', line(54))
+got = []
+for _ in range(10): got.append(val(36)); enc(1, 1)
+check('ratio_list', got == ['1:3', '2:5', '3:5', '3:7', '5:7', '5:7', '5:7', '5:7', '5:7', '5:7'], got)
+enc(1, -20); check('ratio_clamps_1_1', val(36) == '1:1', val(36))
+enc(2, -5); check('snake_min_1', val(28) == '1', val(28))
+enc(2, 40); check('snake_max_16', val(28) == '16', val(28))
+enc(0, 5); check('mode_max_diag', val(44) == 'DIAG', val(44))
+enc(3, 1); check('ergosum_on', val(20) == 'ON', val(20))
+shot('5b_ergosum')
+menu_key('tm_right', 0x21)
+check('right_wraps_to_morph', line(54) == 'T5 MORPH 1/4' and val(44) == '64' and val(20) == 'ARMED')
 menu_key('tm_left', 0x34)
-check('left_wraps_to_live', line(54) == 'T5 EUCL LIVE 3/3')
+check('left_wraps_to_ergosum', line(54) == 'T5 ERGOSUM 4/4')
+menu_key('tm_left', 0x34)
+check('left_to_live', line(54) == 'T5 EUCL LIVE 3/4')
 
 # ---- other keys, close and reopen
 menu_key('tm_trk', 0x12)
@@ -229,13 +246,13 @@ menu_key('tm_no', 0x32)
 check('no_closes_silently', win() == 0 and not ui['toasts'] and C['TM_LAYER'] not in ui['layers']
       and not ui['timers'])
 press(0x11); ticks(int(C['LONG']) + 1)
-check('t2_opens_on_its_first_page', line(54) == 'T2 MORPH 1/3' and val(44) == '16', line(54))
+check('t2_opens_on_its_first_page', line(54) == 'T2 MORPH 1/4' and val(44) == '16', line(54))
 release(0x11); ticks(1)
 menu_key('tm_trk', 0x11)
 check('same_track_closes_with_start', win() == 0 and ui['toasts'] == ['T2 START'] and not ui['timers']
       and C['TM_LAYER'] not in ui['layers'], ui['toasts'])
 press(0x14); ticks(int(C['LONG']) + 1)
-check('t5_remembers_its_page_and_values', line(54) == 'T5 EUCL LIVE 3/3' and val(12) == '64', line(54))
+check('t5_remembers_its_page_and_values', line(54) == 'T5 EUCL LIVE 3/4' and val(12) == '64', line(54))
 shot('6_t5_again')
 release(0x14); ticks(1); menu_key('tm_no', 0x32)
 
@@ -264,10 +281,70 @@ mem.w(WINTAB + 2 * 56 + 32, 'l', 0x20)
 press(0x10); ticks(int(C['LONG']) + 20)
 check('waits_while_another_window_shows', win() == 0 and len(ui['timers']) == 1)
 mem.w(WINTAB + 2 * 56 + 32, 'l', 0); ticks(1)
-check('opens_when_it_is_gone', win() == WIN and line(54) == 'T1 MORPH 1/3', line(54))
+check('opens_when_it_is_gone', win() == WIN and line(54) == 'T1 MORPH 1/4', line(54))
 release(0x10); ticks(1); guarded('tm_closed')
 check('closed_callback_cleans_up', win() == 0 and not ui['timers'] and C['TM_LAYER'] not in ui['layers'])
 check('every_press_reached_the_stock', all(ev == 1 for _, ev in ui['stock']) and len(ui['stock']) >= 12, len(ui['stock']))
+
+# ---- ERGOSUM: the builder's entry, the step through the grid
+BUILDER, STEPW = 0x4009d1e8, 0x800065b2
+seen = {}
+def h_builder(cpu):                    # BUILDER+8: after the displaced lea -0x68 ; movem
+    sp = cpu.a[7]
+    seen['step'] = cpu.mem.r(sp + 0x78, 'l'); seen['track'] = cpu.mem.r(sp + 0x6c, 'l')
+    seen['n'] = cpu.mem.r(sp + 0x7c, 'l')
+    seen['saved'] = [cpu.mem.r(sp + 4 * i, 'l') for i in range(11)]
+    cpu.a[7] = (sp + 0x68) & 0xffffffff  # the stub's rts then returns to our caller
+cpu.hooks[BUILDER + 8] = h_builder
+PATHS = [list(range(16)), [0,1,2,3,7,6,5,4,8,9,10,11,15,14,13,12],
+         [4*(i%4)+i//4 for i in range(16)], [4*(i%4 if (i//4)%2==0 else 3-i%4)+i//4 for i in range(16)],
+         [0,1,4,8,5,2,3,6,9,12,13,10,7,11,14,15], [3,2,7,11,6,1,0,5,10,15,14,9,4,8,13,12],
+         [0,1,2,3,7,11,15,14,13,12,8,4,5,6,10,9]]
+PATHS += [PATHS[6][::-1], list(range(15, -1, -1)), PATHS[1][::-1], PATHS[2][::-1]]
+PATHS += [[(i*m) % 16 for i in range(16)] for m in (5, 3, 7, 11, 13)]
+RAT = [(1,1),(1,2),(2,3),(3,4),(1,3),(2,5),(3,5),(3,7),(5,7)]
+def model(mode, ratio, snake, k):
+    if mode == 1: x, y = RAT[ratio]; return 4 * ((k // y) % 4) + (k // x) % 4
+    if mode == 2: return PATHS[snake - 1][k % 16]
+    if mode == 3: return PATHS[4][k % 16]
+def es_set(t, mode, ratio, snake, on):
+    for i, v in enumerate((mode, ratio, snake, on)): mem.w(C['tm_set'] + 32 * t + 16 + i, 'b', v)
+def es_call(t, step, k, n=1):
+    mem.w(STEPW, 'w', k)
+    seen.clear()
+    guarded('es_entry', t, 2, 5, step, n)
+    return seen.get('step'), seen
+check('paths_are_permutations', len(PATHS) == 16 and all(sorted(p) == list(range(16)) for p in PATHS))
+for t in range(8): es_set(t, 0, 0, 1, 0)
+ok = all(es_call(t, s, 77)[0] == s for t in (0, 3, 7) for s in (0, 5, 15, 31, 63))
+check('off_passes_the_step', ok)
+check('off_next_ff', all(mem.r(C['es_next'] + t, 'b') == 0xff for t in (0, 3, 7)))
+es_set(2, 0, 4, 1, 1)
+check('lin_passes_the_step', all(es_call(2, s, 999)[0] == s for s in (0, 7, 15, 40)))
+bad = []
+for mode in (1, 2, 3):
+    for ratio in range(9):
+        for snake in (1, 2, 7, 16):
+            es_set(4, mode, ratio, snake, 1)
+            for k in list(range(0, 80)) + [65535, 1234]:
+                for step in (3, 17, 50):
+                    got, sn = es_call(4, step, k)
+                    want = (step & ~15) + model(mode, ratio, snake, k)
+                    if got != want: bad.append((mode, ratio, snake, k, step, got, want))
+                    nxt = mem.r(C['es_next'] + 4, 'b')
+                    if nxt != model(mode, ratio, snake, (k + 1) & 0x1ffff if k < 65535 else 65536):
+                        if not (k == 65535): bad.append(('next', mode, ratio, snake, k, nxt))
+            if mode != 1: break
+        if mode != 1: break
+check('grid_matches_the_model', not bad, bad[:3])
+es_set(4, 1, 4, 1, 1)
+got, sn = es_call(4, 9, 5, n=-1 & 0xffffffff)
+check('args_reach_the_builder', sn['track'] == 4 and sn['n'] == 0xffffffff and got == model(1, 4, 1, 5))
+check('displaced_movem_saves_d2_a6', sn['saved'][:6] == SENT[2:8] and sn['saved'][6:11] == [SENT[i] ^ 0xff for i in range(2, 7)],
+      [hex(x) for x in sn['saved']])
+check('track_above_7_untouched', es_call(9, 6, 5)[0] == 6)
+es_set(4, 0, 0, 1, 0)
+print('ERGOSUM X1 Y3, k 0..15:', [es_call(5, 0, k)[0] for k in range(16)] if not es_set(5, 1, 4, 1, 1) else '')
 
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)
