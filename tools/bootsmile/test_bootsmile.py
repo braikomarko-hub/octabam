@@ -55,7 +55,8 @@ for ms in (len(slots) * 50, 3_900, 30_000):
     check(f'black_after_the_end_{ms}ms', shown() == bytes(1024))
 mid = slots[len(slots) // 3]
 rows = lcd_view.pixels(planes[mid])
-check('the_full_smile_is_centred', rows[32 - 26][64] == 1 and rows[32 + 26][64] == 1 and rows[32][64] == 0)
+check('the_full_smile_is_centred', rows[32 - 25][64] == 1 and rows[32 + 25][64] == 1 and rows[32][64] == 1
+      and rows[32 - 27][64] == 0 and rows[32 + 27][64] == 0 and rows[32][64 - 27] == 0 and rows[32][64 + 27] == 0)
 check('the_loop_limit_covers_the_animation', len(slots) * 50 <= g.TOTAL_MS and g.TOTAL_MS // 5 == 760)
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)
