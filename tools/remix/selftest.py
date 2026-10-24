@@ -946,6 +946,7 @@ def main():
              # SPRING REV's; their DSP words come from the others the remix does not list
              "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "CHORUS", "PLATE REV", "SPRING REV"),
              "trackmenu": (),   # TRACK_MENU, MORPH, STORE: ColdFire only; all 14 stock effects stay
+             "bootsmile": (),   # BOOT_SMILE: ColdFire only; all 14 stock effects stay
              "rig": _rig,
              "character-txtr": _rig,   # octabam-bus with the TXTR station
              "octabam-bus": _rig,
