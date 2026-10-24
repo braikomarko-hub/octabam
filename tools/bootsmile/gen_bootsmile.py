@@ -3,7 +3,7 @@
 
     python3 tools/bootsmile/gen_bootsmile.py [--gif preview.gif]
 
-A white smile on black grows from the centre, stays, then melts down off the screen. 20 frames a
+An original white pixel face on black (spiral eyes, crooked grin) grows from the centre, stays, then melts down off the screen. 20 frames a
 second; a slot table maps every 50 ms of the boot logo's clock to a frame (or to nothing: black).
 Each frame is the LCD plane's own layout (tools/emu/lcd_view.py: 128 rows of 8 bytes, one per
 screen x, MSB left; screen pixel (x, y) is column 63 - y), so showing one is a 1,024-byte copy.
@@ -26,18 +26,40 @@ TOTAL_MS = round((GROW + HOLD + MELT + BLANK) * 1000)        # 3,800 ms: the sto
 
 
 def face(r):
+    """An original pixel face for aCiDtRacK: a slightly wobbly outline, spiral eyes, a crooked open
+    grin with one tooth. r = the radius; every size is drawn from the same shapes."""
     im = Image.new("1", (W, H), 0)
     d = ImageDraw.Draw(im)
     if r < 1:
         d.point((CX, CY), 1)
         return im
-    lw = max(1, round(r / 9))
-    d.ellipse((CX - r, CY - r, CX + r, CY + r), outline=1, width=lw)
-    er, ex, ey = max(1, round(r * 0.11)), r * 0.36, r * 0.28
-    for sx in (-1, 1):
-        d.ellipse((CX + sx * ex - er, CY - ey - er, CX + sx * ex + er, CY - ey + er), fill=1)
-    mr = r * 0.55
-    d.arc((CX - mr, CY - mr * 0.75, CX + mr, CY + mr * 0.95), 20, 160, fill=1, width=lw)
+    lw = max(1, round(r / 10))
+    pts = []                                             # the outline, a little hand-drawn wobble
+    for k in range(72):
+        a = 2 * math.pi * k / 72
+        rr = r * (1 + 0.035 * math.sin(3 * a + 0.7) + 0.02 * math.sin(5 * a))
+        pts.append((CX + rr * math.cos(a), CY + rr * math.sin(a)))
+    d.line(pts + [pts[0]], fill=1, width=lw)
+    for sx in (-1, 1):                                   # spiral eyes, turning opposite ways
+        ex, ey = CX + sx * r * 0.38, CY - r * 0.24
+        sp = []
+        for k in range(60):
+            a = k * 0.21 * sx                            # two turns
+            rr = r * 0.23 * k / 60
+            sp.append((ex + rr * math.cos(a), ey + rr * math.sin(a)))
+        if r > 6:
+            d.line(sp, fill=1, width=1)
+        else:
+            d.point((ex, ey), 1)
+    if r > 5:                                            # a crooked open grin, higher on one side
+        top = [(CX - r * 0.55, CY + r * 0.18), (CX, CY + r * 0.30), (CX + r * 0.58, CY + r * 0.10)]
+        bot = [(CX + r * 0.58, CY + r * 0.10), (CX + r * 0.25, CY + r * 0.52), (CX - r * 0.15, CY + r * 0.58),
+               (CX - r * 0.55, CY + r * 0.18)]
+        d.line(top + bot[1:], fill=1, width=lw)
+        tx = CX + r * 0.12                               # one tooth
+        d.rectangle((tx, CY + r * 0.27, tx + max(1, r * 0.12), CY + r * 0.38), fill=1)
+    else:
+        d.line((CX - r * 0.5, CY + r * 0.3, CX + r * 0.5, CY + r * 0.2), fill=1)
     return im
 
 
