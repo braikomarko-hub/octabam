@@ -1,10 +1,10 @@
 #!/bin/bash
-# menu_v0.sh -- il MENU DELLA TRACCIA v0 (solo navigazione) nell'emulatore.
+# menu_v0.sh -- il MENU DELLA TRACCIA v0 (solo navigazione) e lo SMILE all'accensione, nell'emulatore.
 # Lavora in ~/octabam_menu (cartella nuova). ~/octabam, ~/octabam_new e ~/octabam_morph NON vengono toccati,
 # e l'immagine ACIDV77 in ~/Desktop/acidtrack resta dov'e'.
 #   1) prende il ramo `trackmenu` dal tuo GitHub
 #   2) il test del menu nel simulatore (52 controlli)
-#   3) make check REMIX=trackmenu (il remix di prova: menu + MORPH + STORE + effetti stock)
+#   3) make check REMIX=trackmenu (il remix di prova: menu + smile + MORPH + STORE + effetti stock)
 #   4) le FOTO dello schermo dall'emulatore: tieni premuto T5, pagine, manopole, chiusura
 #   5) l'immagine di prova TMENU1 (BUILD 99) -- da NON flashare prima che Claude abbia letto i log
 # Risultati in ~/Desktop/menu/   Stato: ~/Desktop/new_0_stato.txt   (~30-60 minuti)
@@ -34,7 +34,8 @@ echo "   versione: $(git log -1 --format='%h %s')" | tee "$D/versione.txt"
 make emu-cf > "$D/1_emu.log" 2>&1 || fail "l'emulatore non si costruisce (1_emu.log)"
 
 st "MENU v0 2) il test del menu nel simulatore"
-python3 tools/trackmenu/test_trackmenu.py > "$D/2_test.log" 2>&1; echo "   uscita $?  $(tail -1 "$D/2_test.log")"
+python3 tools/trackmenu/test_trackmenu.py > "$D/2_test.log" 2>&1; echo "   menu:  uscita $?  $(tail -1 "$D/2_test.log")"
+.venv/bin/python3 tools/bootsmile/test_bootsmile.py > "$D/2_test_smile.log" 2>&1; echo "   smile: uscita $?  $(tail -1 "$D/2_test_smile.log")"
 
 st "MENU v0 3) make check REMIX=trackmenu"
 PROJ="${OT_PROJECT:-$(cat "$HOME/.octabam_project" 2>/dev/null)}"
@@ -44,7 +45,9 @@ OT_PROJECT="$PROJ" make check REMIX=trackmenu > "$D/3_check.log" 2>&1; echo "   
 st "MENU v0 4) le foto dello schermo nell'emulatore"
 rm -rf "$D/foto"; mkdir -p "$D/foto"
 OT_PROJECT="$PROJ" .venv/bin/python3 tools/emu/live_shots.py trackmenu --script tools/trackmenu/menu.script \
-  --output-dir "$D/foto" > "$D/4_foto.log" 2>&1; echo "   uscita $?"
+  --output-dir "$D/foto" --keep-card > "$D/4_foto.log" 2>&1; echo "   uscita $?"
+st "MENU v0 4b) le foto dell'accensione (lo smile)"
+.venv/bin/python3 tools/bootsmile/boot_shots.py "$D/foto/accensione" > "$D/4b_accensione.log" 2>&1; echo "   uscita $?  $(tail -1 "$D/4b_accensione.log")"
 cp out/live/port.txt "$D/4_port.txt" 2>/dev/null
 ls "$D/foto/trackmenu" 2>/dev/null | head -20
 
