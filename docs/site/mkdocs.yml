@@ -88,6 +88,7 @@ nav:
       - MIDI Part State: reference/modules/midi-part-state.md
       - MIDI Scenes: reference/modules/midi-scenes.md
       - Page 2 Scene Locks: reference/modules/scenes-p2.md
+      - Track Menu: reference/modules/trackmenu.md
   - MIDI and USB:
       - CC Feedback: reference/modules/cc-feedback.md
       - CC Map: reference/modules/cc-map.md
@@ -101,6 +102,7 @@ nav:
       - Store: reference/modules/store.md
       - Sequencer Events: reference/modules/sequencer-events.md
   - Utilities:
+      - Boot Smile: reference/modules/bootsmile.md
       - Buffer Saver: reference/modules/buffer-saver.md
       - Copy Project: reference/modules/copy-project.md
       - Random Naming: reference/modules/rnd-name.md

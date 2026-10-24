@@ -63,6 +63,7 @@ Each carries one module, or one combination, for that module's gates: `make chec
 | [`stuttr`](stuttr/README.md) | STUTTR beside the stock effects (all but PLATE REV, whose words it takes). | local render: verify_stuttr; chance-engage redesign. |
 | [`tapeecho`](tapeecho/README.md) | Tape Echo replacing Spring Reverb, alone. | on hardware: the author's unit (OCTACLID4): six instances; a seventh freezes it, open |
 | [`testgen`](testgen/README.md) | TESTGEN on FX1 beside the stock effects (all but PLATE REV, whose words it takes). | on hardware: Ignorato's MKII, OCTABAM6, 4 Oct 2026 |
+| [`trackmenu`](trackmenu/README.md) | TRACK MENU v0 (hold a track key ~1 s: the track's menu, navigation only) beside MORPH and STORE, with the stock effects. | `make check`: prototype, 24 Oct 2026: tools/trackmenu/test_trackmenu.py; not yet on the unit |
 | [`transient`](transient/README.md) | TRANSIENT beside the stock effects (all but PLATE REV, whose words it takes). | on hardware: Ignorato's MKII, OCTABAM2, 3 Oct 2026 |
 | [`usb-io-main-ab`](usb-io-main-ab/README.md) | stock - SPATIALIZER + USB (MAIN out, AB in). | port-gated: `make check` (verify_usb, verify_usb_in) under the port, 28 Sep 2026; not on hardware in this form |
 | [`usb-io-main-abcd`](usb-io-main-abcd/README.md) | stock - SPATIALIZER + USB (MAIN out, ABCD in). | port-gated: `make check` (verify_usb, verify_usb_in) under the port, 28 Sep 2026; not on hardware in this form |
