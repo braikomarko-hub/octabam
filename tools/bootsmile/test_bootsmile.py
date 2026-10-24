@@ -63,7 +63,7 @@ for s, f in enumerate(slots):
     for off_ms in (0, 49):
         clear(); mem.w(DTCN3, 'l', (s * 50 + off_ms) * 132000)
         ok_regs &= blit(LOGO)
-        want = planes[f] if f is not None else bytes(1024)
+        want = planes[f] if f is not None else b'\xff' * 1024
         if shown() != want: bad.append((s, off_ms))
 check('every_slot_shows_its_frame', not bad, bad[:5])
 check('registers_kept', ok_regs)
@@ -71,11 +71,12 @@ clear(); mem.w(DTCN3, 'l', 30 * 50 * 132000); blit(STAR)
 check('stars_dropped', shown() == bytes(1024))
 for ms in (len(slots) * 50, 3_900, 30_000):
     clear(); mem.w(DTCN3, 'l', ms * 132000); blit(LOGO)
-    check(f'black_after_the_end_{ms}ms', shown() == bytes(1024))
+    check(f'black_after_the_end_{ms}ms', shown() == b'\xff' * 1024)
 mid = slots[len(slots) // 3]
 rows = lcd_view.pixels(planes[mid])
-check('the_full_smile_is_centred', rows[32 - 25][64] == 1 and rows[32 + 25][64] == 1 and rows[32][64] == 1
-      and rows[32 - 27][64] == 0 and rows[32 + 27][64] == 0 and rows[32][64 - 27] == 0 and rows[32][64 + 27] == 0)
+check('the_full_smile_is_centred', rows[32 - 25][64] == 0 and rows[32 + 25][64] == 0 and rows[32][64] == 0
+      and rows[32 - 27][64] == 1 and rows[32 + 27][64] == 1 and rows[32][64 - 27] == 1 and rows[32][64 + 27] == 1)
+check('white_on_black_inverted', planes[slots[len(slots) // 3]].count(0xff) > 512)
 check('the_loop_limit_covers_the_animation', len(slots) * 50 <= g.TOTAL_MS and g.TOTAL_MS // 5 == 760)
 print(f"\n{'ALL PASS' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)

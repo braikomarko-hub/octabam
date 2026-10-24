@@ -106,11 +106,13 @@ def frames():
 
 
 def plane(im):
-    """A frame in the LCD plane's layout: row x = 8 bytes, screen y at column 63 - y, MSB left."""
+    """A frame in the LCD plane's layout: row x = 8 bytes, screen y at column 63 - y, MSB left.
+    Inverted: a set bit is a DARK pixel on the unit's LCD (the owner's MKI showed the first build's
+    smile black on white), so the face (white in im) is clear and everything else set."""
     px, b = im.load(), bytearray(1024)
     for x in range(W):
         for y in range(H):
-            if px[x, y]:
+            if not px[x, y]:
                 c = 63 - y
                 b[x * 8 + c // 8] |= 0x80 >> (c % 8)
     return bytes(b)
@@ -121,7 +123,7 @@ def main():
     planes = [plane(f) for f in fr]
     for f, p in zip(fr, planes):                       # the layout round-trips through the port's decoder
         rows = lcd_view.pixels(p)
-        assert all(rows[y][x] == f.getpixel((x, y)) for y in range(H) for x in range(W))
+        assert all(rows[y][x] == 1 - f.getpixel((x, y)) for y in range(H) for x in range(W))
     assert len(slots) * 50 == TOTAL_MS and len(fr) < 255
     limit = TOTAL_MS // 5                                # the stock loop's unit: 660,000 ticks = 5 ms
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootsmile_code.s")).read()
