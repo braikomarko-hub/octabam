@@ -398,6 +398,7 @@ tm_arm_init:
         move.b  %d0,13(%a0)
         move.b  21(%a0),%d0
         move.b  %d0,19(%a0)
+        clr.b   22(%a0)                 | no row touched yet
         rts
 
 | tm_mp_on -- d0 = a MORPH state: d0 = 1 when it morphs or will (RUN, ARMED, HELD), else 0.
@@ -419,7 +420,11 @@ mo_1:   moveq   #1,%d0
 | fader. LIVE: ek_live_set (OFF freezes, a mode starts it or changes it). ERGO: ERGOSUM plays or not.
 | Key-handler context: d0, d1, a0, a1 only.
 tm_apply:
+        moveq   #-1,%d0
+        move.l  %d0,tm_lstat            | LIVE not applied
         bsr     tm_set_a0
+        btst    #0,22(%a0)
+        beq     ap_live                 | MRPH not touched
         lea     mp_state,%a1
         move.l  tm_t,%d1
         add.l   %d1,%a1
@@ -454,16 +459,49 @@ ap_o1:  moveq   #MP_ARMED,%d1
         bne     ap_live
 ap_o2:  clr.b   (%a1)                   | armed or held: the fader's again
 ap_live:
+        bsr     tm_set_a0
+        btst    #1,22(%a0)
+        beq     ap_ergo                 | LIVE not touched
         mvz.b   13(%a0),%d0
         move.l  %d0,-(%sp)
         move.l  tm_t,%d1
         move.l  %d1,-(%sp)
         jsr     ek_live_set
         addq.l  #8,%sp
+        move.l  %d0,tm_lstat            | its status, for the toast
+ap_ergo:
         bsr     tm_set_a0
+        btst    #2,22(%a0)
+        beq     ap_9                    | ERGO not touched
         move.b  19(%a0),%d0
         move.b  %d0,21(%a0)             | ERGOSUM plays (or not) from the next step
-        rts
+ap_9:   rts
+
+| tm_touch -- a1 = the knob record being turned: an armed row (MRPH 4, LIVE 13, ERGO 19) marked as
+| touched in byte 22 of the track's settings (bits 0, 1, 2): only a touched row is applied by the
+| closing track key, so a row that went stale while the menu was open (LIVE frozen by an UNDO, MORPH
+| parked by itself) never restarts anything. Keeps a0, a1; clobbers d0, d1.
+tm_touch:
+        tst.b   7(%a1)
+        bne     tc_t9                   | MORPH's own bytes: no row
+        mvz.b   4(%a1),%d0
+        moveq   #1,%d1
+        cmp.l   #4,%d0
+        beq     tc_t1
+        moveq   #2,%d1
+        cmp.l   #13,%d0
+        beq     tc_t1
+        moveq   #4,%d1
+        cmp.l   #19,%d0
+        bne     tc_t9
+tc_t1:  move.l  %a0,-(%sp)
+        move.l  %d1,%d0
+        bsr     tm_set_a0
+        mvz.b   22(%a0),%d1
+        or.l    %d0,%d1
+        move.b  %d1,22(%a0)
+        move.l  (%sp)+,%a0
+tc_t9:  rts
 
 | tm_val_a0 -- a1 = a knob record: a0 = its byte (the menu track's tm_set, or MORPH's mp_set when
 | the record's byte 7 is 1). Clobbers d0, d1.
@@ -712,7 +750,19 @@ tm_trk:
         pea     N_ERGO
         bra     tt_2
 tt_eukle:
-        move.l  tm_t,%d1
+        move.l  tm_lstat,%d0            | LIVE refused: why (BUSY, LENGTH, ...)
+        ble     tt_e0
+        moveq   #5,%d1
+        cmp.l   %d1,%d0
+        bls     tt_e2
+        move.l  %d1,%d0
+tt_e2:  lea     ST_PRINT,%a0
+        lsl.l   #2,%d0
+        move.l  (%a0,%d0.l),%a0
+        move.l  %a0,-(%sp)
+        pea     N_LIVE
+        bra     tt_2
+tt_e0:  move.l  tm_t,%d1
         move.l  %d1,-(%sp)
         jsr     ek_live_mode
         addq.l  #4,%sp
@@ -774,6 +824,7 @@ tm_enc:
         addq.l  #4,%sp
         move.l  (%sp)+,%a1
         move.l  (%sp)+,%a0
+        bsr     tm_touch
         mvz.b   (%a0),%d0
         add.l   8(%sp),%d0
         mvz.b   5(%a1),%d1              | min
@@ -1508,7 +1559,8 @@ TM_ENCS:
 | copy: MORPH's own mp_set now); 4 MRPH armed (0 OFF, 1 ON); EUKLE 5..10: PLSA, ROTA, PLSB, ROTB,
 | SLDE, SROT; 11..15: MODE (EUCL GOLD DENS NEST), A+B (OR XOR AND A-B), LIVE armed (OFF ROT DENS MUTA
 | OPER), ONLY, EVRY (1 2 4 8 16 32 64 bars); ERGOSUM 16..20: MODE, RATIO, SNAKE, ERGO armed, SPLIT
-| (ALL / NOTES / RHYTHM); 21 ERGOSUM playing (from ERGO, at the closing track key); the rest free.
+| (ALL / NOTES / RHYTHM); 21 ERGOSUM playing (from ERGO, at the closing track key); 22 the armed rows
+| touched since the menu opened (bit 0 MRPH, 1 LIVE, 2 ERGO); the rest free.
 | Defaults: EUKLE PLSA 4, the rest 0; ERGOSUM LIN, 1:1, snake 1, OFF, ALL.
         .macro  TSET
         .byte   0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -1546,6 +1598,7 @@ tm_fstr:    .long 0
 tm_rx:      .long 0
 tm_ry:      .long 0
 tm_rstr:    .long 0
+tm_lstat:   .long -1                        | ek_live_set's status at the closing key (-1: not applied)
 tm_last:    .long -1                        | tm_sig of the last paint
 tm_lastk:   .long -1
 tm_buf:     .space 24

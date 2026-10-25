@@ -431,6 +431,34 @@ release(0x11); ticks(1); menu_key('tm_yes', 0x31)
 check('t2_has_its_own_values', labels() == ['16', '8', 'SMTH', 'OFF'] and line(54) == 'T2 MORPH', labels())
 menu_key('tm_no', 0x32); menu_key('tm_no', 0x32)
 check('no_from_chooser_closes', win() == 0 and C['TM_LAYER'] not in ui['layers'] and not ui['timers'])
+def open_t5():
+    press(0x14); ticks(int(C['LONG']) + 1); release(0x14); ticks(1)
+def to_eukle(page2=False):
+    for _ in range(3):
+        if chosen() == 'EUKLE': break
+        menu_key('tm_down', 0x20)
+    menu_key('tm_yes', 0x31)
+    if page2: menu_key('tm_right', 0x21)
+LV4 = C['ek_lv'] + 88 * 4
+for i in range(0x60): mem.w(REC4 + i, 'b', 0)
+mem.w(REC4 + 0x50, 'b', 16)
+open_t5(); to_eukle(True); enc(2, 1); menu_key('tm_trk', 0x14)
+check('live_started_again', mem.r(LV4, 'l') == 1 and ui['toasts'][-1] == 'T5 LIVE ROT', ui['toasts'][-3:])
+open_t5(); to_eukle(); menu_key('tm_cue', 0x2a)
+check('cue_undoes_the_live_start', line(54) == 'T5 EUKLE UNDO' and mem.r(LV4, 'l') == 0 and mem.r(REC4 + 4, 'l') == 0, line(54))
+menu_key('tm_trk', 0x14)
+check('a_stale_live_row_is_not_reapplied', mem.r(LV4, 'l') == 0 and mem.r(REC4 + 4, 'l') == 0
+      and ui['toasts'][-1] == 'T5 LIVE OFF', ui['toasts'][-2:])
+open_t5(); to_eukle(True); enc(2, 1)
+mem.w(0x460d17da, 'l', 0); menu_key('tm_trk', 0x14); mem.w(0x460d17da, 'l', 0x46000000)
+check('a_refused_live_says_why', mem.r(LV4, 'l') == 0 and ui['toasts'][-1] == 'T5 LIVE BUSY', ui['toasts'][-2:])
+mem.w(MPST, 'b', 1)
+open_t5(); menu_key('tm_up', 0x33) if chosen() != 'MORPH' else None
+while chosen() != 'MORPH': menu_key('tm_up', 0x33)
+menu_key('tm_yes', 0x31); mem.w(MPST, 'b', 3)               # MORPH parks by itself while the menu is open
+menu_key('tm_trk', 0x14)
+check('an_untouched_mrph_row_leaves_morph_alone', mem.r(MPST, 'b') == 3, mem.r(MPST, 'b'))
+mem.w(MPST, 'b', 0)
 check('every_invert_inside_the_frame', not ui.get('outside'), ui.get('outside', [])[:3])
 
 # ---- the swap guard

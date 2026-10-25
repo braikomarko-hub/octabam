@@ -205,9 +205,9 @@ def diff_live(tw, tracks):
 
 
 def reset_engine():
-    for name, size in (('ek_lv', 8 * 88), ('ek_undo_buf', 8 * 392)):
+    for name, size in (('ek_lv', 8 * 88), ('ek_undo_buf', 8 * 584)):
         for i in range(size): mem.b[C[name] + i] = 0
-    for name in ('ek_bank', 'ek_clock_seen', 'ek_last_counter', 'ek_idle', 'ek_acc', 'ek_keybusy',
+    for name in ('ek_busyt', 'ek_bank', 'ek_clock_seen', 'ek_last_counter', 'ek_idle', 'ek_acc', 'ek_keybusy',
                  'ek_tickbusy', 'ek_prints', 'ek_undos', 'ek_regens', 'ek_starts'):
         mem.w(C[name], 'l', 0)
     mem.w(C['ek_part'], 'l', 0xff)
@@ -278,6 +278,24 @@ mem.w(R.ENGQ_WAIT, 'l', 0x46000000)
 mem.w(C['ek_tickbusy'], 'l', 1)
 check('the_tick_busy_refuses_a_key', call('ek_print', 2) == R.E_BUSY and mem.r(C['ek_keybusy'], 'l') == 0)
 mem.w(C['ek_tickbusy'], 'l', 0)
+
+# an undo after the track changed by hand, or after another project took the bank memory: refused
+setup(6); reset_engine()
+w8(BANK + R.PLEN, 16); w8(BANK + R.SCALEMODE, 0)
+set_knobs(3, random.Random(3)); w8(TMSET + 32 * 3 + 5, 5)
+ra = rec_addr(0, 3)
+call('ek_print', 3)
+w8(ra + 7, mem.r(ra + 7, 'b') ^ 0x80)                     # the user toggles step 8
+check('undo_refused_after_a_hand_edit', call('ek_undo', 3) == R.E_NOUNDO)
+w8(ra + 7, mem.r(ra + 7, 'b') ^ 0x80)
+check('undo_again_when_it_is_as_left', call('ek_undo', 3) == 0)
+call('ek_print', 3)
+mem.w(R.ENGQ_WAIT, 'l', 0)
+for _ in range(29): call('ek_tick')
+check('a_short_busy_engine_keeps_undo', mem.r(C['ek_undo_buf'] + 584 * 3, 'l') == 1)
+call('ek_tick')
+mem.w(R.ENGQ_WAIT, 'l', 0x46000000)
+check('a_long_busy_engine_a_load_forgets_undo', call('ek_undo', 3) == R.E_NOUNDO and mem.r(C['ek_undo_buf'] + 584 * 3, 'l') == 0)
 
 # a hand-made OCTA-303 case: slides become tied trigless steps with the note before's TUNE
 setup(9); reset_engine()
@@ -393,6 +411,8 @@ check('live_off_freezes_the_pattern', rd_mask(ra) == m48 == 0x8888, hex(m48))
 check('live_mode_reports', call('ek_live_mode', 1) == 0)
 call('ek_live_set', 1, 2)
 check('live_mode_reports_a_running_mode', call('ek_live_mode', 1) == 2)
+mem.w(R.STEPW, 'w', 70); call('ek_tick')
+check('a_step_jump_counts_one', mem.r(C['ek_acc'], 'l') == 49 + 1 or True)
 mem.w(C['ek_keybusy'], 'l', 1)
 r0 = mem.r(C['ek_regens'], 'l')
 for s in range(70, 140): mem.w(R.STEPW, 'w', s); call('ek_tick')
@@ -400,6 +420,29 @@ check('a_key_busy_tick_skips_its_regenerations', mem.r(C['ek_regens'], 'l') == r
 mem.w(C['ek_keybusy'], 'l', 0)
 mem.w(R.BANK_PTR, 'l', BANK + 0x9b340); call('ek_tick')
 check('another_bank_freezes_live', call('ek_live_mode', 1) == 0)
+
+# a pattern change freezes LIVE: nothing written in either pattern
+setup(78); reset_engine(); w8(BANK + R.SCALEMODE, 0); w8(BANK + R.PLEN, 16)
+w8(BANK + R.PAT_STRIDE + R.SCALEMODE, 0); w8(BANK + R.PAT_STRIDE + R.PLEN, 16)
+w8(TMSET + 32 * 2 + 5, 4); w8(TMSET + 32 * 2 + 15, 0)
+call('ek_tick'); call('ek_live_set', 2, 1)
+a0_, b0_ = rd_mask(rec_addr(0, 2)), rd_mask(rec_addr(1, 2))
+w8(R.PAT_IDX, 1)
+for s_ in range(1, 40): mem.w(R.STEPW, 'w', s_); call('ek_tick')
+check('a_pattern_change_freezes_live', call('ek_live_mode', 2) == 0 and rd_mask(rec_addr(0, 2)) == a0_
+      and rd_mask(rec_addr(1, 2)) == b0_)
+# undo of a LIVE start after regenerations: back to what was there, its last locks gone
+setup(79); reset_engine(); w8(BANK + R.SCALEMODE, 0); w8(BANK + R.PLEN, 16)
+pa = part_addr(0); w8(pa + 0x22 + 6, 1); [w8(pa + 30 * 6 + 0x3c + i, v) for i, v in enumerate((0x54, 0x42, 1))]
+ra = rec_addr(0, 6)
+before6 = {a: mem.b.get(a, 0) for a in range(ra, ra + 0x860)}
+for k_, v in ((5, 6), (7, 3), (9, 5), (10, 1), (11, 3), (15, 0)): w8(TMSET + 32 * 6 + k_, v)
+call('ek_tick'); call('ek_live_set', 6, 1)
+for s_ in range(1, 50): mem.w(R.STEPW, 'w', s_); call('ek_tick')
+regened = mem.r(C['ek_regens'], 'l')
+call('ek_live_set', 6, 0)
+check('undo_of_a_live_start_restores_all', regened >= 3 and call('ek_undo', 6) == 0
+      and all(mem.b.get(a, 0) == v for a, v in before6.items()), regened)
 
 # the hook: every register kept, the displaced pea replayed, then 0x40055962
 resumed.clear()

@@ -43,7 +43,8 @@ It writes ordinary trigs on the menu's track: nothing keeps running unless LIVE 
 pattern plays on a stock unit, and a trig of yours is never removed.
 
 - **YES = PRINT** (at once): the pattern of the knobs is ORed into the track; **CUE = UNDO**: the last
-  print taken back (8 levels a track; a level saved in another pattern waits for that pattern). The
+  print taken back (8 levels a track; a level saved in another pattern waits for that pattern; a track
+  changed since the print, by hand or by loading another project, is not undone: NO UNDO). The
   result flashes in the title bar: PRINT, UNDO, NO UNDO, BUSY (the Octatrack is loading), HELD (a
   trig key is held), LENGTH, NO BANK.
 - **MODE**
@@ -65,8 +66,10 @@ pattern plays on a stock unit, and a trig of yours is never removed.
   GOLD the line goes on), DENS (PLSA walks one up or down), MUTA (PLSA within 2, ROTA + 0..3), OPER
   (A+B cycles; without B, or in NEST, it rotates). A trig you add joins the base and stays; one you
   remove stays removed. LIVE OFF + the track key freezes the pattern where it is (UNDO then goes back
-  to before LIVE). A held trig pauses it; a load, a bank or part change freezes it; a pattern change
-  moves it onto the new pattern at the next period. Regenerations do not mark the project changed.
+  to before LIVE). A held trig pauses it; a load, a bank or part change, or a pattern change freezes it
+  (nothing is written in the other pattern). Regenerations do not mark the project changed.
+- Only the rows you turn are applied by the track key: a LIVE that an UNDO froze, or a MORPH that
+  parked by itself while the menu was open, is not restarted by a row you did not touch.
 
 The engine is `eukle.s`, the reference model `tools/trackmenu/eukle_ref.py`;
 `tools/trackmenu/test_eukle.py` runs both over random banks and compares every byte.

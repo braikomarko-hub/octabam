@@ -24,11 +24,14 @@ What a print does on track t (the menu's track; the print lands on that track):
       ACC locks (PLAYBACK slot 5) with the Part's ACC, on the planned note steps that trig, where no
       ACC lock is.
     any other track: slides go to the stock slide mask (+0x48), accents are not printed.
-  undo     -> the masks as they were and the locks it wrote back to 0xff; only on the same pattern
+  undo     -> the masks as they were and the locks it wrote back to 0xff; only on the same pattern, and
+              only while the track's masks are still those the print left (a LIVE start's level follows
+              its regenerations); a long busy engine (a load) forgets every level
 LIVE (started with the track key that closes the menu): the pattern of its period is regenerated one step
 before every EVRY-bar period ends (16 steps a bar from the transport start): ROT (rotates; in GOLD the
 line goes on), DENS (PLSA walks +-1 in 1..n-1), MUTA (PLSA +-2, ROTA + 0..3), OPER (OP cycles; without
 B, or in NEST, it rotates). A trig added by hand joins the base; a base trig removed stays removed.
+A pattern change, a bank or part change or a load freezes LIVE. A step-word jump counts one step.
 """
 
 W_DENS = (16, 1, 6, 2, 11, 1, 5, 3, 14, 1, 7, 2, 10, 2, 4, 8)
@@ -50,6 +53,8 @@ LOCKS = 0x59                          # + 32 * step + slot
 SL_TUNE, SL_ACC = 0, 5
 UNDO_LEVELS = 8
 IDLE_RESTART = 60                     # UI ticks (120 Hz) without a step = the transport was stopped
+JUMP = 8                              # a step word moving by more than this is a jump: one step (morph.s)
+BUSY_LOAD = 30                        # UI ticks (0.25 s) of a busy engine = a load: LIVE frozen, undo forgotten
 
 # the track's settings (tm_set, 32 bytes a track), EuKle's bytes
 S_PLSA, S_ROTA, S_PLSB, S_ROTB, S_SLDE, S_SROT, S_MODE, S_OP, S_LIVE, S_ONLY, S_EVRY = range(5, 16)
@@ -172,7 +177,7 @@ class Eukle:
         self.lv = [Live() for _ in range(8)]
         self.undo = [[] for _ in range(8)]
         self.bank = 0; self.part = 0xff
-        self.clock_seen = 0; self.last_counter = 0; self.idle = 0; self.acc = 0
+        self.clock_seen = 0; self.last_counter = 0; self.idle = 0; self.acc = 0; self.busy_ticks = 0
         self.commits = []
 
     # ---- the environment
@@ -262,10 +267,11 @@ class Eukle:
     def read3(self, rec):
         return [self.m.r64(rec + M_TRIG), self.m.r64(rec + M_TRIGLESS), self.m.r64(rec + M_SLIDE)]
 
-    def push_undo(self, t, rec, before, w):
+    def push_undo(self, t, rec, before, w, after, live=0):
+        """a level: the record, 1 for a LIVE start, the masks before, the locks written, the masks after"""
         u = self.undo[t]
         if len(u) == UNDO_LEVELS: u.pop(0)
-        u.append((rec, list(before), list(w)))
+        u.append([rec, live, list(before), list(w), list(after)])
 
     # ---- the menu's keys (key-handler context)
     def print_(self, t, commit=True):
@@ -275,7 +281,7 @@ class Eukle:
         notes, sl, acc = plan(self.knobs(t), n)
         before = self.read3(rec)
         last, w = self.put(t, rec, mir, n, before, notes, sl, acc)
-        self.push_undo(t, rec, before, w)
+        self.push_undo(t, rec, before, w, self.read3(rec))
         if commit: self.commits.append(t)
         return OK
 
@@ -285,8 +291,9 @@ class Eukle:
         if self.m.r16(HELD_TRIGS): return E_HELD
         u = self.undo[t]
         if not u or u[-1][0] != rec: return E_NOUNDO
+        if self.read3(rec) != u[-1][4]: return E_NOUNDO   # changed since (by hand, a load): not ours to undo
         self.lv[t].active = 0                      # freeze, then undo (EUCLACID's order)
-        _, before, w = u.pop()
+        _, _, before, w, _ = u.pop()
         self.wmask(rec, mir, M_TRIG, before[0]); self.wmask(rec, mir, M_TRIGLESS, before[1])
         self.wmask(rec, mir, M_SLIDE, before[2])
         for s in range(64):
@@ -336,7 +343,7 @@ class Eukle:
         notes, sl, acc = plan(self.live_params(lv, k, n), n)
         before = self.read3(rec)
         last, w = self.put(t, rec, mir, n, before, notes, sl, acc)
-        self.push_undo(t, rec, before, w)
+        self.push_undo(t, rec, before, w, self.read3(rec), live=1)
         lv.base = before; lv.last = last; lv.lastw = w
         lv.active = 1; lv.rec = rec
         bank, part, _, _ = self.env()             # this context is the tick's from now on
@@ -360,8 +367,9 @@ class Eukle:
         lv = self.lv[t]
         st, rec, mir, n = self.resolve(t)
         if st: return st
-        if rec != lv.rec:
-            return self.live_start(t, lv.mode)
+        if rec != lv.rec:                          # another pattern: LIVE frozen (nothing written)
+            lv.active = 0
+            return OK
         k = self.knobs(t)
         for s in range(64):                        # our locks of the last generation go
             if bit(lv.lastw[0], s): self.wlock(rec, mir, s, SL_TUNE, 0xff)
@@ -372,6 +380,9 @@ class Eukle:
         notes, sl, acc = plan(self.live_params(lv, k, n), n)
         last, w = self.put(t, rec, mir, n, b, notes, sl, acc)
         lv.base = b; lv.last = last; lv.lastw = w
+        u = self.undo[t]                           # its start still on top: the level follows LIVE
+        if u and u[-1][1] and u[-1][0] == rec:
+            u[-1][3] = list(w); u[-1][4] = self.read3(rec)
         return OK
 
     def stop_all(self):
@@ -379,27 +390,38 @@ class Eukle:
 
     def tick(self):
         """one UI tick (the keyrepeat task's loop, 120 Hz)"""
-        bank, part, pat, busy = self.env()
-        if bank == 0 or part > 3 or busy:
-            self.bank = 0; self.stop_all(); return
-        if bank != self.bank or part != self.part:
-            self.stop_all(); self.bank = bank; self.part = part
-        step = 0
+        d = 0                                      # the steps of this tick
         cnt = self.m.r16(STEPW)
         if not self.clock_seen:
             self.clock_seen = 1; self.last_counter = cnt; self.idle = 0
         elif cnt != self.last_counter:
-            if self.idle > IDLE_RESTART: self.acc = 0
-            else: self.acc = (self.acc + 1) & M32
-            self.last_counter = cnt; self.idle = 0; step = 1
+            if self.idle > IDLE_RESTART:
+                self.acc = 0; d = 1                # the transport restarted: this step is 0
+            else:
+                d = (cnt - self.last_counter) & 0xffff
+                if d > JUMP: d = 1
+                self.acc = (self.acc + d) & M32
+            self.last_counter = cnt; self.idle = 0
         elif self.idle < 0xffff:
             self.idle += 1
-        if not step or self.m.r16(HELD_TRIGS): return
+        bank, part, pat, busy = self.env()
+        if busy:                                   # a command runs: wait; long, it was a load
+            self.busy_ticks += 1
+            if self.busy_ticks == BUSY_LOAD:
+                self.stop_all(); self.bank = 0
+                for u in self.undo: u.clear()
+            return
+        self.busy_ticks = 0
+        if bank == 0 or part > 3:
+            self.bank = 0; self.stop_all(); return
+        if bank != self.bank or part != self.part:
+            self.stop_all(); self.bank = bank; self.part = part
+        if not d or self.m.r16(HELD_TRIGS): return
         for t in range(8):
             lv = self.lv[t]
             if not lv.active: continue
             ev = self.settings(t)[S_EVRY]
             if ev > 6: ev = 6
             period = 16 << ev
-            if self.acc % period == period - 1:
+            if (self.acc + 1) % period < d:        # the period's last step reached in this tick
                 self.live_regen(t)

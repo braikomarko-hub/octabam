@@ -66,6 +66,8 @@
         .set    PHI16_256, 27145984     | 106039 * 256 (phi * 65536 = 106039.56)
         .set    PHI16,     106039
         .set    IDLE_RESTART, 60
+        .set    JUMP,      8            | a step word moving by more than this: one step (morph.s)
+        .set    BUSY_LOAD, 30           | ticks of a busy engine taken for a load (0.25 s)
         .set    UNDO_LEVELS, 8
 
 | status codes (eukle_ref.py): OK, no bank / part / pattern, length, a held trig, nothing to undo, busy
@@ -140,10 +142,12 @@
         .set    LV_LAST,48              | 3 masks
         .set    LV_LASTW,72             | 2 masks
         .set    LV_SIZE,88
-| an undo stack (ek_undo_buf, one a track): the count, then 8 levels of 48 bytes: the record, 0, the
-| three masks before, the two lock masks written
-        .set    UN_LEVEL,48
-        .set    UN_SIZE, 392
+| an undo stack (ek_undo_buf, one a track): the count, then 8 levels of 72 bytes: +0 the record, +4 1
+| for a LIVE start, +8 the three masks before, +32 the two lock masks written, +48 the three masks
+| after (an undo is refused when the track's masks are not those any more: edited by hand, another
+| project loaded into the same bank memory; a running LIVE keeps its start's level up to date)
+        .set    UN_LEVEL,72
+        .set    UN_SIZE, 584
 
 | ================================================================ the masks
 | mk_bit -- a0 = mask, d0 = step 0..63: d1 = the bit (0 / 1), the flags on it. Clobbers d1.
@@ -804,8 +808,8 @@ pu_a9:  addq.l  #1,%d2
         bra     pu_a1
 pu_99:  rts
 
-| ek_push -- a5, a2 = the track's undo stack: one level (W_REC, M_CUR, M_W); the oldest dropped when
-| full. Clobbers d0, d1, a0, a1.
+| ek_push -- a5, a2 = the track's undo stack, d2 = 1 for a LIVE start: one level (W_REC, M_CUR, M_W,
+| M_NEW); the oldest dropped when full. Clobbers d0, d1, a0, a1.
 ek_push:
         move.l  (%a2),%d0
         moveq   #UNDO_LEVELS,%d1
@@ -828,7 +832,7 @@ pp_3:   move.l  %d0,%d1
         mulu.l  %d1,%d0
         lea     8(%a2,%d0.l),%a0        | the new level
         move.l  W_REC(%a5),(%a0)+
-        clr.l   (%a0)+
+        move.l  %d2,(%a0)+
         lea     M_CUR(%a5),%a1          | the three masks before
         moveq   #6,%d1
 pp_4:   move.l  (%a1)+,(%a0)+
@@ -839,6 +843,11 @@ pp_4:   move.l  (%a1)+,(%a0)+
 pp_5:   move.l  (%a1)+,(%a0)+
         subq.l  #1,%d1
         bne     pp_5
+        lea     M_NEW(%a5),%a1          | the three masks after
+        moveq   #6,%d1
+pp_6:   move.l  (%a1)+,(%a0)+
+        subq.l  #1,%d1
+        bne     pp_6
         rts
 
 | ek_undo_a2 -- d0 = the track: a2 = its undo stack. ek_lv_a4 -- d0: a4 = its LIVE record.
@@ -892,6 +901,7 @@ ek_key:
         bsr     ek_put
         move.l  W_T(%a5),%d0
         bsr     ek_undo_a2
+        moveq   #0,%d2
         bsr     ek_push
         addq.l  #1,ek_prints
         bra     ky_commit
@@ -908,6 +918,15 @@ ky_undo:
         move.l  (%a3),%d0
         cmp.l   W_REC(%a5),%d0
         bne     ky_none                 | another pattern's
+        bsr     ek_rd3                  | the masks as the level left them?
+        lea     M_CUR(%a5),%a0
+        lea     48(%a3),%a1
+        moveq   #6,%d1
+ky_u1:  move.l  (%a0)+,%d0
+        cmp.l   (%a1)+,%d0
+        bne     ky_none                 | changed since: not ours to undo
+        subq.l  #1,%d1
+        bne     ky_u1
         move.l  W_T(%a5),%d0
         bsr     ek_lv_a4
         clr.l   LV_ACT(%a4)             | LIVE frozen first
@@ -1053,7 +1072,7 @@ ls_bank:
 
 | ================================================================ LIVE
 | ek_start -- a5 = a work area, a4 = the LIVE record, d0 = the track, d1 = the mode: LIVE from
-| generation 0 (EUCLACID's live_start). d0 = the status. Clobbers d1-d7, a0-a3.
+| generation 0 (EUCLACID's live_start). d0 = the status. Clobbers d1-d7, a0-a3. Key context only.
 ek_start:
         move.l  %d1,%d7
         bsr     ek_lv_clear
@@ -1082,6 +1101,7 @@ st_1:   move.l  (%a0)+,(%a1)+
         bsr     ek_put
         move.l  W_T(%a5),%d0
         bsr     ek_undo_a2
+        moveq   #1,%d2                  | a LIVE start's level
         bsr     ek_push
         bsr     ek_lv_last
         moveq   #1,%d0
@@ -1263,9 +1283,9 @@ ek_regen:
         move.l  W_REC(%a5),%d0
         cmp.l   LV_REC(%a4),%d0
         beq     rg_1
-        move.l  %d7,%d0                 | another pattern: LIVE starts again there
-        move.l  LV_MODE(%a4),%d1
-        bra     ek_start
+        clr.l   LV_ACT(%a4)             | another pattern: LIVE frozen, nothing written
+        moveq   #E_OK,%d0
+        rts
 rg_1:   lea     LV_LASTW(%a4),%a0       | the last generation's locks go
         moveq   #0,%d4
         bsr     ek_unlock
@@ -1290,7 +1310,34 @@ rg_2:   move.l  M_CUR(%a5,%d6.l),%d0
         bsr     ek_plan
         bsr     ek_put
         bsr     ek_lv_last
-        addq.l  #1,ek_regens
+        move.l  W_T(%a5),%d0            | its start's level still on top: it follows LIVE
+        bsr     ek_undo_a2
+        move.l  (%a2),%d0
+        beq     rg_8
+        moveq   #UNDO_LEVELS,%d1
+        cmp.l   %d1,%d0
+        bhi     rg_8
+        subq.l  #1,%d0
+        moveq   #UN_LEVEL,%d1
+        mulu.l  %d1,%d0
+        lea     8(%a2,%d0.l),%a0
+        tst.l   4(%a0)
+        beq     rg_8
+        move.l  (%a0),%d0
+        cmp.l   W_REC(%a5),%d0
+        bne     rg_8
+        lea     32(%a0),%a0
+        lea     M_W(%a5),%a1
+        moveq   #4,%d1
+rg_7:   move.l  (%a1)+,(%a0)+
+        subq.l  #1,%d1
+        bne     rg_7
+        lea     M_NEW(%a5),%a1          | (+48: right after the locks)
+        moveq   #6,%d1
+rg_6:   move.l  (%a1)+,(%a0)+
+        subq.l  #1,%d1
+        bne     rg_6
+rg_8:   addq.l  #1,ek_regens
         moveq   #E_OK,%d0
 rg_9:   rts
 
@@ -1316,25 +1363,12 @@ ek_hook:
         pea     EVENT
         jmp     HOOK_RESUME
 
-| ek_tick -- one UI tick: the step clock, then each running LIVE regenerates one step before its
-| EVRY-bar period ends. Clobbers d0-d7, a0-a5.
+| ek_tick -- one UI tick: the step clock (d4 = the steps of this tick; a jump counts one), then, under
+| the tick's flag: a busy engine waited for (BUSY_LOAD ticks of it = a load: LIVE frozen, every undo
+| forgotten), another bank or part freezes LIVE, and each running LIVE regenerates when its EVRY-bar
+| period's last step is reached. Clobbers d0-d7, a0-a5.
 ek_tick:
-        move.l  BANK_PTR,%d2
-        beq     tk_stop
-        mvz.b   PART_IDX,%d3
-        moveq   #3,%d0
-        cmp.l   %d0,%d3
-        bhi     tk_stop
-        tst.l   ENGQ_WAIT
-        beq     tk_stop
-        cmp.l   ek_bank,%d2
-        bne     tk_ctx
-        cmp.l   ek_part,%d3
-        beq     tk_clk
-tk_ctx: bsr     ek_stopall              | another bank or part: LIVE frozen
-        move.l  %d2,ek_bank
-        move.l  %d3,ek_part
-tk_clk: moveq   #0,%d4                  | a step this tick
+        moveq   #0,%d4
         mvz.w   STEPW,%d0
         tst.l   ek_clock_seen
         bne     tk_c1
@@ -1343,30 +1377,67 @@ tk_clk: moveq   #0,%d4                  | a step this tick
         move.l  %d0,ek_last_counter
         clr.l   ek_idle
         bra     tk_c9
-tk_c1:  cmp.l   ek_last_counter,%d0
+tk_c1:  move.l  ek_last_counter,%d2
+        cmp.l   %d2,%d0
         beq     tk_c3
         move.l  %d0,ek_last_counter
         moveq   #IDLE_RESTART,%d1
         cmp.l   ek_idle,%d1
         bcc     tk_c2
-        clr.l   ek_acc                  | the transport restarted
-        bra     tk_c2b
-tk_c2:  addq.l  #1,ek_acc
-tk_c2b: clr.l   ek_idle
+        clr.l   ek_acc                  | the transport restarted: this step is 0
         moveq   #1,%d4
+        bra     tk_c2b
+tk_c2:  sub.l   %d2,%d0
+        and.l   #0xffff,%d0             | the steps since the last change
+        moveq   #JUMP,%d1
+        cmp.l   %d1,%d0
+        bls     tk_c2a
+        moveq   #1,%d0                  | a jump: one step
+tk_c2a: move.l  %d0,%d4
+        add.l   %d0,ek_acc
+tk_c2b: clr.l   ek_idle
         bra     tk_c9
 tk_c3:  move.l  ek_idle,%d1
         cmp.l   #0xffff,%d1
         bcc     tk_c9
         addq.l  #1,ek_idle
-tk_c9:  tst.l   %d4
-        beq     tk_9
-        tst.w   HELD_TRIGS
-        bne     tk_9                    | a held trig pauses LIVE
-        moveq   #1,%d0
+tk_c9:  moveq   #1,%d0
         move.l  %d0,ek_tickbusy
         tst.l   ek_keybusy
         bne     tk_8                    | a key is printing: this tick passes
+        tst.l   ENGQ_WAIT
+        bne     tk_e0
+        addq.l  #1,ek_busyt             | a command runs: wait
+        moveq   #BUSY_LOAD,%d0
+        cmp.l   ek_busyt,%d0
+        bne     tk_8
+        bsr     ek_stopall              | long: a load
+        clr.l   ek_bank
+        lea     ek_undo_buf,%a0
+        moveq   #8,%d1
+tk_u1:  clr.l   (%a0)
+        lea     UN_SIZE(%a0),%a0
+        subq.l  #1,%d1
+        bne     tk_u1
+        bra     tk_8
+tk_e0:  clr.l   ek_busyt
+        move.l  BANK_PTR,%d2
+        beq     tk_stop
+        mvz.b   PART_IDX,%d3
+        moveq   #3,%d0
+        cmp.l   %d0,%d3
+        bhi     tk_stop
+        cmp.l   ek_bank,%d2
+        bne     tk_ctx
+        cmp.l   ek_part,%d3
+        beq     tk_run
+tk_ctx: bsr     ek_stopall              | another bank or part: LIVE frozen
+        move.l  %d2,ek_bank
+        move.l  %d3,ek_part
+tk_run: tst.l   %d4
+        beq     tk_8
+        tst.w   HELD_TRIGS
+        bne     tk_8                    | a held trig pauses LIVE
         lea     ek_wtick,%a5
         moveq   #0,%d5                  | the track
 tk_1:   move.l  %d5,%d0
@@ -1384,23 +1455,26 @@ tk_1:   move.l  %d5,%d0
 tk_e:   moveq   #16,%d1
         lsl.l   %d0,%d1                 | the period, steps
         move.l  ek_acc,%d0
-        bsr     umod
         addq.l  #1,%d0
-        cmp.l   %d1,%d0
-        bne     tk_2
+        bsr     umod                    | (acc + 1) mod period < the steps of this tick:
+        cmp.l   %d4,%d0                 | its last step was reached
+        bcc     tk_2
         move.l  %d5,-(%sp)
+        move.l  %d4,-(%sp)
         move.l  %d5,%d0
         bsr     ek_regen
+        move.l  (%sp)+,%d4
         move.l  (%sp)+,%d5
 tk_2:   addq.l  #1,%d5
         moveq   #8,%d0
         cmp.l   %d0,%d5
         bne     tk_1
 tk_8:   clr.l   ek_tickbusy
-tk_9:   rts
+        rts
 tk_stop:
         clr.l   ek_bank
-        bra     ek_stopall
+        bsr     ek_stopall
+        bra     tk_8
 
 | ================================================================ data
 W_DENS: .byte   16, 1, 6, 2, 11, 1, 5, 3, 14, 1, 7, 2, 10, 2, 4, 8
@@ -1418,6 +1492,7 @@ ek_idle:     .long 0
 ek_acc:      .long 0
 ek_keybusy:  .long 0
 ek_tickbusy: .long 0
+ek_busyt:    .long 0                    | ticks of a busy engine in a row
 ek_prints:   .long 0                    | counters (the tests, the port's --watch)
 ek_undos:    .long 0
 ek_regens:   .long 0
