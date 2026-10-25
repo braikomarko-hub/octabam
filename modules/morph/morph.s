@@ -281,7 +281,7 @@ morph_up:
         cmp.l   8(%sp),%d0              | press only
         bne     mu_9
         tst.l   mw_win
-        bne     mw_close
+        bne     mw_apply_close
         move.l  HELD,%d1
         beq     mu_9
         lea     mp_state,%a0            | every held track: armed in the window (one already
@@ -596,7 +596,9 @@ mw_open:
         addq.l  #8,%sp
         move.l  %d0,mw_timer
         bra     mw_draw
-mw_o9:  rts
+mw_o9:  bsr     mw_unhold               | no window: nothing stays held
+        clr.l   mw_int
+        rts
 
 | mw_encclr -- the six encoders' counters 0: the knobs at rest. Clobbers a0.
 mw_encclr:
@@ -627,7 +629,12 @@ mw_close:
         addq.l  #4,%sp
 mw_closed:                              | WCREATE's callback: another window of the class took over
         clr.l   mw_win
-        clr.l   mw_int
+        moveq   #2,%d0                  | a STOP chosen is applied however the window goes
+        cmp.l   mw_int,%d0              | (mp_stopmask: d0, d1, a0; twice is harmless)
+        bne     mw_cs
+        move.l  mw_targets,%d1
+        bsr     mp_stopmask
+mw_cs:  clr.l   mw_int
         lea     mp_state,%a0            | the window is gone: its held tracks start on the next step
         moveq   #7,%d1
 mw_cr:  mvz.b   (%a0,%d1.l),%d0
@@ -793,6 +800,7 @@ my_stop:
         bne     my_s1
         moveq   #0,%d0
 my_s1:  move.l  %d0,mw_int
+        bsr     mw_unhold               | STOP or nothing: no track of the window stays held
         bra     mw_draw
 
 | NO: closed, nothing applied (the held tracks back to the fader first).
@@ -1093,6 +1101,10 @@ md_k4:  addq.l  #1,%d4
         lsl.l   #2,%d0
         lea     mp_k,%a0
         move.l  (%a0,%d0.l),%d5         | d5 = k
+        cmp.l   %d2,%d5                 | N just shrunk (an encoder, the pattern's length):
+        bcs     md_kc1                   | the frame puts k back in range; until then 0
+        moveq   #0,%d5
+md_kc1:
         moveq   #S_RUN,%d0
         cmp.l   %d0,%d7
         beq     md_b1
@@ -1154,7 +1166,10 @@ md_lk:  move.l  %d6,%d0                 | "ON  12/128": k + 1, N
         move.l  %a0,%a4
         lea     mp_k,%a0
         move.l  (%a0,%d0.l),%d0
-        addq.l  #1,%d0
+        cmp.l   %d3,%d0                 | k beyond a shrunk N: 0, as the bar
+        bcs     md_kc2
+        moveq   #0,%d0
+md_kc2:  addq.l  #1,%d0
         move.l  %d3,-(%sp)
         move.l  %d0,-(%sp)
         move.l  %a4,-(%sp)
@@ -1180,12 +1195,15 @@ md_i1:  move.l  %d4,%d0                 | LOOP: two slopes of 6
         move.l  %d4,%d1
         addq.l  #Y_LINE,%d1
         bsr     mw_dot
+        moveq   #5,%d0                  | the apex once (EOR: twice would clear it)
+        cmp.l   %d0,%d4
+        beq     md_i2
         moveq   #X_ICON+10,%d0
         sub.l   %d4,%d0
         move.l  %d4,%d1
         addq.l  #Y_LINE,%d1
         bsr     mw_dot
-        addq.l  #1,%d4
+md_i2:  addq.l  #1,%d4
         moveq   #6,%d0
         cmp.l   %d0,%d4
         bne     md_i1
