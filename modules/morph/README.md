@@ -1,12 +1,13 @@
 # MORPH
 
-A track's scene morph, played by itself. Hold a track key and press **UP**: the MORPH window opens
-and the track is armed. Turn A, B, C for STEPS, x, MODE. Release the track key: the window closes
-and, on the next step, the track's scene morph runs by itself, scene A → B → A, one cycle every
-**STEPS × x steps** (by default 16 × 8 = 128), starting on A. The other tracks keep the crossfader.
-Hold the track key and press **DOWN**: the morph finishes its cycle on A and the track stays
-**parked on A**; it follows the crossfader again once the crossfader reaches its A end, so nothing
-jumps. The settings, and which tracks morph, are saved with the project.
+A track's scene morph, played by itself. Hold a track key for about a second: the MORPH window
+opens, drawn like the Octatrack's own pages (title bar, four knobs, the A ↔ B bar). Turn A, B, C, D
+for STEP, MULT, MODE, TYPE, press **YES** to arm, then press **the same track key**: the window
+closes and, on the next step, the track's scene morph runs by itself, scene A → B → A, one cycle
+every **STEP × MULT steps** (by default 16 × 8 = 128), starting on A. The other tracks keep the
+crossfader. TYPE **RISE** goes A → B once, then the track waits parked on A and follows the
+crossfader again when the crossfader reaches its A end: a rise on one track while the rest of the
+scene does something else. The settings, and which tracks morph, are saved with the project.
 
 Author: MaMarko (Marko Brajković, [braikomarko-hub](https://github.com/braikomarko-hub)): the idea,
 the listening and the tests on the unit. **The code was written by Claude (Anthropic)**: engine,
@@ -22,42 +23,37 @@ Markers: ✅ measured, 🟡 inferred.
 
 | keys | what happens |
 |---|---|
-| [TRACK] + [UP] | the MORPH window for the held tracks; they are armed (ARM) |
-| release the track keys | the window closes; the armed tracks start from A on the next step |
-| [TRACK] + [UP] on a morphing track | the window over the running morph: changes apply at once, the morph goes on |
-| [TRACK] + [DOWN] | stop, on every held track: a morphing one finishes its cycle on A, then is parked on A; an armed one goes back to the crossfader |
+| hold [TRACK] ~1 s | the MORPH window of that track |
+| YES (in the window) | arm (ARMED) / disarm; on a morphing track: STOP / back to ON |
+| the same [TRACK] (in the window) | the window closes and what you set starts; a toast says `T2 MORPH ON` / `STOP` / `OFF` |
+| NO | the window closes, nothing starts |
+| A, B, C, D | STEP, MULT, MODE, TYPE (the value shows while you turn, as on the stock pages) |
+| [TRACK] + [UP] | the v1 way still works: the window for the held tracks, armed; releasing the keys starts them |
+| [TRACK] + [DOWN] | stop, on every held track: a morphing one finishes its cycle on A, then is parked on A |
 | crossfader to its A end | a parked track follows the crossfader again |
 | [STOP] | the morph holds where it is; [PLAY] carries on |
 
-Several tracks can morph at once, each from the step after its own start (not from the bar), each
-with its own settings.
+The long press is cancelled by FUNCTION, another key, a second track key, MIDI mode, or another
+window being open: stock keeps every one of those.
 
-The window (hold several track keys and it is for all of them):
+The window:
 
 ```
- MORPH            T1        the window's tracks
- ──────────────────────
-  MORPH           ARM       ARM (in the window) / WAIT (next step) / ON / STOP (finishing) / PARK
-  STEPS (A)        16       encoder A: TRK (the track's length), 1..64
-  x (B)             8       encoder B: 1..16
-  MODE (C)     SMOOTH       encoder C: SMOOTH / HOLD (TRIG HOLD)
-  CYCLE 128 STEPS           STEP 12 / 128 while morphing
+ ██ T2 MORPH ████████████ ARMED ██     title bar (negative): the track, the state
+  STEP    MULT    MODE    TYPE         four stock knobs, dotted separators
+  (o)     (o)     (o)     (o)
+   A ▓▓▓▓▓▓▓▓░░░░░░░░░░░░ B            where the morph is now, A ↔ B
+          ON  12/128                   CYCLE 128 / WAIT 1 / ON n/N / STOP n/N / PARK ON A
 ```
-
-| in the window | what happens |
-|---|---|
-| A, B, C | STEPS, x, MODE on every window track |
-| DOWN | stop, as [TRACK] + [DOWN] |
-| NO, UP, or releasing the track keys | the window closes; an armed track starts on the next step, a morphing one goes on |
-| YES | nothing (under a held track key stock would arm recording) |
 
 | setting (per track) | values | default |
 |---|---|---|
-| STEPS | 0 = TRK, the track's length in the current pattern; 1..64 | 16 |
-| x | 1..16: one cycle is STEPS × x steps (at most 1024) | 8 |
-| MODE | SMOOTH: the morph moves every frame. HOLD (TRIG HOLD): the step's value for the whole step | SMOOTH |
+| STEP | 0 = TRK, the track's length in the current pattern; 1..64 | 16 |
+| MULT | 1..16: one cycle is STEP × MULT steps (at most 1024) | 8 |
+| MODE | SMTH: the morph moves every frame. HOLD (TRIG HOLD): the step's value for the whole step | SMTH |
+| TYPE | LOOP: A → B → A for ever. RISE: A → B once, then parked on A | LOOP |
 
-At x 16, keep turning B to the right and it gives in: **41.625** (16 × 41.625 = 666 steps). Left
+At MULT 16, keep turning B to the right and it gives in: **41.6** (16 × 41.625 = 666 steps). Left
 goes back to 16.
 
 ## Saving
@@ -75,7 +71,7 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
   (MORPH SETTINGS NOT LOADED) and offers to keep it, start fresh, or back it up to `morph.bak`
   first.
 - File: `MRPW`, version 1, payload length 40, CRC-32 of the payload; the payload is the eight
-  tracks' STEPS, x, MODE and a pad byte, one byte of the tracks that morph (bit t), seven zero
+  tracks' STEP, MULT, MODE and TYPE (v1 left TYPE 0 = LOOP), one byte of the tracks that morph (bit t), seven zero
   bytes.
 
 ## How it works
@@ -139,6 +135,11 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
 
 ## Measured
 
+- 🟡 **v2** (window like the stock pages, long press, YES + the same key, TYPE RISE): in the source
+  simulator only (`tools/morph/test_morph.py`: the paint, the four stock knobs with flags 0, every
+  negative box inside the frame, the long press and each way it is cancelled, YES arm / disarm /
+  STOP, the same key applying with its toast, RISE once A → B then parked and re-attached at the
+  fader's A end, TYPE saved and loaded). Not yet on the unit. The lines below are v1.
 - ✅ On the owner's MKI, image MRPPR1 (BUILD 98, remix `morph`, from `374d4515`), the owner's MKI, 23 Oct 2026: the window armed while T1 is held and CYCLE following A and B; YES does nothing; the start on the release; the window over a running morph (changes at once, the morph goes on); 41.625 and CYCLE 666 STEPS; T1 and T5 with different settings, SAVE PROJECT, power off and on, PLAY: both start from A with their settings; a change without saving undone by PROJECT > RELOAD; another project with no morph.work on the fader with the defaults, and back to the first: T1 and T5 armed again; TRACK + DOWN ends the cycle on A. By ear and eye.
 - ✅ On the owner's MKI, image ACIDV74MP (aCiDtRacK + MORPH), 22 Oct 2026, by ear and eye: the
   window ([TRACK] + [UP], STEPS / x / MODE on A, B, C), the morph at the tempo over STEPS × x

@@ -1,0 +1,47 @@
+# tools/emu/live_shots.py morph --script tools/morph/morph.script --output-dir <dir>
+# MORPH v2 on the port: the long press opens the window of T4 (the new page: the big font, the knob
+# row in negative, the bar A..B); a knob's value shows while it turns and goes; TYPE RISE; YES arms;
+# the same track key applies and closes (the toast); the window again shows WAIT; NO; [TRACK]+[UP]
+# still opens it (armed). Look at the top right: no white column. The holds are long (8 s): on a
+# slow machine the port runs slower than the wall clock.
+shot morph/00_main
+hold 0x13
+wait 8
+shot morph/01_long_press_window
+release 0x13
+wait 1
+shot morph/02_released_still_open
+enc 0 2
+shot morph/03_turning_steps
+wait 4
+shot morph/04_value_gone
+enc 3 1
+shot morph/05_type_rise
+enc 1 -2
+shot morph/06_turning_mult
+wait 4
+key 0x31
+shot morph/07_yes_armed
+key 0x12
+shot morph/08_other_track_swallowed
+key 0x13
+wait 1
+shot morph/09_same_key_applies_toast
+wait 10
+hold 0x13
+wait 8
+release 0x13
+wait 1
+shot morph/10_reopened_wait
+key 0x32
+wait 1
+shot morph/11_no_closes
+hold 0x10
+key 0x33
+wait 1
+shot morph/12_track_up_armed
+key 0x32
+wait 1
+shot morph/13_no_closes_nothing_starts
+release 0x10
+quit

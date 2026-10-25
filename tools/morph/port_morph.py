@@ -10,7 +10,9 @@ the crossfader position whose stock weight it is (the curve 0x400bcd90 from out/
 opens the window and starts nothing; encoders A and B set 8 x 2 = 16 steps; YES starts T1 on the
 next step from A; releasing T1 closes the window and the morph goes on at the tempo; T2 keeps the
 crossfader; STOP holds; [T1]+[DOWN] parks T1 on A after the cycle; TRIG HOLD (encoder C) holds one
-value a step. PNGs of the window go to out/morph_port (MORPH_SHOTS=<dir> elsewhere).
+value a step. v2: T2 held ~1.6 s opens its window (the long press); TYPE RISE, YES, T2 again: T2 goes
+from A to B once and is parked on A; the window again, NO. PNGs of the window go to out/morph_port
+(MORPH_SHOTS=<dir> elsewhere).
 What it cannot see: the toast text, the unit's real frame rate (the port's frame is its model)."""
 import argparse, os, struct, sys
 from pathlib import Path
@@ -96,6 +98,33 @@ def main():
         for _ in range(6):
             p.run(int(step_s * 1000 / 8)); vals.add(xf(0))
         check('TRIG HOLD: at most two values in 0.75 step', len(vals) <= 2, str(sorted(vals, key=str)))
+        # ---- v2: the long press on T2, TYPE RISE, YES, the same key: A -> B once, then A, parked
+        p.chord('t1', 'down', settle=60)
+        p.run(int(step_s * 17 * 1000), wall=120)
+        p.key('t2', True); p.run(1600); p.key('t2', False); p.run(200)
+        shot('6_long_press_window')
+        enc(3, 1); enc(2, -1); enc(0, -8); enc(1, -6)         # RISE, SMOOTH, 8 x 2 = 16 steps
+        shot('7_turning_d_type_rise')
+        p.run(1500)
+        shot('8_values_gone')
+        p.press('yes', settle=120)
+        shot('9_yes_armed')
+        check('long press + YES: nothing starts yet', W(1) == w2)
+        p.press('t2', settle=60)
+        shot('10_same_key_closed')
+        p.run(int(step_s * 1000) + 60)
+        xs = []
+        for _ in range(20):
+            p.run(int(step_s * 1000)); xs.append(xf(1))
+        shot('11_after_the_rise')
+        check('RISE: T2 goes from A toward B', any(x is not None and x < 64 for x in xs[:10]), str(xs))
+        check('RISE: then back on A, parked', xs[-1] == 127 and xs[-2] == 127, str(xs))
+        check('RISE: down without a jump back up', all(xs[i + 1] <= xs[i] for i in range(0, 6) if None not in (xs[i], xs[i + 1])), str(xs))
+        # the long press window again: it shows PARK; NO closes it, nothing applied
+        p.key('t2', True); p.run(1600); p.key('t2', False); p.run(200)
+        shot('12_reopened_parked')
+        p.press('no', settle=120)
+        shot('13_no_closed')
     print('port_morph: %d failure(s)' % fails, flush=True)
     return 1 if fails else 0
 
