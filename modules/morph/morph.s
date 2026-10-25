@@ -1177,7 +1177,7 @@ mp_keys:
 
 | ---------------------------------------------------------------- state (DRAM, writable)
         .balign 4
-        .globl  mp_set
+        .globl  mp_set, mp_state, mp_k        | (mp_state, mp_k: the track menu reads and arms them)
 mp_state:  .byte 0, 0, 0, 0, 0, 0, 0, 0
 mp_k:      .long 0, 0, 0, 0, 0, 0, 0, 0     | steps since the cycle began
 mp_lastw:  .long 0                          | the step word at the last frame

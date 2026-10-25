@@ -1,22 +1,33 @@
-| TRACK MENU v1 (prototype, 24 Oct 2026) -- hold a track key ~1 s: that track's menu.
+| TRACK MENU v2 (25 Oct 2026) -- hold a track key ~1 s: that track's menu. EVERY FUNCTION WORKS.
 |
-| NAVIGATION ONLY. Every value lives in this unit and nothing reads it yet: MORPH keeps its own
-| window and settings ([TRACK]+[UP]), no Euclidean pattern is printed. ERGOSUM PLAYS (25 Oct 2026:
-| the engine of the ergosum / ergosum-split branches moved onto v1, with SPLIT ALL / NOTES / RHYTHM).
-| v1 is the shape the owner asked for after trying v0 on his MKI (24 Oct 2026, evening): a small
-| chooser first, as the stock TRACKS / CHROMATIC / SLOTS list, then the function's page, its
-| settings drawn as the stock's own knobs (the PLAYBACK page's 0x400479b4). Nothing is saved.
+| v2 over v1 (the owner, 25 Oct 2026: "una versione completa e funzionante"):
+|   * MORPH's page IS MORPH: STEP, MULT and MODE are MORPH's own settings (mp_set, saved by MORPH in
+|     morph.work), MRPH ON / OFF is applied by the track key that closes the menu (MORPH's start on
+|     the next step, or its stop on A); the line under the knobs shows MORPH's state and cycle.
+|   * EUKLE (EUCLACID's engine, renamed by the owner): YES prints, CUE undoes (8 levels), LIVE is
+|     started or stopped by the closing track key (eukle.s, the second unit of this module).
+|   * ERGOSUM's ON / OFF is applied by the closing track key too (its other knobs play at once).
+|   * the knobs are the stock's in the stock's own way: the value shows while that encoder turns
+|     and goes (the encoder's counter 0x46c7d244 + 20 * n + 4, set to 20 by 0x4003256c as the stock
+|     page handlers do, counted down by the stock's UI tick 0x4005213c; the knob 0x400479b4 with
+|     flags 0 draws the value while the counter is above 3, then lets the knob sink back).
+|   * the white column at the top right (the owner's video of v0, and v1 still): the title bar's and
+|     the chooser's INVERT ran to x = width - 3, the window frame's right line (measured on the port's
+|     photos, 25 Oct: the frame at x = 1 and x = width - 3, its shadow at width - 2): the frame was
+|     inverted to white beside the black bar. They now end at width - 4; the test refuses any INVERT
+|     outside the inside of the frame.
+| Nothing of the menu's own is saved yet (MORPH saves its settings itself).
 |
-|   T held ~1 s, no other key --> the CHOOSER of that track: MORPH, EUCLACID, ERGOSUM (it opens
-|                                on the function last used on that track; stays open when T is
-|                                let go)
-|     UP / DOWN ---------------> the choice;  YES --> its PAGE;  NO or the same T --> closed
+|   T held ~1 s, no other key --> the CHOOSER of that track: MORPH, EUKLE, ERGOSUM (it opens on the
+|                                function last used on that track; stays open when T is let go)
+|     UP / DOWN ---------------> the choice;  YES --> its PAGE;  NO --> closed, nothing applied
 |   on a PAGE (title "T5 MORPH" white on black, the settings as knobs A..F):
-|     knobs A..F --------------> the settings (ARMED: nothing changes in the sound yet)
-|     LEFT / RIGHT ------------> EUCLACID's two pages (the other functions have one)
-|     the SAME T --------------> closes; toast "Tn START" (v1: the start is only shown)
+|     knobs A..F --------------> the settings; the ON / OFF rows (MRPH, LIVE, ERGO) are ARMED only
+|     LEFT / RIGHT ------------> EUKLE's two pages (the other functions have one)
 |     NO ----------------------> back to the chooser
-|     YES / CUE (EUCLACID) ----> "PRINT" / "UNDO" flashed in the title bar (v1: shown only)
+|     YES / CUE (EUKLE) -------> PRINT / UNDO at once, the result flashed in the title bar
+|   the SAME T (page or chooser) > closes and APPLIES the armed rows of this track: MORPH, LIVE,
+|                                ERGO; a toast says the shown function's state ("T5 MORPH ON")
 |   other T keys, trigs, page  > swallowed while the menu is open; PLAY and STOP keep working
 |   keys, FUNC, PATTERN, BANK, REC, MIDI, TEMPO, LEVEL
 |
@@ -42,6 +53,9 @@
 
         .text
         .globl  tm_tpress, tm_tick, tm_set, es_entry, es_next, es_lk
+| MORPH's (modules/morph/morph.s: this module requires MORPH): mp_set (STEPS, x, MODE, pad a
+| track), mp_state (a byte a track), mp_k (the steps of the cycle, a long a track). EuKle's
+| (eukle.s): ek_print, ek_undo, ek_live_set, ek_live_mode.
 
         .macro  KEYREC code, press, release
         .byte   \code, 0
@@ -73,10 +87,19 @@
         .set    TICK,     2             | the soft timer: two ticks, ~17 ms
         .set    LONG,     58            | ~1 s of ticks for the long press
         .set    FLASH,    40            | ~0.7 s: PRINT / UNDO in the title bar
-        .set    NOPTS,    3             | MORPH, EUCLACID, ERGOSUM
+        .set    NOPTS,    3             | MORPH, EUKLE, ERGOSUM
         .set    T_MASKS,  0x00240000    | rows 4..7 as a long: FUNC 0x2d (bit 21), CUE 0x2a (bit 18)
         .set    KNOB,     0x400479b4    | the stock knob: (x, y, slot, value, flags, fmt, surface)
-        .set    K_FLAGS,  8             | flags bit 3: the plain layout (PLAYBACK page 2 passes 8)
+        .set    K_FLAGS,  0             | flags 0: the value only while encoder `slot` turns (below)
+        .set    ENCSHOW,  0x4003256c    | (encoder): its counter = 20, as the stock pages do on a turn
+        .set    ENCCLR,   0x400325d4    | (encoder): its counter = 0 (the knob at rest)
+        .set    ENCCNT,   0x46c7d248    | encoder n's counter: + 20 * n (0x46c7d244 + 4)
+        .set    MP_STOPS, 2             | MORPH's states (morph.s): FADER 0 RUN 1 STOP 2 PARK 3 ARMED 4
+        .set    MP_PARK,  3             | HELD 5
+        .set    MP_ARMED, 4
+        .set    MP_HELD,  5
+        .set    BANK_PTR, 0x46c82456    | the bank blob (MORPH's cycle length with STEPS = TRK)
+        .set    PAT_IDX,  0x100b14d0
         .set    STEPW,    0x800065b2    | the sequencer's step word (u16; MORPH reads it too)
         .set    BUILDER,  0x4009d1e8    | the trig record builder (track, bank, pattern, step, n)
         .set    FMT_D,    0x4003c178    | the stock formatter fmt(buf, value): "%d"
@@ -196,12 +219,54 @@ tk_open:                                | the menu is open
         jsr     LPUSH
         addq.l  #4,%sp
 tk_o2:  tst.l   tm_flash
-        beq     tk_9
+        beq     tk_o3
         subq.l  #1,tm_flash
         tst.l   tm_flash
-        bne     tk_9
-        bra     tm_draw                 | the flash is over: the page number again
+        beq     tm_draw                 | the flash is over: the page number again
+tk_o3:  bsr     tm_sig                  | a knob's value showing or going, MORPH's step: repaint
+        cmp.l   tm_last,%d0
+        bne     tm_draw
+        cmp.l   tm_lastk,%d1
+        bne     tm_draw
 tk_9:   rts
+
+| tm_sig -- what the page shows that changes by itself: d0 = the six encoders' counters (each 0..3,
+| or 4 = the value shown; 3 bits an encoder) and, on MORPH's page, MORPH's state << 24; d1 = MORPH's
+| step (0 elsewhere). The chooser: 0, 0. Clobbers a0, a1.
+tm_sig:
+        moveq   #0,%d0
+        moveq   #0,%d1
+        tst.l   tm_onpage
+        beq     sg_9
+        lea     ENCCNT+5*20,%a0         | encoder F first
+        lea     ENCCNT,%a1
+sg_1:   lsl.l   #3,%d0
+        move.l  (%a0),%d1
+        bpl     sg_2
+        moveq   #0,%d1
+sg_2:   cmp.l   #4,%d1
+        bcs     sg_3
+        moveq   #4,%d1
+sg_3:   or.l    %d1,%d0
+        cmpa.l  %a1,%a0
+        beq     sg_4
+        lea     -20(%a0),%a0
+        bra     sg_1
+sg_4:   moveq   #0,%d1
+        tst.l   tm_sel
+        bne     sg_9
+        lea     mp_state,%a0
+        move.l  tm_t,%d1
+        add.l   %d1,%a0
+        mvz.b   (%a0),%d1
+        swap    %d1
+        lsl.l   #8,%d1
+        or.l    %d1,%d0                 | the state in the top byte
+        lea     mp_k,%a0
+        move.l  tm_t,%d1
+        lsl.l   #2,%d1
+        move.l  (%a0,%d1.l),%d1
+sg_9:   rts
 
 | tm_anywin -- Z clear (bne) when a window entry is visible. Clobbers d0, d1, a0.
 tm_anywin:
@@ -233,6 +298,7 @@ tm_open:
         move.l  %d0,tm_t
         clr.l   tm_rebuilt
         clr.l   tm_flash
+        bsr     tm_arm_init             | the ON / OFF rows show what runs now
         bsr     tm_set_a0               | the chooser starts on the function last used here
         mvz.b   (%a0),%d0
         moveq   #NOPTS-1,%d1
@@ -314,6 +380,166 @@ tm_closed:                              | WCREATE's callback: another window of 
         addq.l  #4,%sp
 tc_9:   rts
 
+| tm_arm_init -- the menu's track's ON / OFF rows = what runs now: MRPH (byte 4) = MORPH running,
+| armed or held; LIVE (13) = EuKle's LIVE mode while it runs, else OFF; ERGO (19) = ERGOSUM playing
+| (21). Clobbers d0, d1, a0, a1.
+tm_arm_init:
+        lea     mp_state,%a0
+        move.l  tm_t,%d1
+        mvz.b   (%a0,%d1.l),%d0
+        bsr     tm_mp_on
+        bsr     tm_set_a0
+        move.b  %d0,4(%a0)
+        move.l  tm_t,%d1
+        move.l  %d1,-(%sp)
+        jsr     ek_live_mode
+        addq.l  #4,%sp
+        bsr     tm_set_a0
+        move.b  %d0,13(%a0)
+        move.b  21(%a0),%d0
+        move.b  %d0,19(%a0)
+        rts
+
+| tm_mp_on -- d0 = a MORPH state: d0 = 1 when it morphs or will (RUN, ARMED, HELD), else 0.
+tm_mp_on:
+        subq.l  #1,%d0
+        beq     mo_1                    | RUN
+        subq.l  #MP_ARMED-1,%d0
+        beq     mo_1                    | ARMED
+        subq.l  #MP_HELD-MP_ARMED,%d0
+        beq     mo_1                    | HELD
+        moveq   #0,%d0
+        rts
+mo_1:   moveq   #1,%d0
+        rts
+
+| tm_apply -- the track key that closes the menu: this track's armed rows applied. MRPH ON: MORPH
+| starts on the next step from A (from the fader or parked; a stopping one carries on), as morph.s
+| mp_start1; OFF: a morphing track finishes its cycle on A (mp_stop1), an armed one goes back to the
+| fader. LIVE: ek_live_set (OFF freezes, a mode starts it or changes it). ERGO: ERGOSUM plays or not.
+| Key-handler context: d0, d1, a0, a1 only.
+tm_apply:
+        bsr     tm_set_a0
+        lea     mp_state,%a1
+        move.l  tm_t,%d1
+        add.l   %d1,%a1
+        mvz.b   (%a1),%d0
+        tst.b   4(%a0)
+        beq     ap_off
+        tst.l   %d0
+        beq     ap_arm                  | the fader's
+        moveq   #MP_PARK,%d1
+        cmp.l   %d1,%d0
+        beq     ap_arm                  | parked
+        moveq   #MP_STOPS,%d1
+        cmp.l   %d1,%d0
+        bne     ap_live                 | morphing, armed or held: unchanged
+        moveq   #1,%d0                  | stopping: morphing again
+        move.b  %d0,(%a1)
+        bra     ap_live
+ap_arm: moveq   #MP_ARMED,%d0
+        move.b  %d0,(%a1)
+        bra     ap_live
+ap_off: moveq   #1,%d1
+        cmp.l   %d1,%d0
+        bne     ap_o1
+        moveq   #MP_STOPS,%d0           | morphing: to its last A
+        move.b  %d0,(%a1)
+        bra     ap_live
+ap_o1:  moveq   #MP_ARMED,%d1
+        cmp.l   %d1,%d0
+        beq     ap_o2
+        moveq   #MP_HELD,%d1
+        cmp.l   %d1,%d0
+        bne     ap_live
+ap_o2:  clr.b   (%a1)                   | armed or held: the fader's again
+ap_live:
+        mvz.b   13(%a0),%d0
+        move.l  %d0,-(%sp)
+        move.l  tm_t,%d1
+        move.l  %d1,-(%sp)
+        jsr     ek_live_set
+        addq.l  #8,%sp
+        bsr     tm_set_a0
+        move.b  19(%a0),%d0
+        move.b  %d0,21(%a0)             | ERGOSUM plays (or not) from the next step
+        rts
+
+| tm_val_a0 -- a1 = a knob record: a0 = its byte (the menu track's tm_set, or MORPH's mp_set when
+| the record's byte 7 is 1). Clobbers d0, d1.
+tm_val_a0:
+        mvz.b   7(%a1),%d0
+        bne     tv_mp
+        bsr     tm_set_a0
+        bra     tv_1
+tv_mp:  lea     mp_set,%a0
+        move.l  tm_t,%d1
+        lsl.l   #2,%d1
+        add.l   %d1,%a0
+tv_1:   mvz.b   4(%a1),%d0
+        add.l   %d0,%a0
+        rts
+
+| tm_mlen -- d0 = MORPH's cycle N for the menu's track, as morph.s mp_len: STEPS (0 = the track's
+| length in the current pattern, 1..64, else 16) x x (1..16), or STEPS x 333 / 8 for x 17 (41.625);
+| at most 1024. Clobbers d1, d2, a0.
+tm_mlen:
+        lea     mp_set,%a0
+        move.l  tm_t,%d1
+        lsl.l   #2,%d1
+        add.l   %d1,%a0
+        mvz.b   (%a0),%d0
+        bne     ml_2
+        moveq   #16,%d0
+        move.l  BANK_PTR,%d1
+        beq     ml_2
+        move.l  %d1,%a0
+        mvz.b   PAT_IDX,%d1
+        moveq   #15,%d2
+        and.l   %d2,%d1
+        move.l  #0x8ed8,%d2
+        mulu.l  %d2,%d1
+        add.l   %d1,%a0
+        move.l  tm_t,%d1
+        move.l  #0x91a,%d2
+        mulu.l  %d2,%d1
+        add.l   %d1,%a0
+        mvz.b   0x50(%a0),%d0
+        moveq   #64,%d1
+        cmp.l   %d1,%d0
+        bls     ml_1
+        moveq   #16,%d0
+ml_1:   tst.l   %d0
+        bne     ml_2
+        moveq   #16,%d0
+ml_2:   lea     mp_set,%a0
+        move.l  tm_t,%d1
+        lsl.l   #2,%d1
+        add.l   %d1,%a0
+        mvz.b   1(%a0),%d1              | x
+        moveq   #17,%d2
+        cmp.l   %d2,%d1
+        bne     ml_3
+        move.l  #333,%d1
+        mulu.l  %d1,%d0
+        lsr.l   #3,%d0
+        bne     ml_9
+        moveq   #1,%d0
+        rts
+ml_3:   moveq   #16,%d2
+        cmp.l   %d2,%d1
+        bls     ml_4
+        move.l  %d2,%d1
+ml_4:   tst.l   %d1
+        bne     ml_5
+        moveq   #1,%d1
+ml_5:   mulu.l  %d1,%d0
+        move.l  #1024,%d1
+        cmp.l   %d1,%d0
+        bls     ml_9
+        move.l  %d1,%d0
+ml_9:   rts
+
 | tm_set_a0 -- a0 = this track's settings (SETSZ bytes: the function last used first). Clobbers d1.
 tm_set_a0:
         lea     tm_set,%a0
@@ -323,7 +549,7 @@ tm_set_a0:
         rts
 
 | tm_cur -- the page on screen: a0 = the track's settings, a1 = its page record, d0 = the page's
-| index within its function (EUCLACID 0 or 1), d1 = the function's page count. Clobbers nothing
+| index within its function (EUKLE 0 or 1), d1 = the function's page count. Clobbers nothing
 | else.
 tm_cur:
         bsr     tm_set_a0
@@ -378,7 +604,7 @@ ku_1:   moveq   #1,%d1
 ku_2:   move.l  %d0,tm_sel
         bra     tm_draw
 
-| LEFT / RIGHT: on a page of a function with more than one (EUCLACID), the other page.
+| LEFT / RIGHT: on a page of a function with more than one (EUKLE), the other page.
 tm_left:
 tm_right:
         moveq   #1,%d0
@@ -394,10 +620,22 @@ tm_right:
         eori.l  #1,%d0
         move.l  %d0,tm_pg
         clr.l   tm_flash
+        bsr     tm_encclr
         bra     tm_draw
 
-| YES: on the chooser, open the choice's page (and remember it for this track); on a EUCLACID
-| page, PRINT flashed. CUE: on a EUCLACID page, UNDO flashed.
+| tm_encclr -- the six encoders' counters 0: every knob at rest, no value shown. Clobbers a0.
+tm_encclr:
+        lea     ENCCNT,%a0
+        clr.l   (%a0)
+        clr.l   20(%a0)
+        clr.l   40(%a0)
+        clr.l   60(%a0)
+        clr.l   80(%a0)
+        clr.l   100(%a0)
+        rts
+
+| YES: on the chooser, open the choice's page (and remember it for this track); on a EUKLE page,
+| PRINT. CUE: on a EUKLE page, UNDO. The result flashed in the title bar.
 tm_yes:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
@@ -412,9 +650,17 @@ tm_yes:
         bsr     tm_win_page
         tst.l   tm_win
         beq     tm_close
+        bsr     tm_encclr
         bra     tm_draw
 ky_page:
-        lea     S_PRINT,%a0
+        moveq   #1,%d0
+        cmp.l   tm_sel,%d0
+        bne     k_9                     | only EUKLE prints
+        move.l  tm_t,%d1
+        move.l  %d1,-(%sp)
+        jsr     ek_print
+        addq.l  #4,%sp
+        lea     ST_PRINT,%a0
         bra     ky_1
 tm_cue:
         moveq   #1,%d0
@@ -422,17 +668,27 @@ tm_cue:
         bne     k_9
         tst.l   tm_onpage
         beq     k_9
-        lea     S_UNDO,%a0
-ky_1:   moveq   #1,%d0
+        moveq   #1,%d0
         cmp.l   tm_sel,%d0
-        bne     k_9                     | only EUCLACID prints
+        bne     k_9
+        move.l  tm_t,%d1
+        move.l  %d1,-(%sp)
+        jsr     ek_undo
+        addq.l  #4,%sp
+        lea     ST_UNDO,%a0
+ky_1:   moveq   #5,%d1                  | d0 = EuKle's status: its word
+        cmp.l   %d1,%d0
+        bls     ky_2
+        move.l  %d1,%d0
+ky_2:   lsl.l   #2,%d0
+        move.l  (%a0,%d0.l),%a0
         move.l  %a0,tm_fstr
         moveq   #FLASH,%d0
         move.l  %d0,tm_flash
         bra     tm_draw
 
-| a track key while the menu is open: the menu's own track starts from a page (v1: closes and
-| says so) and closes the chooser silently; any other track key is swallowed.
+| a track key while the menu is open: the menu's own track applies the armed rows, closes the menu
+| and says the shown function's state ("T5 MORPH ON"); any other track key is swallowed.
 tm_trk:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
@@ -441,16 +697,56 @@ tm_trk:
         sub.l   #0x10,%d0
         cmp.l   tm_t,%d0
         bne     k_9
-        tst.l   tm_onpage
-        beq     tm_close
+        bsr     tm_apply
         bsr     tm_close
-        move.l  tm_t,%d0
+        move.l  tm_sel,%d0              | the toast: "Tn <label> <state>"
+        beq     tt_morph
+        subq.l  #1,%d0
+        beq     tt_eukle
+        bsr     tm_set_a0               | ERGOSUM
+        mvz.b   21(%a0),%d0
+        lea     LS_OFFON,%a0
+        lsl.l   #2,%d0
+        move.l  (%a0,%d0.l),%a0
+        move.l  %a0,-(%sp)
+        pea     N_ERGO
+        bra     tt_2
+tt_eukle:
+        move.l  tm_t,%d1
+        move.l  %d1,-(%sp)
+        jsr     ek_live_mode
+        addq.l  #4,%sp
+        moveq   #4,%d1
+        cmp.l   %d1,%d0
+        bls     tt_e1
+        moveq   #0,%d0
+tt_e1:  lea     LS_LIVE,%a0
+        lsl.l   #2,%d0
+        move.l  (%a0,%d0.l),%a0
+        move.l  %a0,-(%sp)
+        pea     N_LIVE
+        bra     tt_2
+tt_morph:
+        lea     mp_state,%a0
+        move.l  tm_t,%d1
+        mvz.b   (%a0,%d1.l),%d0
+        lea     V_STOP,%a0
+        moveq   #MP_STOPS,%d1
+        cmp.l   %d1,%d0
+        beq     tt_m1
+        bsr     tm_mp_on
+        lea     LS_OFFON,%a0
+        lsl.l   #2,%d0
+        move.l  (%a0,%d0.l),%a0
+tt_m1:  move.l  %a0,-(%sp)
+        pea     O_MORPH
+tt_2:   move.l  tm_t,%d0
         addq.l  #1,%d0
         move.l  %d0,-(%sp)
-        pea     F_START
+        pea     F_TOAST
         pea     tm_tbuf
         jsr     SPRINTF
-        lea     12(%sp),%sp
+        lea     20(%sp),%sp
         lea     tm_tbuf,%a0
         move.l  %a0,4(%sp)              | tail-call NOTIFY(text, 0x30) in our caller's frame
         moveq   #0x30,%d0
@@ -470,8 +766,14 @@ tm_enc:
         move.l  4(%a1),%a1              | the knobs
         lsl.l   #4,%d0                  | 16 bytes a knob
         add.l   %d0,%a1
-        mvz.b   4(%a1),%d0              | the byte's offset in the settings
-        add.l   %d0,%a0
+        bsr     tm_val_a0               | a0 = its byte
+        move.l  %a0,-(%sp)              | the stock's way: this encoder's value shows a while
+        move.l  %a1,-(%sp)
+        move.l  12(%sp),-(%sp)          | the encoder (4(sp) before the two pushes)
+        jsr     ENCSHOW
+        addq.l  #4,%sp
+        move.l  (%sp)+,%a1
+        move.l  (%sp)+,%a0
         mvz.b   (%a0),%d0
         add.l   8(%sp),%d0
         mvz.b   5(%a1),%d1              | min
@@ -487,10 +789,10 @@ te_2:   move.b  %d0,(%a0)
 
 | ---- the paint
 | the chooser:            the page:
-|  ┌──────────┐           ███ T5 EUCLACID ████████ 1/2 █   the title bar, inverted
-|  │█ MORPH  █│            PLSA  ROTA  PLSB                the knobs' names, the stock knobs,
-|  │  EUCLACID│             (o)   (o)   (o)                their values under them (drawn by
-|  │  ERGOSUM │              4     0     0                 the knob itself)
+|  ┌──────────┐           ███ T5 EUKLE ███████████ 1/2 █   the title bar, inverted
+|  │█ MORPH  █│            PLSA  ROTA  PLSB                the knobs' names, the stock knobs;
+|  │  EUKLE   │             (o)   (o)   (o)                a value shows under its knob while
+|  │  ERGOSUM │                    12                      that encoder turns (the knob draws it)
 |  └──────────┘            ROTB  SLDE  SROT ...
 tm_draw:
         tst.l   tm_win
@@ -518,7 +820,7 @@ td_l1:  moveq   #L_X,%d0
         move.l  %d5,%d0
         addq.l  #6,%d0
         move.l  %d0,-(%sp)              | y2
-        pea     LISTW-3                 | x2
+        pea     LISTW-4                 | x2: the frame's right line is at LISTW - 3
         move.l  %d5,%d0
         subq.l  #1,%d0
         move.l  %d0,-(%sp)              | y1
@@ -573,7 +875,7 @@ td_pr:  move.l  #X_VAL,%d0
         bsr     tm_rtext
 td_bar: pea     -1
         pea     Y_TITLE+7
-        pea     WINW-3
+        pea     WINW-4                  | (the frame's right line is at WINW - 3: v1's white column)
         pea     Y_TITLE-2
         pea     2
         move.l  %a5,-(%sp)
@@ -595,8 +897,9 @@ td_k1:  cmp.l   8(%a4),%d7
         move.l  (%a2),%a0
         bsr     tm_ctext
 | the stock knob draws the circle, the pointer and the value (through the formatter) under it
-        mvz.b   4(%a2),%d0
-        mvz.b   (%a3,%d0.l),%d0         | the value
+        move.l  %a2,%a1
+        bsr     tm_val_a0
+        mvz.b   (%a0),%d0               | the value
         move.l  %a5,-(%sp)              | surface
         move.l  8(%a2),-(%sp)           | formatter
         pea     K_FLAGS
@@ -610,28 +913,58 @@ td_k1:  cmp.l   8(%a4),%d7
         addq.l  #2,%a6
         addq.l  #1,%d7
         bra     td_k1
-| MORPH: the cycle under its knobs, as its own window shows it ("CYCLE 128 STEPS")
+| MORPH: its state and cycle under its knobs, as its own window says them
 td_foot:
         tst.l   tm_sel
         bne     td_end
-        mvz.b   1(%a3),%d0              | STEPS (0 = TRK)
-        mvz.b   2(%a3),%d1              | x
-        tst.l   %d0
+        bsr     tm_mlen                 | d0 = N
+        move.l  %d0,%d2
+        lea     mp_state,%a0
+        move.l  tm_t,%d1
+        mvz.b   (%a0,%d1.l),%d3
+        lea     mp_k,%a0
+        lsl.l   #2,%d1
+        move.l  (%a0,%d1.l),%d4         | k
+        addq.l  #1,%d4
+        lea     F_CYCLE,%a0             | the fader's: "CYCLE 128 STEPS"
+        moveq   #1,%d0
+        cmp.l   %d0,%d3
         bne     tf_1
-        move.l  %d1,-(%sp)
-        pea     F_CYTRK
-        bra     tf_2
-tf_1:   mulu.w  %d1,%d0
-        move.l  %d0,-(%sp)
-        pea     F_CYCLE
-tf_2:   pea     tm_buf
+        lea     F_RUN,%a0               | "ON  12/128"
+        bra     tf_k
+tf_1:   moveq   #MP_STOPS,%d0
+        cmp.l   %d0,%d3
+        bne     tf_2
+        lea     F_STOPK,%a0             | "STOP 12/128"
+tf_k:   move.l  %d2,-(%sp)
+        move.l  %d4,-(%sp)
+        bra     tf_p2
+tf_2:   moveq   #MP_PARK,%d0
+        cmp.l   %d0,%d3
+        bne     tf_3
+        lea     F_PARK,%a0              | "PARK ON A"
+        bra     tf_p0
+tf_3:   moveq   #MP_ARMED,%d0
+        cmp.l   %d0,%d3
+        bcs     tf_p1
+        lea     F_WAIT,%a0              | armed or held: "WAIT  CYCLE 128"
+tf_p1:  move.l  %d2,-(%sp)
+        move.l  %d2,-(%sp)              | (one argument used)
+        bra     tf_p2
+tf_p0:  clr.l   -(%sp)
+        clr.l   -(%sp)
+tf_p2:  move.l  %a0,-(%sp)
+        pea     tm_buf
         jsr     SPRINTF
-        lea     12(%sp),%sp
+        lea     16(%sp),%sp
         moveq   #X_LAB,%d0
         moveq   #Y_FOOT,%d1
         lea     tm_buf,%a0
         bsr     tm_text
-td_end: moveq   #1,%d0
+td_end: bsr     tm_sig                  | what this paint showed
+        move.l  %d0,tm_last
+        move.l  %d1,tm_lastk
+        moveq   #1,%d0
         move.l  %d0,SCRDIRTY
         movem.l (%sp),%d2-%d7/%a2-%a6
         lea     44(%sp),%sp
@@ -692,9 +1025,18 @@ fm_steps:                               | MORPH's STEPS: 0 = TRK
         rts
 fs_trk: lea     V_TRK,%a0
         bra     fm_s
+fm_mult:                                | MORPH's x: 1..16, 17 = 41.625
+        moveq   #17,%d0
+        cmp.l   8(%sp),%d0
+        beq     fmm_egg
+        move.l  8(%sp),-(%sp)           | value
+        move.l  8(%sp),-(%sp)           | buf (4(sp) before the push)
+        jsr     FMT_D
+        addq.l  #8,%sp
+        rts
+fmm_egg: lea    V_EGG,%a0
+        bra     fm_s
 fm_mode:  lea     LS_MODE,%a0
-        bra     fm_list
-fm_arm:   lea     LS_ARM,%a0
         bra     fm_list
 fm_emode: lea     LS_EMODE,%a0
         bra     fm_list
@@ -725,44 +1067,49 @@ fm_s:   move.l  %a0,-(%sp)
 | ---------------------------------------------------------------- the functions and their pages
 | option record, 16 bytes: name, first page record, page count, 0.
 | page record, 16 bytes: title, knobs, knob count, positions (x, y bytes per knob).
-| knob record, 16 bytes: name (4 characters, as the stock's); the byte's offset in the track's
-| settings, min, max, 0; the formatter fmt(buf, value); 0.
+| knob record, 16 bytes: name (4 characters, as the stock's); the byte's offset, min, max, where
+| (0 = the menu track's tm_set, 1 = MORPH's mp_set: KM); the formatter fmt(buf, value); 0.
         .macro  KN name, off, min, max, fmt
         .long   \name
         .byte   \off, \min, \max, 0
         .long   \fmt, 0
         .endm
+        .macro  KM name, off, min, max, fmt
+        .long   \name
+        .byte   \off, \min, \max, 1
+        .long   \fmt, 0
+        .endm
 
         .balign 4
 OPTS:   .long   O_MORPH, PG_MORPH, 1, 0
-        .long   O_EUCL,  PG_EUCL,  2, 0
+        .long   O_EUKLE, PG_EUCL,  2, 0
         .long   O_ERGO,  PG_ERGO,  1, 0
 PG_MORPH: .long O_MORPH, KN_MORPH, 4, XY_ROW4
-PG_EUCL:  .long O_EUCL,  KN_EUCL,  6, XY_SIX
-          .long O_EUCL,  KN_LIVE,  5, XY_SIX
+PG_EUCL:  .long O_EUKLE, KN_EUCL,  6, XY_SIX
+          .long O_EUKLE, KN_LIVE,  5, XY_SIX
 PG_ERGO:  .long O_ERGO,  KN_ERGO,  5, XY_SIX
 XY_ROW4:  .byte 6, K_Y1, 34, K_Y1, 62, K_Y1, 90, K_Y1
 XY_SIX:   .byte 10, K_Y1, 48, K_Y1, 86, K_Y1, 10, K_Y2, 48, K_Y2, 86, K_Y2
         .balign 4
-KN_MORPH:                               | MORPH's window, the same ranges (the 41.625 egg left out)
-        KN      N_STEP,  1, 0, 64, fm_steps
-        KN      N_MULT,  2, 1, 16, FMT_D
-        KN      N_MODE,  3, 0, 1, fm_mode
-        KN      N_MRPH,  4, 0, 1, fm_arm
-KN_EUCL:                                | EUCLACID's main page
+KN_MORPH:                               | MORPH's own settings (mp_set) and the armed ON / OFF
+        KM      N_STEP,  0, 0, 64, fm_steps
+        KM      N_MULT,  1, 1, 16, fm_mult  | (41.625, set in MORPH's window, shows; a turn leaves it)
+        KM      N_MODE,  2, 0, 1, fm_mode
+        KN      N_MRPH,  4, 0, 1, fm_offon
+KN_EUCL:                                | EUKLE's main page
         KN      N_PLSA,  5, 0, 64, FMT_D
         KN      N_ROTA,  6, 0, 63, FMT_D
         KN      N_PLSB,  7, 0, 64, FMT_D
         KN      N_ROTB,  8, 0, 63, FMT_D
         KN      N_SLDE,  9, 0, 64, FMT_D
         KN      N_SROT, 10, 0, 63, FMT_D
-KN_LIVE:                                | EUCLACID's SETUP page, with the new modes
+KN_LIVE:                                | EUKLE's SETUP page: MODE, A+B, LIVE (armed), ONLY, EVRY
         KN      N_MODE, 11, 0, 3, fm_emode
         KN      N_OP,   12, 0, 3, fm_op
         KN      N_LIVE, 13, 0, 4, fm_live
         KN      N_ONLY, 14, 0, 1, fm_offon
         KN      N_EVRY, 15, 0, 6, fm_evry
-KN_ERGO:                                | ERGOSUM (RENE_CARTESIANO_idea.md): it plays (the engine below)
+KN_ERGO:                                | ERGOSUM (RENE_CARTESIANO_idea.md): ERGO armed, the rest at once
         KN      N_MODE, 16, 0, 3, fm_gmode
         KN      N_RATI, 17, 0, 8, fm_ratio
         KN      N_SNAK, 18, 1, 16, FMT_D
@@ -770,7 +1117,6 @@ KN_ERGO:                                | ERGOSUM (RENE_CARTESIANO_idea.md): it 
         KN      N_SPLT, 20, 0, 2, fm_split
 
 LS_MODE:  .long V_SMOOTH, V_HOLD
-LS_ARM:   .long V_OFF, V_ARM
 LS_EMODE: .long V_EUCL, V_AUREO, V_DENS, V_NEST
 LS_OP:    .long V_OR, V_XOR, V_AND, V_SUB
 LS_LIVE:  .long V_OFF, V_ROT, V_DENS, V_MUTA, V_OPER
@@ -781,7 +1127,7 @@ LS_SPLIT: .long V_ALL, V_NOTE, V_RTHM
 LS_RATIO: .long R_11, R_12, R_23, R_34, R_13, R_25, R_35, R_37, R_57
 
 O_MORPH:  .asciz "MORPH"
-O_EUCL:   .asciz "EUCLACID"
+O_EUKLE:  .asciz "EUKLE"
 O_ERGO:   .asciz "ERGOSUM"
 N_STEP:   .asciz "STEP"
 N_MULT:   .asciz "MULT"
@@ -799,7 +1145,6 @@ N_ONLY:   .asciz "ONLY"
 N_EVRY:   .asciz "EVRY"
 N_RATI:   .asciz "RATI"
 N_SNAK:   .asciz "SNAK"
-N_ARM:    .asciz "ARM"
 N_ERGO:   .asciz "ERGO"
 N_SPLT:   .asciz "SPLT"
 V_TRK:    .asciz "TRK"
@@ -807,7 +1152,6 @@ V_SMOOTH: .asciz "SMTH"
 V_HOLD:   .asciz "HOLD"
 V_OFF:    .asciz "OFF"
 V_ON:     .asciz "ON"
-V_ARM:    .asciz "ARM"
 V_EUCL:   .asciz "EUCL"
 V_AUREO:  .asciz "GOLD"
 V_DENS:   .asciz "DENS"
@@ -842,15 +1186,28 @@ V_8:      .asciz "8"
 V_16:     .asciz "16"
 V_32:     .asciz "32"
 V_64:     .asciz "64"
+V_STOP:   .asciz "STOP"
+V_EGG:    .asciz "41.6"
 S_PRINT:  .asciz "PRINT"
 S_UNDO:   .asciz "UNDO"
+S_NOBANK: .asciz "NO BANK"
+S_LEN:    .asciz "LENGTH"
+S_HELD:   .asciz "HELD"
+S_NOUNDO: .asciz "NO UNDO"
+S_BUSY:   .asciz "BUSY"
+        .balign 4
+ST_PRINT: .long S_PRINT, S_NOBANK, S_LEN, S_HELD, S_NOUNDO, S_BUSY  | by EuKle's status
+ST_UNDO:  .long S_UNDO, S_NOBANK, S_LEN, S_HELD, S_NOUNDO, S_BUSY
 F_TITLE:  .asciz "T%d %s"
 F_PAGE:   .asciz "%d/%d"
 F_STR:    .asciz "%s"
 F_NUM:    .asciz "%d"
-F_START:  .asciz "T%d START"
+F_TOAST:  .asciz "T%d %s %s"
 F_CYCLE:  .asciz "CYCLE %d STEPS"
-F_CYTRK:  .asciz "CYCLE TRK x %d"
+F_RUN:    .asciz "ON  %d/%d"
+F_STOPK:  .asciz "STOP %d/%d"
+F_PARK:   .asciz "PARK ON A"
+F_WAIT:   .asciz "WAIT  CYCLE %d"
 
 | ================================================================ ERGOSUM (the engine)
 | The trig record builder 0x4009d1e8(track @4, bank @8, pattern @12, step @16, n @20) decides the
@@ -888,8 +1245,8 @@ es_entry:
         lea     tm_set,%a0
         lsl.l   #5,%d0
         add.l   %d0,%a0
-        tst.b   19(%a0)
-        beq     es_call                 | ERGOSUM OFF
+        tst.b   21(%a0)
+        beq     es_call                 | ERGOSUM not playing (byte 21, set by the closing track key)
         tst.b   16(%a0)
         beq     es_call                 | LIN: the step as it is
         move.l  40(%sp),%d0             | a2 = the track record (as the builder's):
@@ -1147,13 +1504,14 @@ TM_ENCS:
         .long   0, 0, 0, 0, 0
 
 | ---------------------------------------------------------------- state (DRAM, writable)
-| per track, 32 bytes: the function last used (0 MORPH, 1 EUCLACID, 2 ERGOSUM); MORPH: STEPS
-| (0 = TRK), x, MODE, MORPH (armed); EUCLACID: PLSA, ROTA, PLSB, ROTB, SLDE, SROT; its SETUP: MODE,
-| OP, LIVE, ONLY, EVRY; ERGOSUM (16..20): MODE, RATIO, SNAKE, ON, SPLIT (ALL / NOTES / RHYTHM); the
-| rest free. Defaults: MORPH's (16 x 8 SMOOTH), EUCLACID's (PLSA 4, the rest 0), ERGOSUM's (LIN, 1:1,
-| snake 1, OFF, ALL).
+| per track, 32 bytes: 0 the function last used (0 MORPH, 1 EUKLE, 2 ERGOSUM); 1..3 free (v1's MORPH
+| copy: MORPH's own mp_set now); 4 MRPH armed (0 OFF, 1 ON); EUKLE 5..10: PLSA, ROTA, PLSB, ROTB,
+| SLDE, SROT; 11..15: MODE (EUCL GOLD DENS NEST), A+B (OR XOR AND A-B), LIVE armed (OFF ROT DENS MUTA
+| OPER), ONLY, EVRY (1 2 4 8 16 32 64 bars); ERGOSUM 16..20: MODE, RATIO, SNAKE, ERGO armed, SPLIT
+| (ALL / NOTES / RHYTHM); 21 ERGOSUM playing (from ERGO, at the closing track key); the rest free.
+| Defaults: EUKLE PLSA 4, the rest 0; ERGOSUM LIN, 1:1, snake 1, OFF, ALL.
         .macro  TSET
-        .byte   0, 16, 8, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        .byte   0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         .byte   0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         .endm
         .balign 4
@@ -1188,6 +1546,8 @@ tm_fstr:    .long 0
 tm_rx:      .long 0
 tm_ry:      .long 0
 tm_rstr:    .long 0
+tm_last:    .long -1                        | tm_sig of the last paint
+tm_lastk:   .long -1
 tm_buf:     .space 24
 tm_tbuf:    .space 16
 es_next:    .byte  -1, -1, -1, -1, -1, -1, -1, -1   | ERGOSUM: the cell each track plays next (0xff off)

@@ -1,39 +1,80 @@
-# TRACK MENU (v1, prototype)
+# TRACK MENU (v2)
 
 Hold a track key about a second, with no other key: that track's menu opens, and stays open when
 the key is let go. First a small chooser (as the stock TRACKS / CHROMATIC / SLOTS list), then the
-chosen function's page, its settings drawn as the stock's own knobs.
+chosen function's page, its settings drawn as the stock's own knobs. **Every function works.**
 
 ```
- T held ~1 s ──► ┌────────────┐   UP / DOWN: the choice     YES ──► █ T5 EUCLACID ████████ 1/2 █
+ T held ~1 s ──► ┌────────────┐   UP / DOWN: the choice     YES ──► █ T5 EUKLE ███████████ 1/2 █
                  │█ MORPH    █│   YES: its page                     PLSA   ROTA   PLSB
-                 │  EUCLACID  │   NO or the same T: closed           (o)    (o)    (o)
-                 │  ERGOSUM   │                                       4      0      0
+                 │  EUKLE     │   NO: closed                         (o)    (o)    (o)
+                 │  ERGOSUM   │   the same T: closed + START                12
                  └────────────┘                                     ROTB   SLDE   SROT ...
 ```
 
-On a page: the knobs set the values; LEFT / RIGHT turn EUCLACID's two pages; the SAME track key
-closes ("T5 START"); NO goes back to the chooser; on EUCLACID YES flashes PRINT and CUE flashes
-UNDO in the title bar. The chooser opens on the function last used on that track.
+On a page: the knobs set the values, and a value shows under its knob while that encoder turns,
+then goes, as on the stock pages. LEFT / RIGHT turn EUKLE's two pages; NO goes back to the chooser.
+
+**Armed, then started by the same track key.** The rows that start something (MRPH, LIVE, ERGO)
+only arm on the page; the same track key (on a page or on the chooser) closes the menu and applies
+them, and a toast says the state of the function shown ("T5 MORPH ON", "T5 LIVE ROT"). NO never
+applies anything. When the menu opens, those rows show what runs now.
 
 | page | A | B | C | D | E | F |
 |---|---|---|---|---|---|---|
-| MORPH | STEP (TRK, 1..64) | MULT (1..16) | MODE (SMTH / HOLD) | MRPH (OFF / ARM) | | |
-| EUCLACID 1/2 | PLSA | ROTA | PLSB | ROTB | SLDE | SROT |
-| EUCLACID 2/2 | MODE (EUCL / GOLD / DENS / NEST) | A+B (OR XOR AND A-B) | LIVE (OFF ROT DENS MUTA OPER) | ONLY (OFF / ON) | EVRY (1..64) | |
-| ERGOSUM | MODE (LIN XY SNAKE DIAG) | RATI (1:1 .. 5:7) | SNAK (1..16) | ERGO (OFF / ON) | SPLT (ALL / NOTE / RTHM) | |
+| MORPH | STEP (TRK, 1..64) | MULT (1..16; 41.6 if set in MORPH's window) | MODE (SMTH / HOLD) | MRPH (OFF / ON, armed) | | |
+| EUKLE 1/2 | PLSA | ROTA | PLSB | ROTB | SLDE | SROT |
+| EUKLE 2/2 | MODE (EUCL / GOLD / DENS / NEST) | A+B (OR XOR AND A-B) | LIVE (OFF ROT DENS MUTA OPER, armed) | ONLY (OFF / ON) | EVRY (1..64 bars) | |
+| ERGOSUM | MODE (LIN XY SNAKE DIAG) | RATI (1:1 .. 5:7) | SNAK (1..16) | ERGO (OFF / ON, armed) | SPLT (ALL / NOTE / RTHM) | |
 
-MORPH's page shows its cycle under the knobs ("CYCLE 128 STEPS"), as MORPH's own window does.
-The knob values are at most five characters (the stock knob's buffer, `docs/firmware/PARAM_PAGES.md`).
+## MORPH
 
-**MORPH and EUCLACID are navigation only.** Nothing reads their values yet: MORPH keeps its own
-settings and window, no pattern is printed, nothing starts, nothing is saved. **ERGOSUM plays**
-(below): ERGO ON acts at once, as the ERGOSUM page did before v1. The name is provisional.
+The page is MORPH's own: STEP, MULT and MODE are MORPH's settings (the ones its [TRACK]+[UP] window
+edits, saved by MORPH in morph.work), changed at once. MRPH ON + the track key: MORPH starts on the
+next step from scene A (as [TRACK]+[UP] and the release); MRPH OFF + the track key: a morphing track
+finishes its cycle on A and parks there, an armed one goes back to the crossfader. Under the knobs,
+MORPH's state: `CYCLE 128 STEPS` (the fader's), `WAIT  CYCLE 128` (armed), `ON  12/128` (morphing,
+the step of the cycle), `STOP 12/128`, `PARK ON A`. TRACK MENU needs MORPH in the image.
+
+## EUKLE
+
+EUCLACID's Euclidean printer, renamed EuKlé by the owner (shown EUKLE: the display has no accents).
+It writes ordinary trigs on the menu's track: nothing keeps running unless LIVE does, a printed
+pattern plays on a stock unit, and a trig of yours is never removed.
+
+- **YES = PRINT** (at once): the pattern of the knobs is ORed into the track; **CUE = UNDO**: the last
+  print taken back (8 levels a track; a level saved in another pattern waits for that pattern). The
+  result flashes in the title bar: PRINT, UNDO, NO UNDO, BUSY (the Octatrack is loading), HELD (a
+  trig key is held), LENGTH, NO BANK.
+- **MODE**
+  - EUCL: E(PLSA, length) rotated ROTA; B = E(PLSB) rotated ROTB, combined by A+B (OR XOR AND A-B).
+  - GOLD: PLSA hits spread along a line of slope PLSA / (length + 1/φ): Euclid's density with a
+    golden drift, never quite periodic; ROTA = where it enters the line; with LIVE ROT the line goes
+    on, generation after generation, and never repeats.
+  - DENS: the PLSA heaviest steps of a weight map (16 1 6 2 11 1 5 3 14 1 7 2 10 2 4 8): turning PLSA
+    up adds hits and keeps the old ones, like a drummer filling.
+  - NEST: E(PLSA) hits; then ACCENTS = E(PLSB) and SLIDES = E(SLDE), counted over the hits, not the
+    steps (rotated ROTB, SROT).
+- **SLDE / SROT, ONLY**: the slide generator; ONLY = ON keeps slides on note steps.
+- **On an OCTA-303 track** a slide is the 303's: the step becomes a trigless trig tied to the note
+  before it (OCTA303's slide), taking that note's TUNE lock, unless you have a trig there; NEST's
+  accents are ACC locks with the Part's ACC. On any other track slides go to the stock slide trigs
+  and accents are not printed.
+- **LIVE** (armed; the track key starts it): generation 0 is printed at once (one undo level), then
+  one step before every EVRY-bar period ends the previous generation is replaced: ROT (rotates; in
+  GOLD the line goes on), DENS (PLSA walks one up or down), MUTA (PLSA within 2, ROTA + 0..3), OPER
+  (A+B cycles; without B, or in NEST, it rotates). A trig you add joins the base and stays; one you
+  remove stays removed. LIVE OFF + the track key freezes the pattern where it is (UNDO then goes back
+  to before LIVE). A held trig pauses it; a load, a bank or part change freezes it; a pattern change
+  moves it onto the new pattern at the next period. Regenerations do not mark the project changed.
+
+The engine is `eukle.s`, the reference model `tools/trackmenu/eukle_ref.py`;
+`tools/trackmenu/test_eukle.py` runs both over random banks and compares every byte.
 
 ## ERGOSUM
 
 The idea: Make Noise RENE, the Cartesian sequencer. The track's 16 steps are a 4x4 grid; with
-ERGOSUM ON the track plays the grid's cell instead of the step: its trig, its trig condition, its
+ERGOSUM ON (ERGO ON, then the track key) the track plays the grid's cell instead of the step: its trig, its trig condition, its
 locks and slides, all of the cell. The step shown and the trig LEDs stay the real ones.
 
 ```

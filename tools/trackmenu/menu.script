@@ -1,7 +1,9 @@
 # tools/emu/live_shots.py trackmenu --script tools/trackmenu/menu.script --output-dir <dir>
-# The TRACK MENU v1 on the port: a short tap does nothing, the long press opens the chooser, YES
-# opens a function's page (the stock knobs), NO goes back, the same track key starts and closes,
-# reopening lands on the function last used, and MORPH's own window still opens with [TRACK]+[UP].
+# The TRACK MENU v2 on the port: a short tap does nothing, the long press opens the chooser, YES opens
+# a function's page; a knob's value shows while it turns and goes (the stock's way); EUKLE prints and
+# undoes on T5; LIVE and MRPH are armed and the same track key starts them; reopening shows what runs;
+# MORPH's own window still opens with [TRACK]+[UP]. Look at the top right of every page: no white
+# column beside the title bar any more.
 # The holds are long (8 s): on a slow machine the port runs slower than the wall clock.
 shot trackmenu/00_main
 key 0x14
@@ -13,52 +15,71 @@ release 0x14
 wait 1
 shot trackmenu/03_released_still_open
 key 0x20
-shot trackmenu/04_chooser_euclacid
+shot trackmenu/04_chooser_eukle
 key 0x31
 wait 1
-shot trackmenu/05_euclacid_page
+shot trackmenu/05_eukle_page_knobs_at_rest
 enc 0 3
-enc 4 2
-shot trackmenu/06_euclacid_knobs
+shot trackmenu/06_turning_plsa_value_shows
+wait 4
+shot trackmenu/07_value_gone_knob_at_rest
 key 0x31
-shot trackmenu/07_print_flash
+shot trackmenu/08_yes_print
+key 0x2a
+shot trackmenu/09_cue_undo
+key 0x2a
+shot trackmenu/10_cue_no_undo
 key 0x21
 wait 1
-shot trackmenu/08_euclacid_setup
+shot trackmenu/11_eukle_setup
+enc 2 1
+shot trackmenu/12_live_rot_armed
 key 0x32
 wait 1
-shot trackmenu/09_no_back_to_chooser
+shot trackmenu/13_no_back_to_chooser
 key 0x33
 key 0x31
 wait 1
-shot trackmenu/10_morph_page
-enc 0 4
-enc 2 1
-shot trackmenu/11_morph_knobs
+shot trackmenu/14_morph_page
+enc 3 1
+shot trackmenu/15_mrph_on_armed
+wait 4
+shot trackmenu/16_morph_values_gone
 key 0x32
 key 0x20
 key 0x20
 key 0x31
 wait 1
-shot trackmenu/12_ergosum_page
+shot trackmenu/17_ergosum_page
 enc 1 3
-enc 0 2
-shot trackmenu/13_ergosum_knobs
+shot trackmenu/18_ergosum_ratio_turning
 key 0x13
-shot trackmenu/14_other_track_swallowed
+shot trackmenu/19_other_track_swallowed
 key 0x14
 wait 1
-shot trackmenu/15_same_track_start
+shot trackmenu/20_same_track_applies_toast
 wait 10
 hold 0x14
 wait 8
 release 0x14
 wait 1
-shot trackmenu/16_reopen_on_ergosum
+shot trackmenu/21_reopen_on_ergosum
+key 0x33
+key 0x33
+key 0x31
+wait 1
+shot trackmenu/22_morph_armed_wait
+key 0x32
+key 0x20
+key 0x31
+key 0x21
+wait 1
+shot trackmenu/23_live_shows_rot
+key 0x32
 key 0x32
 wait 1
-shot trackmenu/17_no_closes
+shot trackmenu/24_no_closes
 chord 0x14 0x33
-shot trackmenu/18_morph_window_still_works
+shot trackmenu/25_morph_window_still_works
 key 0x32
 quit

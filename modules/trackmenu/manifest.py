@@ -1,12 +1,14 @@
-"""TRACK MENU v1 -- hold a track key ~1 s: that track's menu (a chooser, then MORPH, EUCLACID or ERGOSUM).
+"""TRACK MENU v2 -- hold a track key ~1 s: that track's menu (a chooser, then MORPH, EUKLE or ERGOSUM).
 
-A prototype: UP / DOWN and YES choose, the knobs (the stock's) change the settings, the same track
-key closes ("Tn START" is only shown), NO goes back. Nothing is saved. MORPH keeps its own
-[TRACK]+[UP] window, no Euclidean pattern is printed; the ERGOSUM page PLAYS: the track's trigs read
-through a 4x4 grid (idea: Make Noise RENE), SPLIT ALL / NOTES / RHYTHM.
-Provisional name: the owner will name the module when MORPH and EUCLACID live in it.
+Every function works (25 Oct 2026): MORPH's page edits MORPH's own settings and arms MORPH; EUKLE
+(EUCLACID's Euclidean note / slide / accent printer, eukle.s) prints with YES, undoes with CUE (8
+levels) and runs LIVE; ERGOSUM reads the track's trigs through a 4x4 grid (idea: Make Noise RENE),
+SPLIT ALL / NOTES / RHYTHM. The rows that start something (MRPH, LIVE, ERGO) are armed on the page
+and applied by the same track key, which closes the menu; NO goes back without applying. The knobs
+are the stock's, the value showing while the encoder turns. Provisional name: the owner will name
+the module.
 
-Sites, measured from the user's 1.40C (24 Oct 2026; base 0x40000400):
+Sites, measured from the user's 1.40C (24-25 Oct 2026; base 0x40000400):
   * the eight track records (codes 0x10..0x17) of the MKI key table 0x400bfc10 and of the MKII
     table 0x400c01f4: press = release = repeat = 0x40040250, sub-map 0x400d164a, repeat delay 30.
     Only the PRESS field (+2 of each 0x1a-byte record) is repointed, at tm_tpress, which calls
@@ -16,6 +18,9 @@ Sites, measured from the user's 1.40C (24 Oct 2026; base 0x40000400):
     displaced, and the builder called with the rhythm's step as the argument and the locks' step one
     long past it. The builder loads the step's lock row at 0x4009d73a and 0x4009d8e0 only
     (`move.l 0x78(sp),d0 ; lsl.l #5,d0`, six bytes each): both jsr es_lk (25 Oct 2026).
+  * EUKLE's LIVE: the keyrepeat task's loop 0x4005595c (`pea 0x46c7e0e2`, six bytes), once a UI tick
+    (120 Hz): the site CC FEEDBACK takes (modules/cc-feedback, hardware), the stub replays the pea and
+    jumps to 0x40055962. The two cannot share an image (conflicts below).
 """
 
 import os
@@ -47,15 +52,18 @@ MODULE = Module(
     category=Category.PARTS,
     author="MaMarko",
     author_url="https://github.com/braikomarko-hub",
-    doc=("Hold a track key about a second: a small chooser (MORPH, EUCLACID, ERGOSUM); YES opens that "
-         "function's page with its settings as the stock knobs; the same track key closes it. "
-         "ERGOSUM reads the track's trigs through a 4x4 grid (MODE LIN/XY/SNAKE/DIAG, RATI, SNAK, ERGO, "
-         "SPLT ALL/NOTE/RTHM: rhythm and notes from the grid, or one of them); MORPH and EUCLACID are "
-         "navigation only."),
+    doc=("Hold a track key about a second: a small chooser (MORPH, EUKLE, ERGOSUM); YES opens that "
+         "function's page with its settings as the stock knobs; the same track key closes it and starts "
+         "what was armed. MORPH: its settings and MORPH ON/OFF. EUKLE: Euclidean notes, slides and "
+         "accents (EUCL, GOLD, DENS, NEST; A+B; YES prints, CUE undoes, LIVE regenerates every EVRY "
+         "bars). ERGOSUM reads the track's trigs through a 4x4 grid (MODE LIN/XY/SNAKE/DIAG, RATI, SNAK, "
+         "ERGO, SPLT ALL/NOTE/RTHM)."),
     proof=Proof.CHECK,
-    proof_note="prototype: tools/trackmenu/test_trackmenu.py (the source under cfsim); not yet on the unit",
+    proof_note=("v2: tools/trackmenu/test_trackmenu.py and test_eukle.py (the sources under cfsim, EuKle "
+                "against its model byte for byte); v0 navigated on the owner's MKI (24 Oct 2026)"),
     linked=(
         Linked("trackmenu", os.path.join(_HERE, "trackmenu.s"), dram=True),
+        Linked("eukle", os.path.join(_HERE, "eukle.s"), dram=True),
     ),
     symbol_refs=_press_fields(),
     detours=(
@@ -68,8 +76,16 @@ MODULE = Module(
         Detour(0x4009D8E0, bytes.fromhex("202f0078eb88"), "trackmenu", "es_lk",
                "ERGOSUM SPLIT: the builder's lock row (no slide): the locks' step, not the rhythm's",
                kind="jsr"),
+        Detour(0x4005595C, bytes.fromhex("487946c7e0e2"), "eukle", "ek_hook",
+               "EUKLE LIVE: the keyrepeat task's loop, one tick per UI pass (pea EVENT replayed)",
+               kind="jmp", pad_to=6),
+    ),
+    requires=("MORPH",),
+    conflicts=(
+        ("CC FEEDBACK", "both take the keyrepeat task's loop 0x4005595c (EUKLE's LIVE tick)"),
     ),
     gates=(
         Gate("tools/trackmenu/test_trackmenu.py", remix_arg=False),
+        Gate("tools/trackmenu/test_eukle.py", remix_arg=False),
     ),
 )
