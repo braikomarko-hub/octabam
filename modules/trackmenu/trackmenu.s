@@ -35,7 +35,7 @@
 | Not seen by the long press: a knob turned while T is held (encoders are not in the key rows).
 
         .text
-        .globl  tm_tpress, tm_tick, tm_set, es_entry, es_next
+        .globl  tm_tpress, tm_tick, tm_set, es_entry, es_next, es_lk
 
         .macro  KEYREC code, press, release
         .byte   \code, 0
@@ -518,7 +518,7 @@ tr_1:   move.l  %d1,%d0
 PAGES:  .long   P_MORPH, ROWS_MORPH, 4
         .long   P_EUCL, ROWS_EUCL, 6
         .long   P_LIVE, ROWS_LIVE, 5
-        .long   P_ERGO, ROWS_ERGO, 4
+        .long   P_ERGO, ROWS_ERGO, 5
 ROWS_MORPH:                             | MORPH's window, the same ranges (the 41.625 egg left out)
         ROW     L_STEPS, 1, 0, 64, 2, 0
         ROW     L_MULT,  2, 1, 16, 0, 0
@@ -543,8 +543,10 @@ ROWS_ERGO:                              | ERGOSUM: the trigs read through a 4x4 
         ROW     L_RATIO, 17, 0, 8, 1, LS_RATIO
         ROW     L_SNAKE, 18, 1, 16, 0, 0
         ROW     L_ERGO,  19, 0, 1, 1, LS_OFFON
+        ROW     L_SPLIT, 20, 0, 2, 1, LS_SPLIT
 
 LS_GMODE: .long V_LIN, V_XY, V_SNAKE, V_DIAG
+LS_SPLIT: .long V_ALL, V_NOTES, V_RHYT
 LS_RATIO: .long V_R11, V_R12, V_R23, V_R34, V_R13, V_R25, V_R35, V_R37, V_R57
 LS_MODE:  .long V_SMOOTH, V_HOLD
 LS_ARM:   .long V_OFF, V_ARM
@@ -562,6 +564,10 @@ L_GMODE:  .asciz "A MODE"
 L_RATIO:  .asciz "B RATIO"
 L_SNAKE:  .asciz "C SNAKE"
 L_ERGO:   .asciz "D ERGOSUM"
+L_SPLIT:  .asciz "E SPLIT"
+V_ALL:    .asciz "ALL"
+V_NOTES:  .asciz "NOTES"
+V_RHYT:   .asciz "RHYTHM"
 V_LIN:    .asciz "LIN"
 V_XY:     .asciz "XY"
 V_SNAKE:  .asciz "SNAKE"
@@ -627,50 +633,150 @@ F_START:  .asciz "T%d START"
 | step's trig (1 << step against the track record's trig masks), its condition (0x400a5164) and
 | its locks (measured from the user's 1.40C, 24 Oct 2026). Its two callers: the sequencer tick
 | 0x400a2d7e (step = the track's step byte 0x800064d0 + t, n = the pending slot) and the position
-| refresh 0x4009da20 (n = -1). ERGOSUM replaces the step, on a track whose ERGOSUM is ON, by the
-| grid's cell for the counter k = the sequencer's step word: the trig, its condition, its locks and
-| slides are all the cell's. The step shown and the LEDs stay the real ones.
-|   LIN: the step itself. XY: x = (k / X) mod 4, y = (k / Y) mod 4, cell = 4y + x (RATIO = X:Y).
-|   SNAKE: path n, cell = PATHS[n][k mod 16]. DIAG: the diagonal path (PATHS[4]).
-| The cell keeps the step's block of 16 (step & ~15): a pattern of 32 or 64 steps stays in place,
-| block by block. es_next[t] = the cell of k + 1 in that block (0xff = ERGOSUM off): for OCTA303's
-| tied gate (not read yet).
+| refresh 0x4009da20 (n = -1). The builder uses the step for two things (25 Oct 2026): the RHYTHM
+| (the trig masks, the condition, the step word at 0x44d, the trig's kind, the slide's search for
+| the next trig) and the LOCKS (32 bytes a step at track record + 0x58 + 32 * step + 1, read at
+| 0x4009d73a and 0x4009d8e0: the note, the accent, every locked parameter).
+| ERGOSUM calls the builder with two steps: T (the rhythm, in the step argument) and L (the locks,
+| one long past the arguments, read by es_lk at those two sites). For the counter k = the
+| sequencer's step word and the grid's cell c(k):
+|   SPLIT ALL:    T = L = c(k) -- the cell plays, trig and locks (24 Oct)
+|   SPLIT NOTES:  T = the step, L = the first of c(k), c(k+1) .. c(k+15) holding a trig (empty
+|                 cells skipped: only the written notes, the owner's choice), else the step
+|   SPLIT RHYTHM: T = c(k), L = the step if it holds a trig, else the last step before it in its
+|                 block that does (the melody keeps its time), else the step
+| The cell keeps the step's block of 16 (step & ~15). LIN, OFF and tracks above 7: T = L = step.
+| es_next[t] = the cell of k + 1 in that block, for OCTA303's tied gate (0xff = ERGOSUM off, LIN or
+| NOTES: the rhythm is the pattern's).
+| Saved here: d2-d7/a2 (28 bytes): the track @32, bank @36, pattern @40, step @44, n @48.
 es_entry:
-        move.l  4(%sp),%d0              | the track
+        lea     -28(%sp),%sp
+        movem.l %d2-%d7/%a2,(%sp)
+        move.l  44(%sp),%d4             | T = the step
+        move.l  %d4,%d5                 | L = the step
+        move.l  32(%sp),%d0             | the track
         moveq   #7,%d1
         cmp.l   %d1,%d0
-        bhi     es_go
+        bhi     es_call
+        lea     es_next,%a1
+        moveq   #-1,%d1
+        move.b  %d1,(%a1,%d0.l)         | 0xff until the grid says otherwise
         lea     tm_set,%a0
         lsl.l   #5,%d0
         add.l   %d0,%a0
         tst.b   19(%a0)
-        beq     es_off
+        beq     es_call                 | ERGOSUM OFF
         tst.b   16(%a0)
-        beq     es_off                  | LIN: the step as it is
-        move.l  %d2,-(%sp)
-        move.l  %d3,-(%sp)
+        beq     es_call                 | LIN: the step as it is
+        move.l  40(%sp),%d0             | a2 = the track record (as the builder's):
+        move.l  #0x8ed8,%d1             |   0x400e21e0 + bank*0x9b340 + pattern*0x8ed8 + track*0x91a
+        muls.l  %d1,%d0
+        move.l  %d0,%a2
+        move.l  36(%sp),%d0
+        move.l  #0x9b340,%d1
+        muls.l  %d1,%d0
+        add.l   %d0,%a2
+        move.l  32(%sp),%d0
+        move.l  #0x91a,%d1
+        muls.l  %d1,%d0
+        add.l   %d0,%a2
+        add.l   #0x400e21e0,%a2
+        moveq   #-16,%d6
+        and.l   %d4,%d6                 | d6 = the step's block of 16
         mvz.w   STEPW,%d2               | k
-        bsr     es_map                  | d0 = the cell for k
-        move.l  24(%sp),%d1             | the step (@16, 8 bytes pushed)
-        moveq   #-16,%d3
-        and.l   %d3,%d1                 | its block of 16
-        add.l   %d1,%d0
-        move.l  %d0,24(%sp)
+        mvz.b   20(%a0),%d1             | SPLIT
+        subq.l  #1,%d1
+        beq     es_notes
+        subq.l  #1,%d1
+        beq     es_rhythm
+        bsr     es_map                  | ALL: T = L = the cell
+        add.l   %d6,%d0
+        move.l  %d0,%d4
+        move.l  %d0,%d5
+        bra     es_nx
+es_rhythm:
+        bsr     es_map                  | T = the cell
+        add.l   %d6,%d0
+        move.l  %d0,%d4
+        moveq   #16,%d7                 | L: the step, or the last written step before it
+er_l:   move.l  %d5,%d0
+        bsr     es_has
+        bne     es_nx
+        move.l  %d5,%d0
+        subq.l  #1,%d0
+        moveq   #15,%d1
+        and.l   %d1,%d0
+        add.l   %d6,%d0
+        move.l  %d0,%d5
+        subq.l  #1,%d7
+        bne     er_l
+        move.l  44(%sp),%d5             | no written step in the block: the step
+        bra     es_nx
+es_notes:
+        moveq   #16,%d7                 | T = the step; L = the first cell from k holding a trig
+en_l:   bsr     es_map
+        add.l   %d6,%d0
+        move.l  %d0,%d5
+        bsr     es_has
+        bne     es_call                 | (es_next stays 0xff: the rhythm is the pattern's)
         addq.l  #1,%d2
-        bsr     es_map                  | the next cell
+        subq.l  #1,%d7
+        bne     en_l
+        move.l  44(%sp),%d5             | no cell holds a trig: the step
+        bra     es_call
+es_nx:  mvz.w   STEPW,%d2               | es_next[t] = the cell of k + 1
+        addq.l  #1,%d2
+        bsr     es_map
         lea     es_next,%a1
-        move.l  12(%sp),%d1             | the track (@4)
+        move.l  32(%sp),%d1
         move.b  %d0,(%a1,%d1.l)
-        move.l  (%sp)+,%d3
-        move.l  (%sp)+,%d2
-        bra     es_go
-es_off: lea     es_next,%a1
-        move.l  4(%sp),%d1
-        moveq   #-1,%d0
-        move.b  %d0,(%a1,%d1.l)
+es_call:
+        move.l  %d5,-(%sp)              | L (the builder's 0x80(sp), es_lk's 0x84(sp))
+        move.l  52(%sp),-(%sp)          | n
+        move.l  %d4,-(%sp)              | T
+        move.l  52(%sp),-(%sp)          | pattern
+        move.l  52(%sp),-(%sp)          | bank
+        move.l  52(%sp),-(%sp)          | track
+        movem.l 24(%sp),%d2-%d7/%a2     | the caller's registers: the builder's movem keeps them
+        bsr     es_go
+        lea     24(%sp),%sp
+        movem.l (%sp),%d2-%d7/%a2       | (the builder restored them already; d0 is its result)
+        lea     28(%sp),%sp
+        rts
 es_go:  lea     -104(%sp),%sp           | the displaced prologue (lea -0x68 ; movem), then on
         movem.l %d2-%d7/%a2-%a6,(%sp)
         jmp     BUILDER+8
+
+| es_lk -- jsr'd at 0x4009d73a and 0x4009d8e0 in place of `move.l 0x78(sp),d0 ; lsl.l #5,d0`
+| (the step's lock row): d0 = L * 32, L one long past the builder's arguments (0x84 past the jsr).
+es_lk:  move.l  0x84(%sp),%d0
+        lsl.l   #5,%d0
+        rts
+
+| es_has -- d0 = a step 0..63, a2 = the track record: NE when the step holds a trig, a trigless trig
+| or a trigless lock (the four masks the builder ORs: +0, +8, +16, +24, eight bytes each, big
+| endian: steps 0..31 in the second long). Clobbers d0, d1.
+es_has: moveq   #31,%d1
+        cmp.l   %d1,%d0
+        bhi     eh_hi
+        moveq   #1,%d1
+        lsl.l   %d0,%d1
+        move.l  4(%a2),%d0
+        or.l    12(%a2),%d0
+        or.l    20(%a2),%d0
+        or.l    28(%a2),%d0
+        and.l   %d1,%d0
+        rts
+eh_hi:  moveq   #31,%d1                 | 32..63: the first long, bit step - 32
+        and.l   %d1,%d0
+        moveq   #1,%d1
+        lsl.l   %d0,%d1
+        move.l  (%a2),%d0
+        or.l    8(%a2),%d0
+        or.l    16(%a2),%d0
+        or.l    24(%a2),%d0
+        and.l   %d1,%d0
+        rts
 
 | es_map -- d2 = k, a0 = the track's settings: d0 = the cell 0..15. Clobbers d1, d3, a1.
 es_map:
@@ -818,8 +924,8 @@ TM_ENCS:
 
 | ---------------------------------------------------------------- state (DRAM, writable)
 | per track, 32 bytes: page; MORPH: STEPS (0 = TRK), x, MODE, MORPH (armed); EUCLACID: PLSA,
-| ROTA, PLSB, ROTB, SLDE, SROT; EUCL LIVE: MODE, OP, LIVE, ONLY, EVRY; ERGOSUM (16..19): MODE,
-| RATIO, SNAKE (1..16), ON; 20..31 free. Defaults: MORPH's (16 x 8 SMOOTH), EUCLACID's (PLSA 4,
+| ROTA, PLSB, ROTB, SLDE, SROT; EUCL LIVE: MODE, OP, LIVE, ONLY, EVRY; ERGOSUM (16..20): MODE,
+| RATIO, SNAKE (1..16), ON, SPLIT (ALL / NOTES / RHYTHM); 21..31 free. Defaults: MORPH's (16 x 8 SMOOTH), EUCLACID's (PLSA 4,
 | the rest 0), ERGOSUM off (XY 1:3 snake 1).
         .balign 4
 tm_set:

@@ -390,9 +390,11 @@ GOFF = {'gmode': 248, 'gate': 252, 'glvl': 256, 'gstep': 260, 'lstep': 264, 'lti
         'kmax': 276, 'tps': 280, 'gnew': 284, 'gel': 288, 'gend': 292,
         'gsel': 344, 'fcnt': 348, 'fpt': 352, 'fseen': 356, 'gelf': 360}
 check('gate_state_offsets_are_the_sources', all(Rig().cpu.consts['S_' + f.upper()] == GOFF[f] for f in GF))
-def gate_fuzz(n, seed):
-    """o3_gate run on random states and inputs == ref303.gate_frame, every field"""
-    rnd = random.Random(seed); rig = Rig(); c = rig.cpu; m = c.mem; base = c.consts['o3_state']
+def gate_fuzz(n, seed, ergosum=False):
+    """o3_gate run on random states and inputs == ref303.gate_frame, every field (ergosum: v7.2, with
+    ERGOSUM's es_next in the image, random cells or 0xff)"""
+    rnd = random.Random(seed); rig = Rig(source(ergosum=ergosum) if ergosum else None)
+    c = rig.cpu; m = c.mem; base = c.consts['o3_state']
     for it in range(n):
         t = rnd.randrange(8); L = rnd.choice([16, 16, 32, 64, 1, 2, 7, 0, 99])
         st = R.Track()
@@ -411,10 +413,14 @@ def gate_fuzz(n, seed):
         a3 = base + t * 512
         for f in GF: m.w(a3 + GOFF[f], 'l', getattr(st, f) & M32)
         rig.seq(t, seq)
+        es = None
+        if ergosum:
+            es = rnd.choice([0xff, 0xff, rnd.randrange(16), rnd.randrange(16), rnd.randrange(16, 255)])
+            m.w(c.consts['es_next'] + t, 'b', es)
         c.d[2] = t; c.a[3] = a3; c.a[7] = STACK
         for r in (3, 4, 5, 6): c.d[r] = 0x4400 + r
         c.call('o3_gate')
-        R.gate_frame(st, seq)
+        R.gate_frame(st, seq, es)
         got = {f: R.s32(m.r(a3 + GOFF[f], 'l')) for f in GF}
         want = {f: getattr(st, f) for f in GF}
         if got != want or any(c.d[r] != 0x4400 + r for r in (3, 4, 5, 6)) or c.a[7] != STACK:
@@ -422,6 +428,8 @@ def gate_fuzz(n, seed):
     return None
 bad = gate_fuzz(3000 if FULL else 800, 5)
 check('gate_state_machine_bit_exact', bad is None, bad or 'random states and inputs, every field')
+bad = gate_fuzz(3000 if FULL else 800, 6, ergosum=True)
+check('gate_follows_ergosum_bit_exact', bad is None, bad or 'v7.2: es_next cells, 0xff, out of range')
 
 PATG = [(0, 1, 0), (12, 0, 1), (7, 0, 0), (None, 0, 0), (0, 0, 1), (3, 1, 1), (5, 0, 0), (0, 0, 0)] * 2
 SLIDES = sum(1 << ((i + 1) % 16) for i, p in enumerate(PATG) if p[2])

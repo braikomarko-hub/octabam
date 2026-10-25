@@ -8,6 +8,10 @@ no Euclidean pattern is printed yet; the ERGOSUM page works: the track's trigs a
 ERGOSUM site, measured from the user's 1.40C (24 Oct 2026): the trig record builder 0x4009d1e8
 (track, bank, pattern, step, n) decides the step's trig, condition (0x400a5164) and locks; its entry
 (lea -0x68(sp) ; movem.l d2-d7/a2-a6) is displaced and the step argument replaced.
+SPLIT (25 Oct 2026): the builder reads the step's lock row at 0x4009d73a and 0x4009d8e0
+(`move.l 0x78(sp),d0 ; lsl.l #5,d0`, six bytes each): both jsr es_lk, which takes the locks' step
+from one long past the arguments, so the rhythm (trigs, condition, step word, slide search) and the
+locks (the note, the accent) can come from two different steps (ALL / NOTES / RHYTHM).
 
 Sites, measured from the user's 1.40C (24 Oct 2026; base 0x40000400):
   * the eight track records (codes 0x10..0x17) of the MKI key table 0x400bfc10 and of the MKII
@@ -48,7 +52,8 @@ MODULE = Module(
     doc=("Hold a track key about a second: that track's menu opens and stays open. LEFT / RIGHT turn "
          "the page (MORPH, EUCLACID, EUCL LIVE, ERGOSUM), the knobs set the values, the same track key "
          "closes it. ERGOSUM reads the track's trigs through a 4x4 grid (MODE LIN/XY/SNAKE/DIAG, RATIO, "
-         "SNAKE); the other pages are navigation only."),
+         "SNAKE, SPLIT ALL/NOTES/RHYTHM: rhythm and notes from the grid, or one of them); the other pages "
+         "are navigation only."),
     proof=Proof.CHECK,
     proof_note="prototype: tools/trackmenu/test_trackmenu.py (the source under cfsim); not yet on the unit",
     linked=(
@@ -59,6 +64,12 @@ MODULE = Module(
         Detour(0x4009D1E8, bytes.fromhex("4fefff9848d77cfc"), "trackmenu", "es_entry",
                "ERGOSUM: the trig record builder's entry (lea -0x68 ; movem): the step through the grid",
                kind="jmp", pad_to=8),
+        Detour(0x4009D73A, bytes.fromhex("202f0078eb88"), "trackmenu", "es_lk",
+               "ERGOSUM SPLIT: the builder's lock row (with a slide): the locks' step, not the rhythm's",
+               kind="jsr"),
+        Detour(0x4009D8E0, bytes.fromhex("202f0078eb88"), "trackmenu", "es_lk",
+               "ERGOSUM SPLIT: the builder's lock row (no slide): the locks' step, not the rhythm's",
+               kind="jsr"),
     ),
     gates=(
         Gate("tools/trackmenu/test_trackmenu.py", remix_arg=False),

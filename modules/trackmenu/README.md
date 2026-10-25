@@ -17,7 +17,7 @@ the key is let go.
 | MORPH | STEPS (TRK, 1..64) | x (1..16) | MODE (SMOOTH / HOLD) | MORPH (OFF / ARMED) | | |
 | EUCLACID | PULSES A | ROTATE A | PULSES B | ROTATE B | SLIDES | ROT SLIDE |
 | EUCL LIVE | MODE (EUCLID / GOLDEN / DENSITY / NESTED) | A+B (OR XOR AND A-B) | LIVE (OFF ROT DENS MUTA OPER) | SLIDE ON NOTE | EVERY BARS (1..64) | |
-| ERGOSUM | MODE (LIN / XY / SNAKE / DIAG) | RATIO (1:1 1:2 2:3 3:4 1:3 2:5 3:5 3:7 5:7) | SNAKE (1..16) | ERGOSUM (OFF / ON) | | |
+| ERGOSUM | MODE (LIN / XY / SNAKE / DIAG) | RATIO (1:1 1:2 2:3 3:4 1:3 2:5 3:5 3:7 5:7) | SNAKE (1..16) | ERGOSUM (OFF / ON) | SPLIT (ALL / NOTES / RHYTHM) | |
 
 On the EUCLACID pages YES flashes PRINT and CUE flashes UNDO in the title bar. The page is
 remembered per track while the unit is on.
@@ -55,6 +55,21 @@ RATIO runs from the most consonant to the least, after Descartes' *Compendium Mu
 sweetness of a consonance follows how often the beats of the two bodies coincide. 1:3 meets every
 3 steps (a short, recognisable loop), 5:7 every 35 (it hardly repeats). The ear decides.
 
+**SPLIT** (25 Oct 2026; on Make Noise RENE the knobs and the gates are separate): the rhythm and the
+notes can come from different places.
+
+| SPLIT | rhythm (trigs, conditions, microtiming, slides) | notes (every lock: on OCTA303 TUNE and ACC) |
+|---|---|---|
+| ALL | the grid's cell | the grid's cell (as before) |
+| NOTES | the pattern as written | the grid, skipping the cells that hold no trig: only the written notes, reshuffled |
+| RHYTHM | the grid's cell | the pattern's step, or the last written step before it: the melody keeps its time |
+
+```
+   NOTES, MODE XY 1:3, a four-on-the-floor rhythm and 6 written notes:
+   step   1  2  3  4  5  6  7  8 ...     the trigs: the pattern's (1, 5, 9, 13 ...)
+   note   C        F#       D#   ...     each trig takes the note of the grid's next written cell
+```
+
 A pattern longer than 16 steps is read block by block: the cell stays in the step's block of 16. A
 track shorter than 16 steps can land on a cell past its end: no trig there.
 
@@ -64,12 +79,23 @@ decided: the mask `1 << step` against the track record's trig masks, the trig co
 `0x400a5164(track, step, cond, ...)`, then the trig's action at `0x46c7a810 + 4t` and the step's
 locks. Its callers: the sequencer tick `0x400a2d7e` (step = the track's step byte `0x800064d0 + t`)
 and the position refresh `0x4009da20`. ERGOSUM displaces its entry (`lea -0x68(sp)` ; `movem.l`, 8
-bytes) and replaces the step argument. `es_next[t]` holds the next cell (0xff off) for OCTA303's
-tied gate, which does not read it yet.
+bytes) and calls the builder itself with the rhythm's step T as the argument and the locks' step L
+one long past the arguments. The builder loads the step's lock row (track record + 0x58 + 32 * step
++ 1) at two places only, `0x4009d73a` (with a slide) and `0x4009d8e0` (without): each
+`move.l 0x78(sp),d0 ; lsl.l #5,d0` becomes `jsr es_lk` (d0 = L * 32). Everything else the builder
+does with the step (the trig masks, `0x400a5164`, the step word at `0x44d`, the trig's kind, the
+search for the next trig of a slide) stays on T. OFF, LIN and tracks above 7: T = L = the step, the
+builder as stock. `es_next[t]` holds the cell played next (0xff off, LIN or NOTES): OCTA303 (v7.2)
+ties its 303 gate into it when the remix carries this module.
+
+Known limits: on a stock machine's slide trig in NOTES mode the glide aims at the locks of the
+pattern's next trig, not the grid's (OCTA303 slides from the pitch it is playing, so it is not
+affected); PLOCKS P2's page-2 locks follow the rhythm's step.
 
 Open: the counter is the master step word, so a track at another speed or scale walks the grid at
-the master's pace; OCTA303's tied gate still looks at the pattern's next step; not yet run under
-the port with the sequencer playing, nor on the unit.
+the master's pace; NOTES counts steps, not trigs (a trig takes the grid's cell for its step, the
+next written one from there); not yet run under the port with the sequencer playing, nor on the
+unit.
 
 ## How the long press works (measured from the user's 1.40C)
 
@@ -91,7 +117,8 @@ the port with the sequencer playing, nor on the unit.
   and everything that cancels it, the pages, every knob's range, the flash, closing, the
   remembered page, registers kept; ERGOSUM's entry against a Python model of the grid (every mode,
   ratio and four snakes, k 0..79 and the word's wrap, three blocks), the arguments the builder
-  receives, the displaced movem, OFF and LIN passing the step, tracks above 7 (69 checks).
+  receives, the displaced movem, OFF and LIN passing the step, tracks above 7; SPLIT ALL / NOTES / RHYTHM against a model of the
+  trig masks (1500 random cases), the written-cells rule, `es_lk` (77 checks).
 
 ## On the unit
 

@@ -1177,6 +1177,18 @@ o3_gate:
         blt     .Lg_n1
         moveq   #0,%d0
 .Lg_n1:
+        lea     es_next,%a0             | v7.2: ERGOSUM's es_next (modules/trackmenu); 0 without it
+        move.l  %a0,%d1                 | (remix.inc then sets es_next to 0)
+        beq     .Lg_n2
+        mvz.b   (%a0,%d2.l),%d1         | the step it plays next, a cell 0..15 in gstep's block (0xff off)
+        cmp.l   #15,%d1
+        bhi     .Lg_n2
+        move.l  S_GSTEP(%a3),%d0
+        and.l   #0xfffffff0,%d0
+        add.l   %d1,%d0
+        cmp.l   %d6,%d0
+        bge     .Lg_close               | a cell past the track's end: no trig there, no tie
+.Lg_n2:
         move.l  %d0,%d4
         bsr     o3_slide
         beq     .Lg_close

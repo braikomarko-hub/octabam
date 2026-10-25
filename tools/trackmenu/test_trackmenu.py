@@ -222,6 +222,9 @@ check('right_ergosum', line(54) == 'T5 ERGOSUM 4/4' and
       [line(y) for y in (44, 36, 28, 20)] == ['A MODE XY', 'B RATIO 1:3', 'C SNAKE 1', 'D ERGOSUM OFF'],
       [line(y) for y in (54, 44, 36, 28, 20)])
 menu_key('tm_yes', 0x31)
+check('ergosum_split_row', line(12) == 'E SPLIT ALL', line(12))
+enc(4, 1); n1 = val(12); enc(4, 1); n2 = val(12); enc(4, 5); n3 = val(12); enc(4, -9); n0 = val(12)
+check('split_list', (n1, n2, n3, n0) == ('NOTES', 'RHYTHM', 'RHYTHM', 'ALL'), (n1, n2, n3, n0))
 check('yes_on_ergosum_shows_nothing', line(54) == 'T5 ERGOSUM 4/4', line(54))
 got = []
 for _ in range(10): got.append(val(36)); enc(1, 1)
@@ -293,6 +296,7 @@ def h_builder(cpu):                    # BUILDER+8: after the displaced lea -0x6
     sp = cpu.a[7]
     seen['step'] = cpu.mem.r(sp + 0x78, 'l'); seen['track'] = cpu.mem.r(sp + 0x6c, 'l')
     seen['n'] = cpu.mem.r(sp + 0x7c, 'l')
+    seen['lock'] = cpu.mem.r(sp + 0x80, 'l')   # L: one long past the arguments (es_lk reads it)
     seen['saved'] = [cpu.mem.r(sp + 4 * i, 'l') for i in range(11)]
     cpu.a[7] = (sp + 0x68) & 0xffffffff  # the stub's rts then returns to our caller
 cpu.hooks[BUILDER + 8] = h_builder
@@ -343,6 +347,61 @@ check('args_reach_the_builder', sn['track'] == 4 and sn['n'] == 0xffffffff and g
 check('displaced_movem_saves_d2_a6', sn['saved'][:6] == SENT[2:8] and sn['saved'][6:11] == [SENT[i] ^ 0xff for i in range(2, 7)],
       [hex(x) for x in sn['saved']])
 check('track_above_7_untouched', es_call(9, 6, 5)[0] == 6)
+
+# ---- SPLIT (25 Oct 2026): T = the rhythm's step (the argument), L = the locks' step (es_lk)
+REC0 = 0x400e21e0 + 2 * 0x9b340 + 5 * 0x8ed8          # bank 2, pattern 5 (es_call's)
+def masks(t, m):                       # the four trig masks, big endian, split at random among them
+    rnd = random.Random(m ^ t); parts = [0, 0, 0, 0]
+    for i in range(64):
+        if (m >> i) & 1: parts[rnd.randrange(4)] |= 1 << i
+    for j, v in enumerate(parts):
+        for b, x in enumerate(v.to_bytes(8, 'big')): mem.w(REC0 + 0x91a * t + 8 * j + b, 'b', x)
+def es_split(t, sp): mem.w(C['tm_set'] + 32 * t + 20, 'b', sp)
+def cell(mode, ratio, snake, k): return model(mode, ratio, snake, k & 0xffff if mode == 1 else k)
+def want_split(sp, mode, ratio, snake, k, step, m):
+    blk = step & ~15; has = lambda s: (m >> s) & 1
+    c = blk + cell(mode, ratio, snake, k)
+    if sp == 0: return c, c, cell(mode, ratio, snake, k + 1)
+    if sp == 1:
+        for j in range(16):
+            l = blk + cell(mode, ratio, snake, k + j)
+            if has(l): return step, l, 0xff
+        return step, step, 0xff
+    l = step
+    for _ in range(16):
+        if has(l): return c, l, cell(mode, ratio, snake, k + 1)
+        l = blk + ((l - 1) & 15)
+    return c, step, cell(mode, ratio, snake, k + 1)
+import random
+rnd = random.Random(25)
+bad = []
+for it in range(1500):
+    t = rnd.randrange(8); mode = rnd.choice((1, 2, 3)); ratio = rnd.randrange(9); snake = rnd.randint(1, 16)
+    sp = rnd.randrange(3); k = rnd.choice([rnd.randrange(200), rnd.randrange(65520)]); step = rnd.randrange(64)
+    m = rnd.choice([0, (1 << 64) - 1, rnd.getrandbits(64), rnd.getrandbits(64) & rnd.getrandbits(64) & rnd.getrandbits(64),
+                    1 << rnd.randrange(64)])
+    es_set(t, mode, ratio, snake, 1); es_split(t, sp); masks(t, m)
+    got, sn = es_call(t, step, k)
+    w = want_split(sp, mode, ratio, snake, k, step, m)
+    g = (got, sn['lock'], mem.r(C['es_next'] + t, 'b'))
+    if g != w: bad.append((it, t, mode, ratio, snake, sp, k, step, hex(m), g, w))
+    es_split(t, 0)
+check('split_matches_the_model', not bad, bad[:2])
+es_set(3, 1, 4, 1, 1); es_split(3, 1)
+masks(3, (1 << 2) | (1 << 9))          # NOTES: only steps 3 and 10 written (cells 2, 9)
+ls = [es_call(3, s, s)[1]['lock'] for s in range(16)]
+check('notes_only_written_cells', set(ls) <= {2, 9} and all(es_call(3, s, s)[0] == s for s in range(16)), ls)
+es_split(3, 2); masks(3, 1 << 4)        # RHYTHM: one written step, 4: every lock row is 4's
+check('rhythm_keeps_the_melody_in_time', all(es_call(3, s, s)[1]['lock'] == 4 for s in range(16)))
+masks(3, 0)
+check('rhythm_nothing_written_the_step', all(es_call(3, s, 7)[1]['lock'] == s for s in (0, 5, 33)))
+for t in range(8): es_set(t, 0, 0, 1, 0); es_split(t, 0)
+check('off_lock_is_the_step', all(es_call(t, s, 9)[1]['lock'] == s for t in (0, 7, 9) for s in (0, 31, 63)))
+# es_lk: jsr'd where the builder loads its step's lock row: d0 = L * 32 from 0x84(sp), nothing else
+mem.w(SP - 4 + 0x84, 'l', 37); mem.w(SP - 4 + 0x7c, 'l', 2)    # after the jsr: L at 0x84, T at 0x7c
+cpu.d[1] = 0x5501; guarded('es_lk')
+check('es_lk_reads_l', cpu.d[0] == 37 * 32 and cpu.d[1] == 0x5501 and cpu.a[7] == SP, hex(cpu.d[0]))
+
 es_set(4, 0, 0, 1, 0)
 print('ERGOSUM X1 Y3, k 0..15:', [es_call(5, 0, k)[0] for k in range(16)] if not es_set(5, 1, 4, 1, 1) else '')
 
