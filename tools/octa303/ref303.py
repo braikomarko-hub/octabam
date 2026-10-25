@@ -247,7 +247,7 @@ def set_setup(st, setup, df):
     if df is None:
         st.slide = T.DF_SLIDE[k[3]]
 
-def gate_frame(st, seq):
+def gate_frame(st, seq, es=None):
     """v6.5, once a frame (the frame's last call) on a 303 track: seq = (hold, step, tick, slides,
     length) as the unit reads them -- the track's AMP HOLD from the live lane, the sequencer's step
     word and tick byte, the OR of the track record's trigless-trig and trigless-lock masks (bit s =
@@ -255,7 +255,9 @@ def gate_frame(st, seq):
     v6.5d: the gate is timed from the note's START, in ticks (gel), not from the step word: on the
     unit a START reaches the renderer about a tick after the step word moves (measured, 12 Oct 2026:
     the step-word gate closed ~1/3 of a step after the note).  Half a step = tps ticks counted
-    twice (gend = tps, +2 tps a tie)."""
+    twice (gend = tps, +2 tps a tie).
+    v7.2: es = ERGOSUM's es_next for this track (modules/trackmenu), None without it in the image:
+    a cell 0..15 is the step played next, in gstep's block (past the track's end: no tie); 0xff off."""
     hold, s, k, mask, L = seq
     if not 1 <= L <= 64: L = 16
     s = s % L
@@ -287,6 +289,9 @@ def gate_frame(st, seq):
     due = (2 * st.gelf >= st.gend * st.fpt) if st.fpt else (2 * st.gel >= st.gend)
     if st.gate and due:                                # 3.5 clocks (+ a step a tie) since the START
         nxt = (st.gstep + 1) % L
+        if es is not None and es <= 15:                # v7.2: the step ERGOSUM plays next
+            nxt = (st.gstep & ~15) + es
+            if nxt >= L: st.gate = 0; return
         if (mask >> nxt) & 1:                          # the next step slides: still on
             st.gstep = nxt; st.gend += 2 * st.tps
         else:

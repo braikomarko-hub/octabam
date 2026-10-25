@@ -25,14 +25,19 @@ BANK, PATNO, PSTR, TSTR = 0x41000000, 3, 0x8ed8, 0x91a
 PARTB, PART_OFF = 0x100b14cf, 0x8ed80                                        # v7.0: the machine's Part'
 DEVIL_ID = 0x10          # modules/devilish/manifest.py FX_ID (test_octa303 checks they agree)
 
-def remix_inc(devilish=True):
+def remix_inc(devilish=True, ergosum=False):
     """What the build writes as remix.inc (modules/octa303/manifest.py remix_inc)."""
-    return '        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
+    return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100) +
+            ('' if ergosum else '        .set    es_next, 0\n'))
 
-def source(devilish=True):
+def source(devilish=True, ergosum=False):
+    """ergosum=True: as in a remix with modules/trackmenu, es_next (8 bytes) appended as its stand-in."""
     s = open(SRC_PATH).read()
     assert s.count('.include "remix.inc"') == 1
-    return s.replace('        .include "remix.inc"', remix_inc(devilish).rstrip('\n'), 1)
+    s = s.replace('        .include "remix.inc"', remix_inc(devilish, ergosum).rstrip('\n'), 1)
+    if ergosum:
+        s += '\n        .data\nes_next: .byte -1, -1, -1, -1, -1, -1, -1, -1\n'
+    return s
 
 class Rig:
     def __init__(self, src=None):

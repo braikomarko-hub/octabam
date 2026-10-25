@@ -38,7 +38,12 @@ def remix_inc(modules, remix=None):
     """remix.inc for octa303.s: dEVILish's FX id when the remix carries it.
 
     The build calls include(modules, remix) (schema.Linked.include); the remix is not needed here."""
-    return "        .set    DEVIL_ID, 0x%x\n" % (DEVIL_ID if "DEVILISH" in modules else 0x100)
+    inc = "        .set    DEVIL_ID, 0x%x\n" % (DEVIL_ID if "DEVILISH" in modules else 0x100)
+    # v7.2: ERGOSUM (modules/trackmenu, key TRACK_MENU) publishes es_next[t], the step a track plays
+    # next; with it in the image the 303's tied gate follows it. Without it nothing changes.
+    if "TRACK_MENU" in modules:
+        return inc + "        | es_next: modules/trackmenu's global\n"
+    return inc + "        .set    es_next, 0\n"
 
 
 CHROM_HOOK = 0x4004FC58                  # `lea (4,a2,a2.l*4),a2; mvz.b 0x100b14cf,d0` (quantizer's qz_chrom site)

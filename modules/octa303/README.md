@@ -30,6 +30,9 @@ Markers as in `CHIP.md`: ✅ measured, 🟡 inferred.
    its TUNE lock the moment it is placed (the previous step with a trig or a trigless step: its TUNE
    lock, or the Part's TUNE), so the slide ties into that note as on the TB-303. Turn TUNE with the
    step held to slide somewhere else. A step that already has a TUNE lock keeps it.
+   v7.2: with ERGOSUM (modules/trackmenu, the track menu) in the same image and on this track, GATE
+   303 ties into the step ERGOSUM plays next, not the pattern's next step (without the module, or
+   with ERGOSUM off or in SPLIT NOTES, nothing changes).
 3. The CHROMATIC keys play semitones on an OCTA-303 track.
 4. **The TB-303's UP and DOWN** (v7.1): in GRID RECORDING, hold one or more trigs and press UP or
    DOWN: each held step's TUNE goes an octave up or down (a step without a TUNE lock starts from
