@@ -275,6 +275,7 @@ morph_up:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0              | press only
         bne     mu_9
+        bsr     lp_undo                 | a slow TRACK + UP: the long press it fired is undone
         tst.l   mw_win
         bne     mw_close
         move.l  HELD,%d1
@@ -329,6 +330,7 @@ morph_down:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
         bne     mu_9
+        bsr     lp_undo
         move.l  HELD,%d1
         beq     mu_9
         bsr     mp_stopmask
@@ -436,6 +438,8 @@ mw_open:
         move.l  %d1,mw_targets
         moveq   #-1,%d0
         move.l  %d0,mw_last             | force the first paint
+        move.l  mp_gen,%d0              | the project it belongs to (mp_apply counts loads)
+        move.l  %d0,mw_gen
         clr.l   mw_go
         pea     mw_closed
         pea     5                       | TEMPO class: windows of the class evict each other
@@ -446,7 +450,11 @@ mw_open:
         jsr     WCREATE
         lea     24(%sp),%sp
         move.l  %d0,mw_win
-        beq     mw_closed               | no window: the held tracks back as they were
+        bne     mw_o1
+        moveq   #-1,%d0                 | no window: the held tracks back as they were,
+        move.l  %d0,mw_gen              | nothing ARMED
+        bra     mw_closed
+mw_o1:
         move.l  %d0,-(%sp)
         jsr     WFRAME
         addq.l  #4,%sp
@@ -489,9 +497,13 @@ mw_cr_go: moveq #S_ARMED,%d0
 mw_cr_s: move.b %d0,(%a0,%d1.l)
 mw_cr2: subq.l  #1,%d1
         bpl     mw_cr
+        move.l  mw_gen,%d0              | a project loaded meanwhile, or no window: not ARMED
+        cmp.l   mp_gen,%d0
+        bne     mw_cr3
         move.l  mp_prime,%d0            | the window's tracks: ARMED for the long press
         or.l    mw_targets,%d0
         move.l  %d0,mp_prime
+mw_cr3:
         clr.l   mw_go
         move.l  mw_timer,%d0
         bmi     mw_c1
@@ -512,7 +524,7 @@ mw_c9:  rts
 | (its scenes and its position), changed.
 mw_tick:
         tst.l   mw_win
-        beq     mw_close                | (closed elsewhere: drops the timer and the layer)
+        beq     mw_closed               | (gone without the callback: as NO, the timer and layer dropped)
         bsr     mw_first                | a0 = the first track's state, d0 = its index
         move.l  %d0,-(%sp)
         bsr     mw_sig                  | d0 = state << 16 | k
@@ -975,7 +987,7 @@ lp_tpress:
         addq.l  #8,%sp
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
-        bne     lp_9                    | press only
+        bne     lp_rel                  | release, repeat
         tst.l   mw_win
         bne     lp_9                    | our window is open
         mvz.b   MIDIMODE,%d0
@@ -1006,6 +1018,31 @@ lp_tpress:
         addq.l  #8,%sp
         move.l  %d0,lp_timer
 lp_9:   rts
+lp_rel: move.l  lp_ut,%d0               | the key of the last long press let go: no undo now
+        bmi     lp_9
+        moveq   #1,%d1
+        lsl.l   %d0,%d1
+        and.l   HELD,%d1                | (stock has just updated HELD)
+        bne     lp_9
+        moveq   #-1,%d0
+        move.l  %d0,lp_ut
+        rts
+| lp_undo -- the long press fired while its key is still down, and that key turns out to be the
+| first of a combination ([TRACK] + [UP] / [DOWN]): its track back to the state it had. Clobbers
+| d0, d1, a0.
+lp_undo:
+        move.l  lp_ut,%d0
+        bmi     lu_9
+        moveq   #-1,%d1
+        move.l  %d1,lp_ut
+        moveq   #1,%d1
+        lsl.l   %d0,%d1
+        and.l   HELD,%d1
+        beq     lu_9                    | let go meanwhile: it stands
+        lea     mp_state,%a0
+        move.l  lp_us,%d1
+        move.b  %d1,(%a0,%d0.l)
+lu_9:   rts
 lp_x:   moveq   #-1,%d0
         move.l  %d0,lp_cand
         rts
@@ -1046,6 +1083,7 @@ lp_long:                                | the time is up (a label for the port's
         lea     mp_state,%a0
         add.l   %d0,%a0
         mvz.b   (%a0),%d1
+        move.l  %d1,lp_us               | (for lp_undo)
         beq     lp_a0                   | the fader's
         subq.l  #S_RUN,%d1
         beq     lp_off                  | morphing: stop at the cycle's end
@@ -1073,6 +1111,8 @@ lp_off: moveq   #S_STOP,%d1
         move.b  %d1,(%a0)
         lea     V_TOFF,%a1
 lp_toast:                               | "T2 MORPH ON": NOTIFY(text, 0x30), as stock's toasts
+        move.l  lp_t,%d0                | done while the key is down: lp_undo can take it back
+        move.l  %d0,lp_ut
         move.l  %a1,-(%sp)
         move.l  lp_t,%d0
         addq.l  #1,%d0
@@ -1234,7 +1274,7 @@ mps_3:  lea     mp_buf,%a0
         move.l  %d0,12(%a0)
         move.l  #MP_MAGIC,%d0
         move.l  %d0,(%a0)
-        moveq   #1,%d0
+        moveq   #2,%d0                  | version 2 (v1.1: x to 100, the ARMED byte)
         move.l  %d0,4(%a0)
         moveq   #MP_LEN,%d0
         move.l  %d0,8(%a0)
@@ -1295,9 +1335,12 @@ mp_load:
         move.l  (%a0),%d0
         cmp.l   #MP_MAGIC,%d0
         bne     mpl_bad
-        moveq   #1,%d0
-        cmp.l   4(%a0),%d0
-        bne     mpl_bad
+        move.l  4(%a0),%d0              | version 1 (v1) or 2 (v1.1)
+        move.l  %d0,mp_ver
+        subq.l  #1,%d0
+        moveq   #1,%d1
+        cmp.l   %d1,%d0
+        bhi     mpl_bad
         moveq   #MP_LEN,%d0
         cmp.l   8(%a0),%d0
         bne     mpl_bad
@@ -1328,6 +1371,8 @@ mpl_crc:
 | mp_defaults -- every track 16 x 8 SMOOTH and on the fader; mp_saved = that payload, so an
 | untouched project gets no file.
 mp_defaults:
+        moveq   #2,%d0
+        move.l  %d0,mp_ver
         lea     mp_buf,%a0
         moveq   #8,%d1
         move.l  #0x10080000,%d0         | 16, 8, SMOOTH, pad
@@ -1341,6 +1386,7 @@ mpd_1:  move.l  %d0,(%a0)+
 | go to the fader, a track that was not on the fader by way of PARK (held on A until the fader
 | is at A, as after a stop: its weight is not left where its morph was).
 mp_apply:
+        addq.l  #1,mp_gen               | a new project's settings: a window open now is the old one's
         lea     mp_buf,%a0
         lea     mp_set,%a1
         moveq   #0,%d1                  | t
@@ -1350,7 +1396,14 @@ mpa_1:  mvz.b   (%a0),%d0               | STEPS 0..64
         moveq   #16,%d0
 mpa_2:  move.b  %d0,(%a1)
         mvz.b   1(%a0),%d0              | x 1..100
-        cmp.l   #XMAX,%d0
+        moveq   #17,%d2                 | version 1's 17 was 41.625: 42 now
+        cmp.l   %d2,%d0
+        bne     mpa_2x
+        moveq   #1,%d2
+        cmp.l   mp_ver,%d2
+        bne     mpa_2x
+        moveq   #42,%d0
+mpa_2x: cmp.l   #XMAX,%d0
         bls     mpa_3
         moveq   #8,%d0
 mpa_3:  tst.l   %d0
@@ -1517,6 +1570,11 @@ lp_snap0:  .long 0
 lp_snap1:  .long 0
 lp_timer:  .long -1
 lp_t:      .long 0
+lp_ut:     .long -1                         | the track the last long press acted on while held
+lp_us:     .long 0                          | its state before
+mp_gen:    .long 0                          | loads so far (mp_apply)
+mw_gen:    .long 0                          | mp_gen when the window opened, -1 without a window
+mp_ver:    .long 2                          | the version of the file read
 mp_xf:     .byte 127, 127, 127, 127, 127, 127, 127, 127   | each track's xf, the frame's
 lp_tbuf:   .space 24
         .balign 4
