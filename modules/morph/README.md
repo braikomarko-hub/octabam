@@ -81,13 +81,14 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
   file is written until something changes.
 - At a project load (and at power-up) the tracks that were morphing are armed: they start from A
   on the first step after PLAY. A track that was stopping or parked is parked on A.
-- A `morph.work` that is not version 1 or fails its CRC is never written over: STORE lists it
+- A `morph.work` that is not version 1 or 2 or fails its CRC is never written over: STORE lists it
   (MORPH SETTINGS NOT LOADED) and offers to keep it, start fresh, or back it up to `morph.bak`
   first.
-- File: `MRPW`, version 1, payload length 40, CRC-32 of the payload; the payload is the eight
-  tracks' STEPS, x, MODE and a pad byte, one byte of the tracks that morph (bit t), one byte of
-  the armed tracks (v1.1; v1 wrote 0 there), six zero bytes. A v1 file loads with nothing armed;
-  v1's 41.625 (x byte 17) loads as x 17.
+- File: `MRPW`, version 2 (v1.1; v1 wrote version 1), payload length 40, CRC-32 of the payload;
+  the payload is the eight tracks' STEPS, x, MODE and a pad byte, one byte of the tracks that
+  morph (bit t), one byte of the armed tracks (0 in version 1), six zero bytes. A version 1 file
+  loads with nothing armed and its 41.625 (x byte 17) as x 42. v1 firmware refuses a version 2
+  file (and never writes over it).
 
 ## How it works
 
@@ -154,8 +155,12 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
 - Select parameters (MODE, WAVE…) jump at the middle of the morph, as with the crossfader.
 - [TRACK] + [UP]/[DOWN] replace what UP/DOWN did while a track key is held (stock: the layer below,
   e.g. a list's cursor).
-- A track key held alone for a second on an armed track toggles its morph: holding it longer
-  before pressing UP (slowly) toggles first, then opens the window.
+- A track key held alone for a second on an armed track toggles its morph at once (with its
+  toast). If that same hold then becomes [TRACK] + [UP] or [TRACK] + [DOWN] (a slow combination),
+  the toggle is taken back before the window opens or the stop applies; the toast has already
+  been shown. Other slow [TRACK] combinations (YES, NO, PLAY, BANK) keep the toggle.
+- Opening the window on a track that is finishing its cycle (STOP) lets it carry on morphing, as
+  in v1; NO does not stop it again ([TRACK] + [DOWN] does).
 - Beside REC_TRIG_MUTE (both change the [TRACK]-layer table) the registry adds
   [HOOKS](../hooks/README.md), whose one table carries MORPH's UP/DOWN and REC_TRIG_MUTE's
   YES/NO; MORPH's own copy is then not read. Under Unicorn only (verify_hooks); not flashed.

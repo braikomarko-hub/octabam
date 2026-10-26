@@ -463,6 +463,37 @@ long_press(1)
 while state(1) == 2: frame()
 mem.w(XF, 'l', 127); frame()
 
+# ---- the review's cases (26 Oct 2026)
+for t in range(8): mem.w(C['mp_state'] + t, 'b', 0)
+mem.w(C['mp_prime'], 'l', 0b100); mem.w(HELD, 'l', 0); mem.w(XF, 'l', 127)
+tkey(0x12, 1); lp_ticks(70)                     # T3 held past a second: the long press fires...
+check('slow_track_up_fires_first', state(2) == 4)
+key('morph_up')                                 # ... then UP (T3 still held): undone, the window
+check('slow_track_up_undoes_the_long_press', state(2) == 5 and win() == WIN, str(state(2)))
+mem.w(HELD, 'l', 0); key('mw_no')
+check('then_no_starts_nothing', state(2) == 0)
+mem.w(C['mp_state'] + 2, 'b', 1)                # morphing, T3 held past a second, then DOWN
+tkey(0x12, 1); lp_ticks(70)
+check('long_press_stops_it', state(2) == 2)
+key('morph_down', None)
+check('slow_track_down_undoes_then_stops', state(2) == 2 and mem.r(C['lp_ut'], 'l') == 0xffffffff)
+tkey(0x12, 0)
+mem.w(C['mp_state'] + 2, 'b', 0)
+long_press(2); to_next_step()                   # a long press, released: it stands
+key('morph_up', 0b100)
+check('a_released_long_press_stands', state(2) == 1, str(state(2)))
+key('mw_no')
+mem.w(C['mp_prime'], 'l', 0)                    # a project loaded with the window open
+key('morph_up', 0b10000); mem.w(HELD, 'l', 0)
+cpu.a[7] = SP; cpu.call('mrp_st_newproj')
+key('mw_no')
+check('a_load_meanwhile_arms_nothing', mem.r(C['mp_prime'], 'l') == 0)
+_wc = cpu.hooks[WCREATE]; cpu.hooks[WCREATE] = lambda c: c.d.__setitem__(0, 0)
+key('morph_up', 0b100000)
+cpu.hooks[WCREATE] = _wc
+check('no_window_arms_nothing', mem.r(C['mp_prime'], 'l') == 0 and state(5) == 0)
+for t in range(8): mem.w(C['mp_state'] + t, 'b', 0)
+
 # ---- saving: morph.work through STORE
 import zlib
 def ev(name): cpu.a[7] = SP; cpu.call('mrp_st_' + name)
@@ -476,7 +507,7 @@ check('save_untouched_writes_nothing', not writes and W not in files)
 mem.w(C['mp_prime'], 'l', 0b10100)
 settings(0, 8, 2, 1); settings(4, 0, 17, 0); setall([1, 0, 0, 0, 4, 0, 3, 0]); ev('bankw_post')
 f = files.get(W, b'')
-ok = (len(f) == 56 and f[:4] == b'MRPW' and struct.unpack('>III', f[4:16]) == (1, 40, zlib.crc32(f[16:]))
+ok = (len(f) == 56 and f[:4] == b'MRPW' and struct.unpack('>III', f[4:16]) == (2, 40, zlib.crc32(f[16:]))
       and f[16:20] == bytes([8, 2, 1, 0]) and f[32:36] == bytes([0, 17, 0, 0]) and f[48] == 0b10001
       and f[49] == 0b10100 and f[50:] == bytes(6))
 check('save_writes_morph_work', ok, f.hex())
@@ -509,6 +540,20 @@ check('backup_answer_keeps_bak_then_writes', files.get('/P/morph.bak') == good a
       and files[W][:4] == b'MRPW')
 del files[W]; setall([1, 0, 0, 0, 0, 0, 0, 0]); ev('loadmask_post')
 check('no_file_defaults_and_parks', mem.r(C['mp_set'] + 9, 'b') == 8 and state(0) == 3)
+
+# version 1 (v1): its x 17 was 41.625 -> 42; read as before otherwise
+files.clear()
+pl = bytes([16, 17, 0, 0] + [16, 8, 0, 0] * 7 + [0] * 8)
+files[W] = b'MRPW' + struct.pack('>III', 1, 40, zlib.crc32(pl)) + pl
+ev('loadall_post')
+check('v1_file_x17_is_42', mem.r(C['mp_set'] + 1, 'b') == 42 and mem.r(C['mp_prime'], 'l') == 0)
+pl = bytes([16, 17, 0, 0] + [16, 8, 0, 0] * 7 + [0] * 8)
+files[W] = b'MRPW' + struct.pack('>III', 2, 40, zlib.crc32(pl)) + pl
+ev('loadall_post')
+check('v2_file_x17_is_17', mem.r(C['mp_set'] + 1, 'b') == 17)
+files[W] = b'MRPW' + struct.pack('>III', 3, 40, zlib.crc32(pl)) + pl
+refused.clear(); ev('loadall_post')
+check('version_3_is_refused', refused == [(4, 0)])
 
 print('%d failure(s)' % fails)
 sys.exit(1 if fails else 0)
