@@ -287,14 +287,41 @@ the two DSP dispatch tables are indexed by the raw id and shared between
 FX1 and FX2, so a module on a stock id replaces that effect's code wherever
 the id is selected, FX1 included, and a remix that omits the module then
 aliases the id to SEND, which takes the stock effect away from FX1 too.
-Free ids: `0x06 0x07 0x09 0x0a 0x0b 0x0e 0x0f 0x17 0x1a 0x1b 0x1d 0x1e
+Free ids (`schema.FREE_FX2_IDS`): `0x06 0x07 0x09 0x0a 0x0b 0x0e 0x0f 0x17 0x1a 0x1b 0x1d 0x1e
 0x1f`. EUCLID holds `0x1d` and LOFI2 `0x1f`; the selftest's placement
 probes build scratch fixtures on `0x1e`, so a module there fails them.
 STUTTR replaces MULTIBCOMP (`0x19`, stock null stub, not a free-pool id).
 
-The registry is the arbiter: `registry.modules()` refuses two modules on
-one id at import, whether or not any remix selects both. `make modules`
-prints what is claimed.
+`fx2_id` is the id a module prefers. `registry.assign_ids` settles the ids
+of a remix's modules, and `registry.bound(remix)` returns the modules with
+the settled ids. Stock rows and modules with `replaces` keep their stock
+id. Of the other modules, one preferring an id nobody else in the remix
+prefers keeps it. Where several prefer one id, the first by key keeps it and
+the others take the lowest free id; a remix with more such modules than free
+ids is refused. A remix whose modules prefer distinct ids is unchanged, and
+two modules that never share a remix may prefer one id.
+
+A project stores the raw id, so a project saved on one remix opens whichever
+module holds that id on another, or the fallback if none does.
+`Remix.ids` pins a module to an id in that remix (`ids={"BBD": 0x25}`), so a
+project saved on the remix keeps its meaning whatever the registry gains.
+
+Anything that needs a module's id in a remix reads it from the bound module
+(`registry.bound(remix)`, never `registry.modules()`): a linked unit takes it
+from `Linked.include` (`modules/bbd`, `rig-hosts`), not from a `defsyms`
+value or a literal. `make modules` prints the preferred ids.
+
+**The id space: `Remix.id_space`.** Stock holds 32 ids. `id_space=64` builds
+an image with 64: the DSP dispatch tables and `FX2_IDS` / `ID2POS` grow, and
+free ids are `0x04`..`0x3f` but stock's. A module in `Remix.fx1` keeps an id
+below `0x20` (FX1's own tables keep 32 entries). The default, 32, builds the
+stock layout and every existing image is bit-identical. What the 64-id layout
+changes is in `PLACEMENT.md`, "The 64-id layout"; it has not run on hardware.
+A module that reads the FX2 id table in its own ColdFire code takes its
+address from the build too (`idspace.fx2_ids(remix)` in a `Linked.include`:
+`brain`, `plocks-p2`, `scenes-p2`, `rig-hosts`, `tempo-bus`), because the
+table moves in a 64-id image; `0x400d5fdc` stays right only for 32 ids.
+`remixes/test/ids64` is the test remix.
 
 ### Per-mode knob names and defaults: `ModeView`
 

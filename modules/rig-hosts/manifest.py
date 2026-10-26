@@ -19,6 +19,7 @@ not carry makes the firmware create one; its live FX2 ids read
 """
 
 from remix.schema import Category, Proof, Detour, Kind, Linked, Module
+import idspace
 
 H = bytes.fromhex
 
@@ -29,7 +30,7 @@ def ids_inc(modules, remix):
     id comes from the registry."""
     from remix import registry
     every = dict(registry.modules()); every.update(modules)
-    return "".join(f"        .set    {name}, {every[key].menu.fx2_id}\n"
+    return f"        .set    FX2_IDS, {idspace.fx2_ids(remix):#x}\n" + "".join(f"        .set    {name}, {every[key].menu.fx2_id}\n"
                    for name, key in (("ID_DELAY", "DELAY SERVER"),
                                      ("ID_VERB", "REVERB SERVER"),
                                      ("ID_SEND", "SEND"),

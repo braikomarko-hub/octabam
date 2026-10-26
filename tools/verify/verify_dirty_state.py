@@ -80,7 +80,7 @@ def main():
     ap.add_argument("--image", default=None,
                     help="an image to read as it is; without it the remix is built first")
     a = ap.parse_args()
-    remix = registry.remix(a.remix); mods = registry.modules()
+    remix = registry.remix(a.remix); mods = registry.bound(remix)     # the remix's own ids
     if a.image is None:
         # out/mainos_bus.bin is whatever built last (the selftest and
         # verify_character leave their own); build this remix's.

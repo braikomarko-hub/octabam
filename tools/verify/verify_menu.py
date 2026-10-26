@@ -38,6 +38,7 @@ from dsp_modmap import BASE  # noqa: E402
 from remix import registry as _reg  # noqa: E402
 from remix import rig as _rig  # noqa: E402
 from remix.schema import NO_FALLBACK as _NO_FALLBACK  # noqa: E402
+import idspace  # noqa: E402
 
 STOCK = pathlib.Path("out/raw/section_3_MAIN_OS.bin")
 BUILT = pathlib.Path("out/mainos_bus.bin")
@@ -61,7 +62,9 @@ FX1_NONE = 0x400d4618
 FX1_ROWCOUNT_AT = 0x40059be6            # FX1's viewport literal
 
 REMIX = _reg.remix(os.environ.get("REMIX"))
-_MODS = _reg.modules()
+_MODS = _reg.bound(REMIX)               # the remix's own ids
+FX2_IDS = idspace.fx2_ids(REMIX)        # a 64-id image keeps these two tables elsewhere
+ID2POS = idspace.id2pos(REMIX)
 NO_WIDGET = 0x4005692e          # build_bus.NO_WIDGET: a stock rts, past a host page's slots
 # A HIDDEN module (schema.Remix.hidden) is carried but takes no chooser row,
 # so it is not in the order the list, the positions or the row count are
@@ -278,7 +281,7 @@ def main():
         P = rd32(img, FX2_IDS + fx_id * 4)
         if name in STOCK_KEYS:
             # Nothing of a stock row is ours to check but its untouchedness.
-            check(P == rd32(stock, FX2_IDS + fx_id * 4),
+            check(P == rd32(stock, idspace.FX2_IDS_STOCK + fx_id * 4),
                   f"{name}: FX2_IDS[0x{fx_id:02x}] is stock's own descriptor")
             check(img[P - BASE:P - BASE + 0x192] == stock[P - BASE:P - BASE + 0x192],
                   f"{name}: stock descriptor bytes at P=0x{P:08x} unchanged")

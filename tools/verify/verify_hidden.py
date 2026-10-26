@@ -49,8 +49,11 @@ WRITER = 0x40054cd8
 def main():
     from remix import registry
     name = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("REMIX")
+    import idspace
     remix = registry.remix(name)
-    mods = registry.modules()
+    mods = registry.bound(remix)                    # the remix's own ids
+    global FX2_IDS, ID2POS
+    FX2_IDS, ID2POS = idspace.fx2_ids(remix), idspace.id2pos(remix)   # a 64-id image moves them
     hidden = [k for k in remix.modules
               if mods[k].menu is not None and k in remix.hidden]
     listed = [k for k in remix.modules
@@ -261,9 +264,15 @@ def main():
     mem_a = pathlib.Path("out/dsp/mem_dev_A.mem")
     scratch = pathlib.Path("out/_hidden")
     scratch.mkdir(parents=True, exist_ok=True)
-    subprocess.run([sys.executable, "tools/build/build_bus.py"],
-                   capture_output=True, text=True,
-                   env={**os.environ, "REMIX": name, "DEV": "1", "XBUS": "1"})
+    mem_a.unlink(missing_ok=True)       # never render a dump another remix left behind
+    dev = subprocess.run([sys.executable, "tools/build/build_bus.py"],
+                         capture_output=True, text=True,
+                         env={**os.environ, "REMIX": name, "DEV": "1", "XBUS": "1"})
+    if dev.returncode and pathlib.Path(HOST).exists():
+        # the DEV hatch places every server in payload A and does not honour Remix.window's
+        # per-payload copies, so a remix with servers in the window cannot render here
+        print(f"  [SKIP] the host guard renders: the DEV hatch build of {name} failed "
+              f"({(dev.stdout + dev.stderr).strip().splitlines()[-1][:120]})")
     if pathlib.Path(HOST).exists() and mem_a.exists():
         FRAMES, N = 15, 6000
         src = scratch / "in.raw"

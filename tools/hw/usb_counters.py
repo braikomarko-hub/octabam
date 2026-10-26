@@ -5,11 +5,10 @@
   tools/hw/usb_counters.py            # once
   tools/hw/usb_counters.py --watch 1  # every second, deltas beside the values
 
-Needs libusb and pyusb. On this Mac Homebrew is the Intel build under
-/usr/local and the .venv python is arm64, so the x86_64 python takes the
-package: `brew install libusb`, then
-`/usr/local/bin/python3 -m pip install --user --break-system-packages pyusb`
-and run this with `/usr/local/bin/python3` (25 Sep 2026).
+Needs pyusb and a libusb: `.venv/bin/python3 -m pip install pyusb libusb-package` (the
+bundled library loads in an arm64 python). Without libusb-package, a Homebrew libusb of the
+same architecture as the python; on this Mac Homebrew is the Intel build under /usr/local, so
+an arm64 python cannot load it and `/usr/local/bin/python3` took the package (25 Sep 2026).
 A device-recipient control request needs no interface claim, so the
 audio and MIDI drivers macOS attaches stay attached. The unit must be
 running an image with a USB module whose outputs are not all off; on any other image the request STALLs
@@ -66,15 +65,22 @@ def main():
     try:
         import usb.core
     except ImportError:
-        sys.exit("pyusb is not installed: brew install libusb && .venv/bin/pip install pyusb")
-    # pyusb's default search misses a Homebrew libusb on this Mac (Intel
-    # brew under /usr/local, 25 Sep 2026); name the library outright.
+        sys.exit("pyusb is not installed: .venv/bin/python3 -m pip install pyusb libusb-package")
+    # libusb-package's bundled library when installed (it loads in an arm64 python); else a Homebrew one by
+    # path (pyusb's default search misses it, 25 Sep 2026)
     import glob
     import usb.backend.libusb1
-    libs = (glob.glob("/usr/local/opt/libusb/lib/libusb-1.0.dylib") + glob.glob("/opt/homebrew/opt/libusb/lib/libusb-1.0.dylib")
-            + glob.glob("/usr/local/lib/libusb-1.0*.dylib") + glob.glob("/usr/local/Cellar/libusb/*/lib/libusb-1.0*.dylib")
-            + glob.glob("/opt/homebrew/lib/libusb-1.0*.dylib") + glob.glob("/opt/homebrew/Cellar/libusb/*/lib/libusb-1.0*.dylib"))
-    backend = usb.backend.libusb1.get_backend(find_library=lambda _: libs[0]) if libs else None
+    backend = None
+    try:
+        import libusb_package
+        backend = libusb_package.get_libusb1_backend()
+    except ImportError:
+        pass
+    if backend is None:
+        libs = (glob.glob("/usr/local/opt/libusb/lib/libusb-1.0.dylib") + glob.glob("/opt/homebrew/opt/libusb/lib/libusb-1.0.dylib")
+                + glob.glob("/usr/local/lib/libusb-1.0*.dylib") + glob.glob("/usr/local/Cellar/libusb/*/lib/libusb-1.0*.dylib")
+                + glob.glob("/opt/homebrew/lib/libusb-1.0*.dylib") + glob.glob("/opt/homebrew/Cellar/libusb/*/lib/libusb-1.0*.dylib"))
+        backend = usb.backend.libusb1.get_backend(find_library=lambda _: libs[0]) if libs else None
     dev = usb.core.find(idVendor=0x1935, idProduct=0x0002, backend=backend)
     if dev is None:
         sys.exit("no Octatrack on USB (1935:0002)")

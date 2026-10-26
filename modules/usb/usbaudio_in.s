@@ -120,11 +120,13 @@
 .set TX_WORDS,   TX_BYTES/2
 .set NCOUNT,     15                 | longs in in_counters
 
-| wValue / wIndex / wLength from the SETUP packet, 16 bits into \r.
+| wValue / wIndex / wLength from the SETUP packet, 16 bits into \r. The low
+| byte is a byte move: orl reads a long at \lo, which put wLength's low byte
+| in bits 31-24 and left the clamp below unable to fire.
 .macro SETUP16 hi, lo, r
     mvzb    \hi,\r
     lsll    #8,\r
-    orl     \lo,\r
+    moveb   \lo,\r
 .endm
 
     .text

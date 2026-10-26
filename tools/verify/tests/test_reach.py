@@ -1,5 +1,6 @@
 """The path classifier, against a fake registry and a fake dependency graph:
 no manifests, no firmware."""
+import json
 import os
 import pathlib
 import sys
@@ -508,6 +509,76 @@ class TestRemixTests(unittest.TestCase):
         c = self.ctx_without_tests()
         self.assertIn("--remixes bamsep26 usb", c.identity()[1])
         self.assertNotIn("--remixes", ctx().identity()[1])
+
+
+class PlanJsonTests(unittest.TestCase):
+    def test_one_entry_per_command_in_plan_order(self):
+        rows = reach.classify(["remixes/miniverb/remix.py"], ctx())
+        items = reach.plan(rows)
+        d = reach.plan_json("origin/main", "abc", True, 2, reach.remixes_reached(rows), items)
+        self.assertEqual([g["command"] for g in d["gates"]], [c for _, c, _ in items])
+        self.assertEqual(d["remixes"], ["miniverb"])
+        self.assertEqual((d["tier"], d["jobs"], d["merge_base"]), ("quick", 2, "abc"))
+        self.assertEqual(json.loads(json.dumps(d)), d)
+
+    def test_a_full_plan_says_so_and_nothing_to_run_is_an_empty_list(self):
+        d = reach.plan_json("origin/main", None, False, 1, [], [])
+        self.assertEqual((d["tier"], d["gates"]), ("full", []))
+
+    def test_main_prints_only_the_json_on_stdout(self):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = reach.main(["--json", "--paths", "docs/README.md"])
+        self.assertEqual(rc, 0)
+        d = json.loads(out.getvalue())
+        self.assertEqual(d["tier"], "quick")
+        self.assertIn("docs/README.md", err.getvalue())
+
+    def items(self):
+        return [("verify_docs", "python3 tools/verify/verify_docs.py", ["a"]),
+                ("test-acceptance", "make test-acceptance", ["b"]),
+                ("refhash", "scripts/refhash.sh check", ["c"]),
+                ("check-shared", 'make check-shared REMIXES="x y"', ["d"]),
+                ("check-remix", 'python3 tools/verify/check_shards.py --jobs 3 --modules "K1,K2" x y', ["e"])]
+
+    def test_entries_group_the_quick_commands_and_split_the_shards_per_remix(self):
+        got = {e["name"]: [c for _, c, _ in e["items"]] for e in reach.entries(self.items(), 3)}
+        self.assertEqual(list(got), ["refhash", "check-shared", "check-remix x", "check-remix y", "light"])
+        self.assertEqual(got["light"], ["python3 tools/verify/verify_docs.py", "make test-acceptance"])
+        self.assertEqual(got["check-remix y"],
+                         ['python3 tools/verify/check_shards.py --jobs 3 --modules "K1,K2" y'])
+
+    def test_entries_name_a_lone_check_and_make_repeated_names_unique(self):
+        items = [("check", "make check REMIX=x", []), ("check", "make check REMIX=x", []),
+                 ("accept", 'make accept REMIXES="x y"', [])]
+        self.assertEqual([e["name"] for e in reach.entries(items, 1)], ["check x", "check x #2", "accept"])
+
+    def test_the_json_matrix_lists_each_units_commands(self):
+        d = reach.plan_json("origin/main", None, True, 3, ["x", "y"], self.items())
+        self.assertEqual(d["matrix"][-1], {"name": "light", "commands": ["python3 tools/verify/verify_docs.py",
+                                                                         "make test-acceptance"]})
+        self.assertEqual(len(d["gates"]), 5)
+
+    def test_only_keeps_one_unit_and_refuses_an_unknown_one(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = reach.main(["--paths", "docs/README.md", "--only", "light"])
+        self.assertEqual(rc, 0)
+        self.assertIn("verify_docs.py", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit) as e:
+            reach.main(["--paths", "docs/README.md", "--only", "nope"])
+        self.assertIn("no such unit", str(e.exception))
+
+    def test_json_refuses_run(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            reach.main(["--json", "--run"])
 
 
 class VendorWriterTests(unittest.TestCase):

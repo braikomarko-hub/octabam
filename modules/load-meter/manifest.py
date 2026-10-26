@@ -27,17 +27,23 @@ def _dsp_asm():
     """The DSP source; for tools/verify/verify_load_meter.py's builds a copy
     under out/: LM_BURN=N burns N iterations of a one-cycle `nop` DO loop at
     each core's frame end, before the busy stamp (the calibration); LM_NOPUB=1
-    leaves out core 0's publish and LM_NOOT=1 OTOP's stamps (the bit-identity references)."""
+    leaves out core 0's publish and LM_NOOT=1 OTOP's stamps (the bit-identity references);
+    LM_FRAME0=N starts core 0's frame count at N (the wrap at 2^23)."""
     n = int(os.environ.get("LM_BURN", "0") or 0)
     nopub = os.environ.get("LM_NOPUB") == "1"
     noot = os.environ.get("LM_NOOT") == "1"
-    if not n and not nopub and not noot:
+    frame0 = int(os.environ.get("LM_FRAME0", "0") or 0)
+    if not n and not nopub and not noot and not frame0:
         return SOURCE
     if n and not 0 < n < 4096:
         raise ValueError(f"LM_BURN={n}: 1..4095 (the short DO count)")
     src = (ROOT / SOURCE).read_text()
     if n:
         src = src.replace("; LM_BURN\n", f"        do      #{n},lm_burned\n        nop\nlm_burned:\n", 1)
+    if frame0:
+        if not 0 < frame0 < 1 << 23:
+            raise ValueError(f"LM_FRAME0={frame0}: 1..2^23-1")
+        src = src.replace("; LM_FRAME0\n", f"        move    #>{frame0},x0\n        move    x0,x:(r1+6)\n", 1)
     if nopub:
         src = src.replace("; LM_PUB\n", "        bra     lmp_x\n", 1)
     if noot:
@@ -95,5 +101,6 @@ MODULE = Module(
     # outside the order lm_scrub is measured against: refused until measured.
     conflicts=(("STEM REC", "reads MAIN before lm_scrub's place in the frame interrupt is shown to precede it"),),
     gates=(Gate("tools/verify/verify_load_meter.py", remix_arg=False, venv=True, stage="image"),
-           Gate("tools/verify/verify_dsp_vectors.py"),),
+           Gate("tools/verify/verify_dsp_vectors.py"),
+           Gate("tools/verify/verify_usb_load_meter.py", venv=True, stage="image"),),
 )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""USB-MIDI clock under the ColdFire port: a 0xF8 over USB sets the tempo as a
-0xF8 on DIN does.
+"""USB-MIDI clock and transport under the ColdFire port: a 0xF8 over USB sets the
+tempo as a 0xF8 on DIN does, and a START / STOP over USB drives the sequencer as on DIN.
 
 The MIDI clock handler (0x40005a48) builds the tempo, BPM * 24 into
 0x80001818 (0x80001814 every 24th tick), from the DTCN0 delta the UART0 ISR
@@ -15,9 +15,14 @@ the last 24 ticks. After each run,
 0x80001818 must be within 1% of 60 * 44100 / spacing (BPM * 24). Without
 the stamp both USB runs read 2400, the DIN run's tempo.
 
+Then, with TRANSPORT RECEIVE set (0x80000029), a START, 48 clocks and a STOP
+over DIN and over USB: the transport word (0x800065b8) must read 1 after the
+START and not 1 after the STOP, and USB's two readings must equal DIN's.
+
 Depends on the port counting DTCN0 at 256 fs (rtos.h; inferred from the
 handler's constant). SKIPs when the remix has no USB or the port is not
-built (`make emu-cf`). What this cannot see: clock bytes bunched in one USB
+built (`make emu-cf`). What this cannot see: a project's patterns playing (no project is loaded; the
+transport word is the sequencer's own state), clock bytes bunched in one USB
 packet (each tick here is its own transfer), and USB timing on the unit.
 """
 import os
@@ -36,6 +41,8 @@ EMU = ROOT / "out/emu/ot_emu"
 IMAGE = ROOT / "out/mainos_bus.bin"
 CLOCK_RECEIVE = 0x80000028      # byte, bit 0 (the handler's gate, 0x40005a50)
 TEMPO = 0x80001818              # BPM * 24, clamped 600..7320
+TRANSPORT_RECEIVE = 0x80000029  # byte, nonzero: START/STOP are taken (docs/firmware/STORAGE.md)
+TRANSPORT = 0x800065b8          # longword: 1 = the sequencer plays, 0 = stopped and rewound (docs/firmware/STEM_REC.md 1.7)
 CLK_DT = 0x46c83466             # DTCN0 delta between the last two 0xF8
 TICKS = 48
 RUNS = [("DIN", 25.0), ("USB", 50.0), ("USB", 37.5)]     # ms per tick asked; the port lands them at 25.0, 50.0, 40.0 ms (100, 50, 62.5 BPM)
@@ -129,6 +136,19 @@ def main():
             check(f"{src} clock at {spacing:.1f} samples/tick: tempo {got} (BPM*24), want {want:.0f} +-1%",
                   abs(got - want) <= 0.01 * want, f"0x46c83466 = {peek(CLK_DT)}")
             send(b, src, 0xfc, 250)    # > 1,881,600 DTCN0 counts (167 ms): the handler's resync gap (0x40005a96), so no run inherits the last one's ring
+        cmd(f"poke {TRANSPORT_RECEIVE:#x} {peek(TRANSPORT_RECEIVE, 1) | 1:02x}")
+        seen = {}
+        for src in ("DIN", "USB"):
+            send(b, src, 0xfa, 1)
+            for _ in range(TICKS):
+                send(b, src, 0xf8, 25.0)
+            started = peek(TRANSPORT)
+            send(b, src, 0xfc, 250)
+            seen[src] = (started, peek(TRANSPORT))
+        check(f"DIN START runs the sequencer, STOP ends it: transport {seen['DIN'][0]} then {seen['DIN'][1]}",
+              seen["DIN"][0] == 1 and seen["DIN"][1] != 1)
+        check(f"USB START and STOP leave the transport as DIN's: {seen['USB']} against {seen['DIN']}",
+              seen["USB"] == seen["DIN"])
     except Exception as e:  # noqa: BLE001 -- a hang or a stall is the finding
         check(f"the probe completed ({type(e).__name__}: {e})", False)
     finally:

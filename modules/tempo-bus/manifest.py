@@ -29,6 +29,7 @@ screen itself: see the PR.
 """
 
 from remix.schema import Gate, Category, Proof, Detour, Kind, Linked, Module, Poke
+import idspace
 
 H = bytes.fromhex
 ENGINES = ("DELAY SERVER", "REVERB SERVER")    # box 0, box 1
@@ -79,7 +80,8 @@ def table_inc(modules, remix):
         "        .byte   " + ", ".join(map(str, o)) + "\n" for o in order) + "        .endm\n")
     tabs.append("        .macro  NTABS_LONGS\n        .long   "
                 + ", ".join(labels) + "\n        .endm\n")
-    return ("ENGIDS: .byte   " + ", ".join(map(str, ids)) + "\n"
+    return (f"        .set    DESC2, {idspace.fx2_ids(remix):#x}\n"
+            "ENGIDS: .byte   " + ", ".join(map(str, ids)) + "\n"
             "        .even\n"
             "NAMED:  .word   " + ", ".join(f"{m:#x}" for m in masks) + "\n"
             + "".join(tabs))

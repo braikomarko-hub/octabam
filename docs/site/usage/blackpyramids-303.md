@@ -15,6 +15,9 @@ or [FUNC] + [SRC] > MACHINE.
 
 ![BLKPYRAMD source controls: PTCH, CUT, RES, ENV, DEC, ACC.](../../img/blackpyramids-303/source.png)
 
+The brackets above the knobs pair CUT with RES and DEC with ACC, the knobs
+that shape the filter sweep together.
+
 | Page | Knob | What it does |
 |---|---|---|
 | SRC | PTCH | the note, C0–C8 by name; [FUNC] + turn steps by octaves |

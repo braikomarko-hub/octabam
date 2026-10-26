@@ -6,15 +6,14 @@ Conflicts with SYNTH MACHINE (not included).
 
 from remix.schema import Pin, Proof, Remix
 
-from pathlib import Path
-import runpy
-
-_CORE = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "octabam-core" / "remix.py"),
-    run_name="octabam_core_remix",
-)
-CORE = _CORE["CORE"]
-STOCK14 = _CORE["STOCK14"]
+CORE = ("BRAIN", "STORE", "KITS", "MIDI SCENES", "SCENES P2", "PLOCKS P2",
+        "CC MAP", "CC FEEDBACK", "USB",
+        "RECORDER LOOP FIX", "BATCH_BUGFIXES", "ERASE_EMPTY_TRIGLESS_LOCKS",
+        "QUANTIZE_LIVE_REC_TOGGLE", "REC_TRIG_MUTE", "MUTE_MODES",
+        "SCALE QUANTIZER", "TUNER", "DIRECT_JUMP_KYOTI", "RELOAD_FROM_PROJECT", "RLEN PLEN",
+        "ATA WRITE GUARD")
+STOCK14 = ("FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER", "CHORUS", "SPATIALIZER",
+           "COMB FILTER", "COMPRESSOR", "LO-FI", "DELAY", "PLATE REV", "SPRING REV", "DARK REV")
 
 REMIX = Remix(
     name="cxosc-core",

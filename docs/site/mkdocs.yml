@@ -80,6 +80,7 @@ nav:
       - Cx Osc: reference/modules/cxosc.md
       - Synth Machine: reference/modules/synth.md
       - Tempo Controls: reference/modules/tempo-bus.md
+      - Track Patterns: reference/modules/trackpatterns.md
       - Tuner: reference/modules/tuner.md
       - Varispeed: reference/modules/varispeed.md
   - Kits and Scenes:
@@ -105,6 +106,7 @@ nav:
       - Copy Project: reference/modules/copy-project.md
       - Random Naming: reference/modules/rnd-name.md
       - Remix Switch: reference/modules/remix-switch.md
+      - Scope: reference/modules/scope.md
   - Fixes:
       - ATA Write Guard: reference/modules/ata-write-guard.md
       - Batch Bugfixes: reference/modules/batch-bugfixes.md
@@ -114,12 +116,15 @@ nav:
       - Boot Trace: reference/modules/boot-trace.md
       - CF Meter: reference/modules/cfmeter.md
       - CF Meter Idle: reference/modules/cfmeter-idle.md
+      - Dlcopy: reference/modules/dlcopy.md
+      - Dlprobe: reference/modules/dlprobe.md
+      - Dlpump: reference/modules/dlpump.md
       - Load Meter: reference/modules/load-meter.md
+      - Pext Probe: reference/modules/pextprobe.md
       - Testgen: reference/modules/testgen.md
       - Wave Load: reference/modules/waveload.md
   - Remix Reference:
-      - Octabam Core: remix-core.md
-      - Octabam Inserts: remix-inserts.md
+      - Octabam: remix-octabam.md
       - Octabam Bus: remix-bus.md
       - Create a Remix: own-remix.md
   - Help:

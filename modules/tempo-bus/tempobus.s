@@ -44,7 +44,7 @@
         .set    TSTEP,    0x4004b824   | (whole, tenths): the stock tempo step, redraws
         .set    TLEVEL,   0x4004b918   | (index, delta): the stock LEVEL handler, whole BPM
         .set    P1WRITE,  0x40054cd8   | (track, flat, value): page-1 writer
-        .set    DESC2,    0x400d5fdc   | FX2 descriptor table [id] -> P
+        | DESC2 (the FX2 descriptor table [id] -> P) comes from remix.inc
         .set    DBPTR,    0x46c82456   | long: Part DB base
         .set    PARTB,    0x80000003   | byte: the current part
         .set    IDOFF,    0x8ed88      | Part: FX2 id per track

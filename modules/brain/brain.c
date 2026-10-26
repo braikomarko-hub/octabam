@@ -43,7 +43,8 @@ extern u8 *const brain_cs1_early;	/* CS1_EARLY_BASE (hooks.s) */
 #define F_OPEN   ((int (*)(void *, const char *, const char *, void *, u32))0x40016864)
 #define F_READ   ((int (*)(void *, void *, u32))0x40016564)
 #define F_CLOSE  ((int (*)(void *))0x4001677c)
-#define FX2_IDS  ((u8 **)0x400d5fdc)
+extern u8 *const brain_fx2_ids[];	/* remix.inc: the FX2 descriptor table (0x400d5fdc; moves in a 64-id image) */
+#define FX2_IDS  ((u8 **)brain_fx2_ids)
 #define FX1_IDS  ((u8 **)0x400d5f58)
 
 #define MAX_FX    32

@@ -2723,10 +2723,29 @@ int main(int _argc, char** _argv)
 				for(const auto& c : parseCalls(atFrames, true))
 					actions.push_back({c.frame, false, {}, -1, c.addr, c.arg, true});
 				std::stable_sort(actions.begin(), actions.end(), [](const Action& x, const Action& y) { return x.frame < y.frame; });
+				// MIDI OUT (UART0) and the panel wire (UART A) with the frame each byte was first seen at
+				// (frames since the transport start), checked at every event of the run: FILE.frames
+				std::vector<std::pair<uint64_t, size_t>> seqMark0, seqMarkA;
+				size_t seqSeen0 = rtos.serialTx0().size(), seqSeenA = rtos.serialTxA().size();
+				const auto seqMark = [&]
+				{
+					const auto z = rtos.serialTx0().size();
+					if(z != seqSeen0)
+					{
+						seqMark0.emplace_back(rtos.frameCount() - frame0, seqSeen0);
+						seqSeen0 = z;
+					}
+					const auto a = rtos.serialTxA().size();
+					if(a != seqSeenA)
+					{
+						seqMarkA.emplace_back(rtos.frameCount() - frame0, seqSeenA);
+						seqSeenA = a;
+					}
+				};
 				for(const auto& act : actions)
 				{
 					const auto at = frame0 + act.frame;
-					rtos.runUntil(budgetMs, [&] { return rtos.frameCount() >= at; }, ot::Rtos::Changes::OnEvent);	// O15e: the ack hook wakes
+					rtos.runUntil(budgetMs, [&] { seqMark(); return rtos.frameCount() >= at; }, ot::Rtos::Changes::OnEvent);	// O15e: the ack hook wakes
 					if(act.at)
 					{
 						const bool spun = rtos.runToMainSpin(1000.0) == ot::Rtos::Stop::Gate;
@@ -2764,8 +2783,30 @@ int main(int _argc, char** _argv)
 				if(profile)
 					m.clearProfile();		// the whole-run table below then covers the frames alone
 				const auto wall0 = std::chrono::steady_clock::now();
-				const auto rs2 = rtos.runUntil(livePath.empty() ? budgetMs : 1e15, [&] { return rtos.frameCount() >= target || live.quit; },
+				const auto rs2 = rtos.runUntil(livePath.empty() ? budgetMs : 1e15, [&] { seqMark(); return rtos.frameCount() >= target || live.quit; },
 					ot::Rtos::Changes::OnEvent);	// O15e: the ack hook wakes; the live poll wakes too
+				seqMark();
+				const auto writeFrames = [](const std::string& path, const std::vector<std::pair<uint64_t, size_t>>& marks,
+					const std::vector<uint8_t>& tx)
+				{
+					std::ofstream fl(path);
+					for(size_t i = 0; i < marks.size(); ++i)
+					{
+						const auto end = i + 1 < marks.size() ? marks[i + 1].second : tx.size();
+						fl << marks[i].first;
+						for(auto k = marks[i].second; k < end; ++k)
+						{
+							char h[4];
+							std::snprintf(h, sizeof h, " %02x", tx[k]);
+							fl << h;
+						}
+						fl << "\n";
+					}
+				};
+				if(!midiOut.empty())
+					writeFrames(midiOut + ".frames", seqMark0, rtos.serialTx0());
+				if(!serialOut.empty())
+					writeFrames(serialOut + ".a.frames", seqMarkA, rtos.serialTxA());
 				const auto wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count();
 				const auto ran = rtos.frameCount() > frame0 ? static_cast<double>(rtos.frameCount() - frame0) : 0.0;
 				std::printf("cpu        : %llu ColdFire instructions over the frames (%.0f per frame of %g samples); %.2f s wall = %.1f M instr/s, %.1fx real time\n",

@@ -91,8 +91,7 @@ MODULE = Module(
     proof=Proof.HARDWARE, proof_note="Sam's MKII",
     doc="FX1 station: a modulation pedal -- Juno, Dimension, flanger, phaser, comb; FX1 only.",
     menu=MenuEntry(
-        fx2_id=0x12,
-        replaces="CHORUS",
+        fx2_id=0x0e,
         donor_desc=0x400d58b8,        # DARK REV: 12 active slots, selects 7/9/11
         abbr=b"MODU",
         fullname=b"Modulation",

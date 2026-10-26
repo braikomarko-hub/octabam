@@ -71,12 +71,15 @@ def symbol(name):
     sys.exit(f"verify_load_meter: {name} not in {ELF}")
 
 
-def build(remix, burn, tag, nopub=False, noot=False):
+def build(remix, burn, tag, nopub=False, noot=False, frame0=0):
     env = dict(os.environ, REMIX=remix, XBUS="1", SPEC="1")
     env.setdefault("BUILD", "0")
     env.pop("LM_BURN", None)
     env.pop("LM_NOPUB", None)
     env.pop("LM_NOOT", None)
+    env.pop("LM_FRAME0", None)
+    if frame0:
+        env["LM_FRAME0"] = str(frame0)
     if noot:
         env["LM_NOOT"] = "1"
     if burn:
@@ -102,6 +105,7 @@ def main():
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT", ""))
     ap.add_argument("--set-name", default="BRAINSET")
     ap.add_argument("--name", default="BRAINPRJ")
+    ap.add_argument("--wrap-only", action="store_true", help="only the frame-count wrap check")
     ap.add_argument("--frames-ms", type=int, default=4000, help="emulated ms the view stays open")
     a = ap.parse_args()
     project = a.project
@@ -164,6 +168,27 @@ def main():
         n = sum(1 for ln in text.splitlines() if "[0x20000004]" in ln)
         return (round(n / irqs, 4),) if irqs and n else ()
 
+    def wrap_check():
+        # ---- wrap: core 0's frame count passes 2^23 and the slot index and costs stay right ----------------
+        # With bit 23 of the count set, the next load sign-extends A2, `and #>$f` leaves it and `move a,n1` limits
+        # the slot index to $800000: the cost read goes to a wild address. The port reads zero there and goes on;
+        # the unit stopped its frame interrupt 50.7 minutes after power-up. The port shows it as costs of zero.
+        image_w, lmd_w = build(a.remix, 0, "w0", frame0=(1 << 23) - 1000)
+        v_w, (ot_w, _n, _t), _text = run("wrap", image_w, lmd_w, open_load, a.frames_ms)
+        cnt = [ot_w[4 * i + 2] for i in range(16)]
+        mean_w = [ot_w[4 * i + 1] / cnt[i] if cnt[i] else 0 for i in range(16)]
+        top_w = (max(range(8), key=lambda i: mean_w[i]), max(range(8, 16), key=lambda i: mean_w[i]))
+        check(f"wrap: {v_w[0]} good records from a frame count of 2^23 - 1000; every slot sampled "
+              f"(fewest {min(cnt)}, most {max(cnt)}) and the costs read: heaviest slots {top_w}, "
+              f"core 0 sum {sum(mean_w[:8]):.0f} counts",
+              v_w[0] > 3000 and min(cnt) >= 100 and max(cnt) - min(cnt) <= 2 * (v_w[0] // 16 + 2)
+              and top_w == (1, 9) and sum(mean_w[:8]) > 1000)
+
+    if a.wrap_only:
+        wrap_check()
+        print(f"verify_load_meter: {'ok' if not FAILS else 'FAILED'} (wrap only)")
+        return 1 if FAILS else 0
+
     # ---- publish, scrub ------------------------------------------------------
     image, lmd = build(a.remix, 0, "b0")
     v, (ot, now, ticks), text = run("open", image, lmd, open_load, a.frames_ms,
@@ -194,6 +219,8 @@ def main():
           clears > 1000)
     check(f"every: lm_scrub's passes {v[13]} against frame interrupts {v[14]}", v[14] > 1000 and abs(v[13] - v[14]) <= 1)
     open_host = host_totals(text, v[14])
+    wrap_check()
+
 
     # ---- closed: no draws, the same host traffic --------------------------------
     v, _x, text = run("closed", image, lmd, [(0x32, 500)] + into + [(0x20, 500)],

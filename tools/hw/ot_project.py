@@ -427,7 +427,7 @@ def fx_plan(remix_name):
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1])); import toolpath  # noqa: E402,F401  (every tools/ dir on sys.path)
     from remix import registry, stock
     remix = registry.remix(remix_name)
-    mods = registry.modules()
+    mods = registry.bound(remix)               # the remix's own ids
     out = []
     # FX2 first: the chooser this image composes, in its own row order.
     for k in remix.modules:
@@ -517,7 +517,7 @@ def _remix_defaults(remix_name, replaced_only):
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1])); import toolpath  # noqa: E402,F401  (every tools/ dir on sys.path)
     from remix import registry
     remix = registry.remix(remix_name)
-    mods = registry.modules()
+    mods = registry.bound(remix)               # the remix's own ids
     out = {}
     for k in remix.modules:
         m = mods.get(k)

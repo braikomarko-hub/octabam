@@ -145,7 +145,7 @@ def _remix_pages() -> dict[str, str]:
 
 
 def _remix_label(name: str) -> str:
-    return name.replace("octabam-", "Octabam ").title() if name.startswith("octabam-") else name
+    return name.replace("octabam-", "Octabam ").title() if name.startswith("octabam-") else "Octabam" if name == "octabam" else name
 
 
 def _module_rows(ms) -> list[str]:

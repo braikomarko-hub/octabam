@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Capture the remix's screens on the port: a scripted panel, PNG per shot.
 
-    python3 tools/emu/live_shots.py octabam-core --script tools/site/shots/octabam-core.script
+    python3 tools/emu/live_shots.py octabam --script tools/site/shots/octabam-core.script
 
 Builds the remix (BUILD=91), stages the gate project onto a scratch card
 the way tools/emu/live.py does, boots `ot_emu --live <fifo> --lcd <file>`

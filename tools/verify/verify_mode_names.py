@@ -62,16 +62,19 @@ def main():
         return int.from_bytes(img[a - BASE:a - BASE + 4], "big")
 
     # each clone where the unit finds it: FX2_IDS[id] (ROM, or the DRAM runtime)
+    import idspace
+    _bound = registry.bound(registry.remix(name))        # the remix's own ids
+    _fx2_ids = idspace.fx2_ids(registry.remix(name))
     for key in list(clones):
-        _m = registry.modules().get(key)
+        _m = _bound.get(key)
         if _m is not None and _m.menu is not None:
-            clones[key] = rd32(0x400d5fdc + _m.menu.fx2_id * 4)
+            clones[key] = rd32(_fx2_ids + _m.menu.fx2_id * 4)
 
     import emu_bringup as emu
     boot = emu.boot(str(IMAGE))
     uc = boot.uc
-    mods = registry.modules()
     remix = registry.remix(name)
+    mods = registry.bound(remix)
     fails = 0
     checked = 0
     work = []

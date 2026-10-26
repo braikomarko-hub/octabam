@@ -20,8 +20,11 @@ Where each doc is, by who reads it. A module's own page is
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | the contract: the one rule, your first PR, the oracle rule, the gates before a PR |
 | [contributing/MODULES.md](contributing/MODULES.md) | writing a module: manifests, descriptors, DSP and ColdFire declarations, the ledger |
 | [contributing/PLACEMENT.md](contributing/PLACEMENT.md) | where a module's code goes and what is free, measured |
+| [contributing/COSTS.md](contributing/COSTS.md) | what each effect costs on a unit, per slot, and the worst-case DSP load of a remix; `tools/remix/costs.py` |
 | [contributing/TESTING.md](contributing/TESTING.md) | every gate, what it proves and cannot see; `make check`, `make reach`, shards, `make accept`, bit-identity, CI |
 | [contributing/TOOLING.md](contributing/TOOLING.md) | every tool by pipeline stage, and which README each tool directory has |
+| [contributing/HARDWARE_TESTING.md](contributing/HARDWARE_TESTING.md) | testing a remix on your own unit: the session step by step, stress sequences, recovering from a failure |
+| [contributing/HARDWARE_MATRIX.md](contributing/HARDWARE_MATRIX.md) | one remix in many configurations on a unit over one USB cable: project generation, the run, the flags, the limits |
 | [contributing/SCREENSHOTS.md](contributing/SCREENSHOTS.md) | re-capturing the manual site's LCD screenshots: when, `capture_manual.py` groups, the records and coverage page, the probe scripts, FX page behaviour |
 | [contributing/FAILURE_MODES.md](contributing/FAILURE_MODES.md) | what has gone wrong on a unit: symptom, cause, fix, the gate that catches it |
 | [contributing/TRAPS.md](contributing/TRAPS.md) | the trap register: what has cost real work in the code, build, emulators and harness — symptom, fix, the gate that catches it |

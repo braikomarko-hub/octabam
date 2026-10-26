@@ -1,0 +1,21 @@
+{
+ "params": {},
+ "retired": {
+  "params": [],
+  "settings": []
+ },
+ "settings": {
+  "1": {
+   "labels": [
+    "PING0",
+    "ANY"
+   ],
+   "name": "PHASE",
+   "type": "option"
+  }
+ },
+ "store": {
+  "id": "octabam.dlpump",
+  "major": 1
+ }
+}

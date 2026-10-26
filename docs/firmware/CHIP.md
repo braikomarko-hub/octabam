@@ -137,6 +137,34 @@ The datasheet's 200 MIPS is the ceiling of the silicon. It cannot say what
 stock already uses, what the real frame deadline is, or what memory
 contention costs; only the burn probe measures what is left after stock.
 
+### ColdFire access costs on a unit
+
+Bryan T, 26 Oct 2026, one unit: DTIM-timed loops at 132 MHz, measured
+inside the ColdFire's share of the frame interrupt, with the OS's cache
+settings (CACR `0xA50CE100`, ACR0 `0x4007E020`). ✅ hardware.
+
+| Operation | ns |
+|---|---|
+| register op; on-chip SRAM load/store; cache hit | ~2.9 |
+| timer register read | 30 |
+| uncached SDRAM store | 36 |
+| USB controller register read | 45 |
+| `cpushl`, clean line | 46 |
+| uncached SDRAM load | 69 |
+| cached miss, load or store | ~80-83 |
+| `cpushl`, dirty line | 80 |
+
+- SRAM is 12-28x cheaper than SDRAM. Cache plus push costs about the same
+  as uncached stores, so caching a transmit buffer does not help.
+- `ot_emu` charges one step per instruction, with no cache and no memory or
+  peripheral timing (`FAILURE_MODES.md` records the same for the meter's
+  one-cycle uncached SDRAM access). A change can be cycle-identical in the
+  port and several percent worse on the unit.
+- Envelope (main plus REC MATRIX, IN ABCD; mean ColdFire share of the frame
+  interrupt): one recording buffer about 6 points, USB streaming about 12.
+  Five buffers with streaming work. Six with streaming drop frames (about
+  2,700/s against 2,756) and IN overruns, at any ring size.
+
 ### The burn knob is a cycle meter
 
 The instrument behind the hardware rows above (`make burn`, `BURN` on
@@ -217,7 +245,8 @@ second cross-core channel exists, the ICC (section 1.4.14): each core can raise
 an interrupt in the other, with write-data and poll-data registers.
 
 Per-core P/X/Y extents are configurable via OMR, and stock runs the
-default map ✅ (Ch. 3):
+default map ✅ (Ch. 3; confirmed on the unit 25 Oct 2026: P above `0x1fff`
+holds no written word on either core, `modules/pextprobe`):
 
 | map | MS | MSW1 | MSW0 | Program | X | Y |
 |---|---|---|---|---|---|---|

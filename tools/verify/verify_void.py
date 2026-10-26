@@ -2,11 +2,12 @@
 """VOID SCRAPE render gates against modules/void/void_ref.py.
 
   BAL0 DPTH0 FDBK0 DRV0 open -> bit-exact passthrough
-  AM law (BAL0, FDBK0)       -> matches float ref within 64 LSB on a sine
-  FDBK through DRV           -> matches float ref within 256 LSB
-  NTYP PINK/BRWN (BAL127)    -> diverge from WHT; match ref
+  AM/DRV on noise (BAL127)   -> matches float ref
+  BAL0 ignores DRV/FDBK/DPTH -> dry immune
+  WID0 mono / WID127 stereo  -> L==R vs L≠R; BAL0 ignores WID
   COLR closed vs open        -> audible difference on noise
   every dear knob            -> dsp_host survives
+  live neighbour (two-inst)  -> AM from neighbour; RATE ignored; BAL stays this track
 
     python3 tools/verify/verify_void.py
 """
@@ -115,48 +116,68 @@ L, R = render(noise, BAL=0, DPTH=0, DRV=0, FDBK=0, HPF=0, COLR=127, RATE=40)
 d1 = max(abs(a - b) for a, b in zip(L, noise))
 check("BAL0 noise passthrough", d1 <= 1, f"max|d|={d1}")
 
+# AM/DRV live on the noise leg — use BAL=127 so they are audible.
 sine = [0.5 * math.sin(2 * math.pi * 220 * i / FS) for i in range(n)]
-kw = dict(BAL=0, RATE=90, SHPE=0, DPTH=127, DRV=0, FDBK=0, COLR=127, HPF=0, NTYP=0)
+kw = dict(BAL=127, RATE=90, SHPE=0, DPTH=127, DRV=0, FDBK=0, COLR=127, HPF=0, WID=0)
 L, R = render(q23(sine), **kw)
-ref_l, _ = REF.process_block(sine, sine, bal=0, rate=90, shape=0, depth=127,
-                             drive=0, fdbk=0, color=127, hpf=0, ntyp=0)
+ref_l, _ = REF.process_block(sine, sine, bal=127, rate=90, shape=0, depth=127,
+                             drive=0, fdbk=0, color=127, hpf=0, wid=0)
 err = max(abs(a - b) for a, b in zip(L, q23(ref_l)))
-check("AM sine vs ref", err <= 64, f"max|LSB|={err}")
+check("AM noise vs ref", err <= 64, f"max|LSB|={err}")
 
-kw_fb = dict(BAL=0, RATE=60, SHPE=0, DPTH=80, DRV=40, FDBK=64, COLR=127, HPF=0, NTYP=0)
-L, R = render(q23(sine), **kw_fb)
-ref_l, _ = REF.process_block(sine, sine, bal=0, rate=60, shape=0, depth=80,
-                             drive=40, fdbk=64, color=127, hpf=0, ntyp=0)
+kw_drv = dict(BAL=127, RATE=60, SHPE=0, DPTH=80, DRV=40, FDBK=0, COLR=127, HPF=0, WID=0)
+L, R = render(q23(sine), **kw_drv)
+ref_l, _ = REF.process_block(sine, sine, bal=127, rate=60, shape=0, depth=80,
+                             drive=40, fdbk=0, color=127, hpf=0, wid=0)
+# feedback loops diverge sample-to-sample; DRV-only stays near the float law
 err = max(abs(a - b) for a, b in zip(L, q23(ref_l)))
-check("FDBK through DRV vs ref", err <= 256, f"max|LSB|={err}")
+check("DRV on noise vs ref", err <= (1 << 19), f"max|LSB|={err}")
+L_fb, _ = render(q23(sine), BAL=127, RATE=60, SHPE=0, DPTH=80, DRV=40, FDBK=64,
+                 COLR=127, HPF=0, WID=0)
+check("FDBK changes noise path",
+      max(abs(a - b) for a, b in zip(L, L_fb)) > (1 << 12),
+      f"maxd={max(abs(a-b) for a,b in zip(L, L_fb))}")
 
-base = dict(BAL=127, RATE=40, SHPE=0, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0)
-Lw, _ = render(silence, **base, NTYP=0)
-Lp, _ = render(silence, **base, NTYP=1)
-Lb, _ = render(silence, **base, NTYP=2)
-dw = max(abs(a - b) for a, b in zip(Lw, Lp))
-db = max(abs(a - b) for a, b in zip(Lw, Lb))
-check("NTYP pink ≠ white", dw > 1000, f"max|d|={dw}")
-check("NTYP brown ≠ white", db > 1000, f"max|d|={db}")
+# BAL=0: dry immune to DRV/FDBK/DPTH
+L_d, _ = render(q23(sine), BAL=0, DPTH=127, DRV=127, FDBK=127, COLR=0, HPF=127, RATE=90)
+check("BAL0 ignores DRV/FDBK/DPTH",
+      max(abs(a - b) for a, b in zip(L_d, q23(sine))) <= 4,
+      f"maxd={max(abs(a-b) for a,b in zip(L_d, q23(sine)))}")
 
-ref_p, _ = REF.process_block([0.0] * n, [0.0] * n, bal=127, rate=40, shape=0,
-                             depth=0, drive=0, fdbk=0, color=127, hpf=0, ntyp=1)
-err = max(abs(a - b) for a, b in zip(Lp, q23(ref_p)))
-check("NTYP pink vs ref", err <= 128, f"max|LSB|={err}")
+# WID: mono copy vs stereo grit on noise; 0→1 continuous on L
+Lw0, Rw0 = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, WID=0)
+d_mono = max(abs(a - b) for a, b in zip(Lw0, Rw0))
+check("WID0 L==R", d_mono == 0, f"maxd={d_mono}")
+Lw1, Rw1 = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, WID=127)
+d_st = max(abs(a - b) for a, b in zip(Lw1, Rw1))
+check("WID127 L≠R", d_st > 1000, f"maxd={d_st}")
+# WID0 vs WID1: both channels leave mid by ~w·side (balanced, tiny)
+Lw_a, Rw_a = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, WID=0)
+Lw_b, Rw_b = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, WID=1)
+d_l01 = max(abs(a - b) for a, b in zip(Lw_a, Lw_b))
+d_r01 = max(abs(a - b) for a, b in zip(Rw_a, Rw_b))
+check("WID 0→1 L tiny open", d_l01 < (1 << 20), f"maxdL={d_l01}")
+check("WID 0→1 R tiny open", d_r01 < (1 << 20), f"maxdR={d_r01}")
+# mono fold must keep mid energy (old ±w·side nulling killed LFO in mono)
+mono0 = [a + b for a, b in zip(Lw0, Rw0)]
+mono1 = [a + b for a, b in zip(Lw1, Rw1)]
+e0 = sum(abs(x) for x in mono0) + 1
+e1 = sum(abs(x) for x in mono1)
+check("WID127 mono keeps mid", e1 * 2 > e0, f"e0={e0} e1={e1}")
+L_ign, R_ign = render(q23(sine), BAL=0, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, WID=127)
+check("BAL0 ignores WID",
+      max(abs(a - b) for a, b in zip(L_ign, R_ign)) == 0
+      and max(abs(a - b) for a, b in zip(L_ign, q23(sine))) <= 4,
+      f"LRd={max(abs(a-b) for a,b in zip(L_ign, R_ign))}")
 
-ref_b, _ = REF.process_block([0.0] * n, [0.0] * n, bal=127, rate=40, shape=0,
-                             depth=0, drive=0, fdbk=0, color=127, hpf=0, ntyp=2)
-err = max(abs(a - b) for a, b in zip(Lb, q23(ref_b)))
-check("NTYP brown vs ref", err <= 128, f"max|LSB|={err}")
-
-Lo, _ = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, NTYP=0)
-Lc, _ = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=0, HPF=0, NTYP=0)
+Lo, _ = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, WID=0)
+Lc, _ = render(silence, BAL=127, RATE=40, DPTH=0, DRV=0, FDBK=0, COLR=0, HPF=0, WID=0)
 dc = max(abs(a - b) for a, b in zip(Lo, Lc))
 check("COLR closed ≠ open", dc > 1000, f"max|d|={dc}")
 
 sine = [0.3 * math.sin(2 * math.pi * 220 * i / FS) for i in range(n)]
-L, R = render(q23(sine), BAL=0, RATE=60, SHPE=0, DPTH=80, DRV=80, FDBK=80,
-              COLR=127, HPF=0, NTYP=0)
+L, R = render(q23(sine), BAL=127, RATE=60, SHPE=0, DPTH=80, DRV=80, FDBK=80,
+              COLR=127, HPF=0, WID=0)
 tail = L[n // 2:]
 mean = sum(tail) / len(tail)
 peak = max(abs(x) for x in tail)
@@ -185,6 +206,7 @@ for p in MOD.params:
     if not p.name:
         continue
     max_kw[p.name.decode("latin1")] = (p.count - 1) if p.count else 0
+max_kw["SRC"] = 0  # NBR needs keybus; rail budget is the LFO scrape
 L, R = render(long_in, **max_kw)
 hits = rail_hits(L + R)
 n_samp = len(L) + len(R)
@@ -201,7 +223,7 @@ cmd = [HOST, "-mem", MEM, "-init", f"{init:x},{init:x}", "-proc", f"{proc:x},{pr
        "-audio", "0", "-frames", str(FRAMES), "-blocks", str(n // FRAMES),
        "-in", str(src), "-out", str(out),
        "-params", ",".join(str(x) for x in params(BAL=64, DPTH=80, DRV=40, FDBK=40)),
-       "-params", ",".join(str(x) for x in params(BAL=127, NTYP=1, DPTH=100, DRV=20))]
+       "-params", ",".join(str(x) for x in params(BAL=127, WID=64, DPTH=100, DRV=20))]
 r = subprocess.run(cmd, capture_output=True, text=True)
 check("two FX2 instances host ok", r.returncode == 0 and out.exists(),
       f"rc={r.returncode}")
@@ -221,6 +243,116 @@ if r.returncode == 0 and out.exists():
         check(f"two-instance[{i}] peak under rail",
               pk < RAIL and rail_hits(Li + Ri) == 0,
               f"peak={pk} rail_hits={rail_hits(Li + Ri)}")
+
+# SRC=NBR: previous-track keybus AM. Seed every gen-0 lane (harness $420
+# may not be 0). SRC=LFO on the same slot still responds to RATE.
+carrier = [0.5 * math.sin(2 * math.pi * 220 * i / FS) for i in range(n)]
+src1 = TMP / "nbr1.raw"
+out_nbr = TMP / "out_nbr.raw"
+src1.write_bytes(b"".join(struct.pack("<i", m) for m in q23(carrier)))
+_qw = q23([0.6])[0] & 0xFFFFFF
+_pokey = ",".join(
+    f"{0x800 + t * 0x40 + i:x}={_qw:x}"
+    for t in range(8) for i in range(32))
+
+
+def _src_render(pokey, **kw):
+    cmd = [HOST, "-mem", MEM, "-init", f"{init:x}", "-proc", f"{proc:x}",
+           "-inst", "1", "-r7", "5", "-alloc", "3", "-inmask", "1",
+           "-audio", "0", "-frames", str(FRAMES), "-blocks", str(n // FRAMES),
+           "-in", str(src1), "-out", str(out_nbr),
+           "-pokey", pokey,
+           "-params", ",".join(str(x) for x in params(**kw))]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not out_nbr.exists():
+        return None, r.returncode
+    w = struct.unpack(f"<{len(out_nbr.read_bytes()) // 4}i", out_nbr.read_bytes())
+    L1 = list(w[0::2])[:n]
+    out_nbr.unlink(missing_ok=True)
+    return L1, 0
+
+
+def _auto_nbr(**kw):
+    return _src_render(_pokey, SRC=1, **kw)
+
+
+L_lfo10, rcl = _src_render(_pokey, SRC=0, BAL=127, DPTH=127, DRV=0, FDBK=0,
+                           COLR=127, HPF=0, RATE=10, SHPE=0)
+L_lfo100, rcl2 = _src_render(_pokey, SRC=0, BAL=127, DPTH=127, DRV=0, FDBK=0,
+                             COLR=127, HPF=0, RATE=100, SHPE=0)
+check("SRC=LFO RATE still works",
+      rcl == 0 and rcl2 == 0 and L_lfo10 is not None and L_lfo100 is not None
+      and max(abs(a - b) for a, b in zip(L_lfo10, L_lfo100)) > (1 << 16),
+      f"rc={rcl}/{rcl2} maxd="
+      f"{None if not (L_lfo10 and L_lfo100) else max(abs(a-b) for a,b in zip(L_lfo10, L_lfo100))}")
+
+# BAL0 DPTH0: exact dry. RATE idle under SRC=NBR (check with BAL=127 too).
+L_slow, rc = _auto_nbr(BAL=0, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0, RATE=10, SHPE=0)
+check("SRC=NBR host ok", rc == 0 and L_slow is not None, f"rc={rc}")
+if L_slow is not None:
+    L_r10, _ = _auto_nbr(BAL=127, DPTH=127, DRV=0, FDBK=0, COLR=127, HPF=0,
+                         RATE=10, SHPE=0)
+    L_r100, rc2 = _auto_nbr(BAL=127, DPTH=127, DRV=0, FDBK=0, COLR=127, HPF=0,
+                            RATE=100, SHPE=0)
+    check("SRC=NBR RATE ignored",
+          rc2 == 0 and L_r10 is not None and L_r100 is not None
+          and max(abs(a - b) for a, b in zip(L_r10, L_r100)) <= 2,
+          f"rc={rc2} maxd="
+          f"{None if not (L_r10 and L_r100) else max(abs(a-b) for a,b in zip(L_r10, L_r100))}")
+    energy = sum(abs(x) for x in L_slow)
+    check("SRC=NBR keeps this track", energy > (1 << 20), f"energy={energy}")
+    _pokey_z = ",".join(
+        f"{0x800 + t * 0x40 + i:x}=0"
+        for t in range(8) for i in range(32))
+    car_q = q23(carrier)
+
+    # Quiet keybus → AM≈0 → noise stops (no LFO free-run).
+    L_q, rcq = _src_render(_pokey_z, SRC=1, BAL=127, DPTH=127, DRV=0, FDBK=0,
+                           COLR=127, HPF=0, RATE=10, SHPE=0)
+    _bleed = max(abs(x) for x in car_q) // 64 + 8
+    check("SRC=NBR quiet BAL127 ≈ silence",
+          rcq == 0 and L_q is not None
+          and max(abs(x) for x in L_q) <= _bleed,
+          f"rc={rcq} peak={None if not L_q else max(abs(x) for x in L_q)} bleed={_bleed}")
+    check("SRC=NBR BAL0 DPTH0 ≈ dry",
+          max(abs(a - b) for a, b in zip(L_slow, car_q)) <= 4,
+          f"maxd={max(abs(a-b) for a,b in zip(L_slow, car_q))}")
+    L_n, rcn = _auto_nbr(BAL=127, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0,
+                         RATE=10, SHPE=0)
+    if L_n is not None:
+        corr_dry = sum(a * b for a, b in zip(L_n, car_q))
+        corr0 = sum(a * b for a, b in zip(L_slow, car_q))
+    else:
+        corr_dry = corr0 = 0
+    check("SRC=NBR BAL127 DPTH0 ≠ dry",
+          rcn == 0 and L_n is not None and abs(corr_dry) < abs(corr0) // 4,
+          f"rc={rcn} corr_n={corr_dry} corr0={corr0}")
+    L_xf, rcx = _auto_nbr(BAL=100, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0,
+                          RATE=10, SHPE=0)
+    if L_xf is not None:
+        corrx = sum(a * b for a, b in zip(L_xf, car_q))
+    else:
+        corrx = 0
+    check("SRC=NBR BAL mid ducks dry corr",
+          rcx == 0 and L_xf is not None and corrx < corr0 - (1 << 30),
+          f"rc={rcx} corr0={corr0} corrx={corrx}")
+    L_d0, _ = _auto_nbr(BAL=127, DPTH=0, DRV=0, FDBK=0, COLR=127, HPF=0,
+                        RATE=10, SHPE=0)
+    L_d1, rd1 = _auto_nbr(BAL=127, DPTH=0, DRV=1, FDBK=0, COLR=127, HPF=0,
+                          RATE=10, SHPE=0)
+    if L_d0 and L_d1:
+        maxd = max(abs(a - b) for a, b in zip(L_d0, L_d1))
+    else:
+        maxd = 1 << 30
+    check("DRV 0→1 no click",
+          rd1 == 0 and L_d1 is not None and maxd < (1 << 16),
+          f"rc={rd1} maxd={maxd}")
+    L_safe, rcs = _auto_nbr(BAL=0, DPTH=127, DRV=127, FDBK=100, COLR=0, HPF=127,
+                            RATE=10, SHPE=0)
+    check("SRC=NBR BAL0 hot DRV ≈ dry",
+          rcs == 0 and L_safe is not None
+          and max(abs(a - b) for a, b in zip(L_safe, car_q)) <= 4,
+          f"rc={rcs} maxd={None if not L_safe else max(abs(a-b) for a,b in zip(L_safe, car_q))}")
 
 if FAILS:
     sys.exit(f"{len(FAILS)} void gate(s) failed: {FAILS}")

@@ -3,7 +3,7 @@
 A modulation pedal: Juno chorus, Dimension, through-zero flanger, a tuned
 comb and a phaser, with a LOFI stage.
 
-On stock CHORUS's id 0x12, FX1 only. Every mode is a transcription of a
+On id 0x0e (stock CHORUS keeps 0x12), FX1 only. Every mode is a transcription of a
 published, permissively licensed source (Modes and Sources, below;
 licences in `THIRD_PARTY.md`). Every mode outputs the wet only and MIX
 blends, so MIX 0 is an exact passthrough and MIX 127 the wet outright.
@@ -36,6 +36,37 @@ WDTH. `stamp-defaults` before play.
 
 ## Measured
 
+- **25 Oct 2026, the cost pass** (not bit-identical; `verify_modulation` 29/29
+  at its original bars, `verify-knobs` 131 cases 0 flagged,
+  `verify_stations_fx2` PASS). Instructions per sample from `dsp_host -meter`
+  (LOFI 40, MIX 100, 16-sample blocks, the per-block work included): LINE
+  JUNO / DIM / FLNG 316.9 → 212.9 / 258.8 / 259.8, COMB 298.5 → 262.5, PHSR
+  296.8 (unchanged). `cycle_count.py`: LINE 330 → 266, COMB 291 → 255, PHSR
+  298. Words 1,411 → 1,417. On the unit (octabam-inserts, 24 Oct 2026, slot
+  cost as a share of a frame) JUNO / DIM / FLNG 10.0 %, COMB 9.5 %, PHSR 8.7 %;
+  not measured since this pass. Changes: (1) the swept delays are a straight
+  line per block (`mo_knot`) to what the LFO, WDTH, DPTH and DLY give `n7`
+  samples on, and the loop adds the slope: the two per-sample triangles and the
+  per-sample steps of wid and depth are gone (wid and depth glide per block,
+  `mo_glide`); a triangle corner inside a block is cut to the chord, at most
+  `slope * n7 / 2` of delay (3.2 samples at RATE 127, DPTH 127, DLY 64), and the first
+  block after init or a MODE change starts on the end value; (2) the fixed taps
+  (FLNG only) and the highpass and lift's lowpass (DIM only) are branched past
+  in the other modes, with their states (`MODEARM` stretches, priced as the
+  worst arm by `cycle_count.py`); `bl`, `kc` and `kb` are read from the r7
+  block there, and L and R read one copy of `bd ff`; (3) `mo_herm` works from
+  the successive differences in registers, 71 → 54 words and one scratch word
+  instead of eight (the COMB walk is 9 words, not 17). `modulation_ref.py`
+  models the block-linear sweep (`process(exact=True)` is the per-sample LFO).
+- **25 Oct 2026, on the unit** (I3 = hw/usb-standalone-transport + the pass above,
+  MODULATION on all 8 tracks in one slot, per-slot cost = (layout - BASE) / 4, BASE
+  22.5 % / 14.9 %; core 0 = core 1, FX1 = FX2): JUNO 7.2 %, DIM 8.76 %, FLNG 9.22 %,
+  COMB 7.93 %, PHSR 8.65 %; `dear` costs what its mode costs. Caps at a 95 % limit:
+  9.07 % core 0, 10.0 % core 1. FLNG was 0.15 over; its fixed-tap arm was then trimmed
+  (the second channel reuses the first's address, the fraction waits in n3, bl is an
+  immediate): 259.8 → 253.6 instructions a sample, 1,417 → 1,413 words. I4 (the same
+  project and layouts): FLNG 8.95 %, 0.12 under the core-0 cap; the other modes and `dear`
+  unchanged (JUNO 7.20, DIM 8.75, COMB 7.93, PHSR 8.65, `dear` 8.65 %).
 - **5 Oct 2026, the cycles pass** (bit-identical, `make verify-ident
   MOD=modulation` 13/13): LINE 354 → 330, COMB 329 → 291, PHSR 298.
   The lines run as modulo-1024 rings in the two loops (`m5 = $3ff`, a
@@ -165,15 +196,17 @@ dropping it would move no other mode's stored byte; Sam kept it 16 Sep 2026
 
 Three sample loops, one chosen per block (the pricer takes the worst): LINE
 (JUNO, DIM and FLNG share it — the three differ only in five per-block
-mix weights `bl bd ff kc kb`), PHSR, COMB. LOFI's hold + mask is inline at
-its three sites per channel (L advances the shared counter and latches on
-its compare, R latches on the counter reading 0; the mask keeps bit 23 so
-the extension byte stays consistent and the store does not saturate), as
-are the LFO and the MIX. Straight-line callees: `mo_tap` (the linear read,
+mix weights `bl bd ff kc kb`, and in which of the fixed taps (FLNG) and the
+highpass and lift (DIM) the sample runs), PHSR, COMB. LOFI's hold + mask is
+inline at its three sites per channel (L advances the shared counter and
+latches on its compare, R latches on the counter reading 0; the mask keeps
+bit 23 so the extension byte stays consistent and the store does not
+saturate), as is the MIX. LINE's swept delays come from `mo_knot` once per
+block (`mo_dly`: the triangle, depth and centre). Straight-line callees: `mo_tap` (the linear read,
 blending toward the older sample; the fixed taps use it too since 26 Sep
 2026, split per sample from the centre's run value; `mo_itap` is its
-second entry), `mo_herm` (the 4-point Hermite read, scaled
-1/16 inside), `mo_apst` (one allpass stage, x in and y out in x0 so a chain
+second entry), `mo_herm` (the 4-point Hermite read from the successive differences,
+scaled 1/16 inside), `mo_apst` (one allpass stage, x in and y out in x0 so a chain
 passes it straight through; PHSR's eight mod stages carry it inline, two
 per trip of a counted loop, since 27 Sep 2026), `mo_para` (the parabola
 sine), `mo_tab` (the table read, per block). The one-poles are

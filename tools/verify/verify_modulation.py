@@ -216,6 +216,21 @@ for mode, over, bar, scale in CASES:
           f"max err {err:.2e} (bar {bar:.0e}), level {rms_db(L):.1f}/{rms_db(R):.1f} dB vs ref "
           f"{rms_db([v * FS for v in rL]):.1f}/{rms_db([v * FS for v in rR]):.1f}")
 
+# ---- 4b. the block-linear sweep against the per-sample LFO ---------------------
+# The swept delays are a straight line per block (mo_knot): off the triangle where
+# a corner falls inside a block (at most half a block of slope) and in the first
+# block after init or a MODE change, which starts on its end value (at most a
+# block of slope); the slope is 4 * depth * inc. The reference carries the
+# largest distance it saw.
+for rate, dpth in ((26, 21), (127, 127), (127, 6), (60, 90)):
+    kn = mode_knobs("JUNO", RATE=rate, DPTH=dpth, MIX=127)
+    ref = REF.make("JUNO", **{k: v for k, v in kn.items() if k != "MODE"})
+    ref.process([0.0] * 6000, [0.0] * 6000)
+    slope = 4 * ref.depth * ref.inc
+    check(f"block-linear sweep, RATE={rate} DPTH={dpth}: within a block of slope of the LFO",
+          ref.dev <= REF.BLOCK * slope + 0.01,
+          f"{ref.dev:.3f} samples (bound {REF.BLOCK * slope:.3f}, slope {slope:.4f}/sample)")
+
 # ---- 5. JUNO: the sweep is the Juno's --------------------------------------------
 # An impulse into the wet (MIX 127, TONE 127 so the one-poles are open):
 # the response is one interpolated tap between 1.5 and 5.4 ms after it.

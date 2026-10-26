@@ -85,10 +85,20 @@ records. The X/Y data blocks differ in address between payloads: curve bank
 a dispatch table.
 
 Internal P is contiguous with no gaps: A 66 modules, 8,159 words, top
-`P:0x01fdf`; B 46 modules, 7,583 words, top `P:0x01d9f`. `P:0x2000` is
+`P:0x01fdf`; B 46 modules, 7,583 words, top `P:0x01d9f`. P ends at
+`P:0x1fff` on the default map ✅ (PEXT PROBE, 25 Oct 2026, `modules/pextprobe`,
+on the unit): a control at the spare `P:0x1fe0` wrote and read back on both
+cores, and `P:0x2000`, `0x2100`, `0x2400`, `0x2800`, `0x3000`, `0x3800` did not
+hold a written word on either; `P:0x3fe0`, `0x5fe0` .. `0xffe0` did not on
+either core, and nothing wrapped onto `P:0x1fe0`. ❌ Retracted: "`P:0x2000` is
 executable (CHORUS relocated there ran on the unit,
-`git show dc788d3a:tools/build_dsptest.py`); upper bound unmeasured. No external memory; the shared
-window runs at internal speed (`CHIP.md`).
+`git show dc788d3a:tools/build_dsptest.py`)": a direct write and read-back
+at `P:0x2000` finds no memory there, and the CHORUS result is not
+reproduced. No external memory; the shared window runs at internal speed
+(`CHIP.md`). Code written at runtime into the shared window runs ✅: PEXT PROBE
+wrote a three-word routine at `P:0x30100`, `0x35900`, `0x36300`, `0x36800`,
+`0x37000`, `0x37800` and `0x37e00` from each core, called it and read its
+result, on core 0 and on core 1 (the words are in payload A's half).
 
 Non-effect modules (payload A): `0x2bf` summing mixdown, `0x3a1` voice
 playback engine (2-tap linear interpolator over a 128-word ring), `0x5cb`
@@ -539,7 +549,7 @@ isolated. A per-instance stash at `Y:(0x735 + (r7 >> 8))` works on payload A and
 lands inside a live coefficient table on payload B. `dsp_host -inst N
 -guard` names a write over a loaded module. Bring-up hangs (three
 attempts, cause not isolated): executing at `P:0x2000` with low X as delay
-memory (🟡 P/X alias), a `do` loop-end assembled at the wrong org, a
+memory (🟡 P/X alias; `P:0x2000` is not memory on the default map, above), a `do` loop-end assembled at the wrong org, a
 hardcoded entry offset.
 
 ## 8. Standing rules

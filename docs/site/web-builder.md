@@ -1,7 +1,7 @@
 # Build and Install
 
-Builds one of the three official remixes ([octabam-core](remix-core.md),
-[octabam-inserts](remix-inserts.md), [octabam-bus](remix-bus.md)) from your
+Builds one of the two official remixes ([octabam](remix-octabam.md),
+[octabam-bus](remix-bus.md)) from your
 own copy of Octatrack OS 1.40C, in this browser tab. The OS file is read
 locally and nothing is uploaded.
 
@@ -32,7 +32,7 @@ The build takes a few seconds. The page offers three files:
 |---|---|
 | `OCTATRACK_OCTABAM<tag>.bin` | card install: copy to the root of the CF card, then PROJECT → SYSTEM → OS UPGRADE. |
 | `OCTATRACK_OS1.40C_OCTABAM<tag>.syx` | DIN MIDI install. |
-| `<REMIX> <tag>.RMX` | REMIX SWITCH: copy to `/BRAIN/REMIXES/` on the card. |
+| `<REMIX> <tag>.RMX` | optional: boots this image from the card without flashing it. Needs a unit already running an octabam image. See [Switch with an RMX file](#switch-with-an-rmx-file). |
 
 The files contain Elektron's OS, so keep them to yourself.
 
@@ -66,6 +66,21 @@ if you prefer a DIN MIDI transfer:
 5. Wait through PREPARING FLASH and UPDATING FLASH. Do not power off or
    disconnect the cable during either phase.
 6. Let the unit finish booting, then power-cycle once more.
+
+### Switch with an RMX file
+
+An `.RMX` file is a whole OS image that BRAIN, the octabam menu, can boot
+from the CF card without writing the flash. It is an alternative to the two
+installs above, for a unit that already runs an octabam image:
+
+1. Copy the `.RMX` file into `/BRAIN/REMIXES/` on the CF card, creating the
+   folders if they are missing.
+2. On the unit, select **PROJ → BRAIN → REMIXES**, select the file's name and
+   press YES at `BOOT <NAME>?`.
+3. The choice is kept across reboots. To return to the flashed image, select
+   the name under the FLASHED separator in the same list.
+
+See [BRAIN](brain.md#switch-remixes) for the details.
 
 ## Confirm the installation
 

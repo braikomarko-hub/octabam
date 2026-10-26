@@ -83,7 +83,14 @@ def find_device():
     libs = (glob.glob("/usr/local/opt/libusb/lib/libusb-1.0.dylib") + glob.glob("/opt/homebrew/opt/libusb/lib/libusb-1.0.dylib")
             + glob.glob("/usr/local/lib/libusb-1.0*.dylib") + glob.glob("/usr/local/Cellar/libusb/*/lib/libusb-1.0*.dylib")
             + glob.glob("/opt/homebrew/lib/libusb-1.0*.dylib") + glob.glob("/opt/homebrew/Cellar/libusb/*/lib/libusb-1.0*.dylib"))
-    backend = usb.backend.libusb1.get_backend(find_library=lambda _: libs[0]) if libs else None
+    backend = None
+    try:
+        import libusb_package
+        backend = libusb_package.get_libusb1_backend()
+    except ImportError:
+        pass
+    if backend is None:
+        backend = usb.backend.libusb1.get_backend(find_library=lambda _: libs[0]) if libs else None
     dev = usb.core.find(idVendor=0x1935, idProduct=0x0002, backend=backend)
     if dev is None:
         sys.exit("no Octatrack on USB (1935:0002) -- is it connected and enumerated?")

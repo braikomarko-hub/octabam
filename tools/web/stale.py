@@ -52,10 +52,16 @@ def ignored(path):
     return path.endswith(".md") or path.startswith(IGNORED_PREFIXES)
 
 
+def registry_names():
+    from remix import registry
+    return registry.remix_names()
+
+
 def selections(names):
     """{official remix: {module directory name}} from the registry."""
     from remix import registry
-    return {n: {m.name for m in registry.selected(registry.remix(n))} for n in names}
+    have = set(registry.remix_names())
+    return {n: ({m.name for m in registry.selected(registry.remix(n))} if n in have else set()) for n in names}
 
 
 def stale(paths, sel):
@@ -118,6 +124,9 @@ def main():
     any_stale = False
     for n in names:
         paths = res[n]
+        if n not in set(registry_names()):
+            print(f"{n}: RETIRED (no remixes/{n}); the published patch stays until it is republished")
+            continue
         if not paths:
             print(f"{n}: current (built from {m['commit'][:8]})")
             continue

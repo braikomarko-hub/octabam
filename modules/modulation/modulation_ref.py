@@ -36,6 +36,7 @@ import math
 
 FS = 44100.0
 BLOCK = 15
+LOOKAHEAD = 16      # the swept delays' slope is a 16th of the way to the knot (the unit's block is 16; the gates' is 15)
 LINE = 1024
 
 MODES = {"JUNO": 0, "DIM": 1, "FLNG": 2, "COMB": 3, "PHSR": 4}
@@ -214,17 +215,39 @@ class LineModes:
         self.m = mix(k["MIX"])
         self.wid = width_offset(k["WDTH"])
 
-    def process(self, L, R):
+    def knots(self):
+        """The swept delays are a straight line per block (the DSP's mo_knot): from where the last block left
+        them to the value the LFO has a block (BLOCK samples) on, a LOOKAHEAD'th of the way a sample; the first
+        block starts on that value."""
+        end = [self.centre + self.depth * tri(self.phase + BLOCK * self.inc + ch * self.wid) for ch in (0, 1)]
+        if self.d is None:
+            self.d = list(end)
+        self.slope = [(end[ch] - self.d[ch]) / LOOKAHEAD for ch in (0, 1)]
+
+    def process(self, L, R, exact=False):
+        """exact: the per-sample LFO of the sources' laws; otherwise the block-linear sweep the DSP runs."""
         outL, outR = [], []
+        self.d = None
+        self.dev = 0.0                  # the block-linear sweep's largest distance from the per-sample LFO's
         for n in range(len(L)):
             if n % BLOCK == 0:
                 self.block()
+                if not exact:
+                    self.knots()
             self.phase = (self.phase + self.inc) % 1.0
-            lfo = (tri(self.phase), tri(self.phase + self.wid))
             dry = (L[n], R[n])
             for ln in self.lines:
                 ln.advance()
-            taps = [self.lines[ch].read(self.centre + self.depth * lfo[ch]) for ch in (0, 1)]
+            if exact:
+                lfo = (tri(self.phase), tri(self.phase + self.wid))
+                dl = [self.centre + self.depth * lfo[ch] for ch in (0, 1)]
+            else:
+                self.d = [self.d[ch] + self.slope[ch] for ch in (0, 1)]
+                dl = self.d
+                for ch in (0, 1):
+                    ex = self.centre + self.depth * tri(self.phase + ch * self.wid)
+                    self.dev = max(self.dev, abs(dl[ch] - ex))
+            taps = [self.lines[ch].read(dl[ch]) for ch in (0, 1)]
             fixed = [self.lines[ch].read(self.centre) for ch in (0, 1)]
             wo = [self.lpo[ch].lp(taps[ch]) for ch in (0, 1)]
             self.lofi.step()

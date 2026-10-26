@@ -29,14 +29,13 @@
 ;   $41        the LOFI hold counter (persistent)
 ;   $42        the LOFI hold length; $45 its mask; $46 the TONE knob word;
 ;              $47 mo_para's park (per block)
-;   $48..$6f   the block's constant stream on r4/r1: LINE 40 words, PHSR 19,
+;   $48..$68   the block's constant stream on r4/r1: LINE 33 words, PHSR 19,
 ;              COMB 17 (each loop's header lists the order); each ends in
 ;              MIX's run value and step, then the mode's other steps
 ;   $22        MIX's run value between blocks (26 Sep 2026)
 ;   $43        1 once the run values started at their targets (0 at init and
 ;              on a MODE change; mo_rset)
-;   $44        the fixed taps' fraction f (per sample, LINE)
-;   $70..$83 free
+;   $73..$83 free
 ; init zeroes $11..$46 and, on FX1, the lines.
 ; ---------------------------------------------------------------------------
 
@@ -245,21 +244,17 @@ mo_msame:
         beq     mo_bcomb
         cmp     #>$4,a
         beq     mo_bphsr
-; JUNO (and any stored value past 4): bl 0, bd 0, ff 1, kc 0, kb 0
+; JUNO (and any stored value past 4): bl 0, bd 0, ff 1, kc 0, kb 0 (the loop
+; reads bl, kc and kb in FLNG and DIM only: only bd and ff are written here)
         clr     a
         move    #>$7fffff,x0
-        move    a,x:(r7+$07)
         move    a,x:(r7+$08)
         move    x0,x:(r7+$09)
-        move    a,x:(r7+$0a)
-        move    a,x:(r7+$0b)
         bra     mo_line
 mo_bdim:
 ; DIM: bl 0, bd 1, ff 0.25, kc -1, kb 0.5 (OURS: the SDD-320's amounts are
 ; unpublished; the highpass and the lift's lowpass are one-poles at 200 Hz),
 ; all x 0.398: the -8 dB trim that levels it with JUNO at the views
-        clr     a
-        move    a,x:(r7+$07)
         move    #>$32f52d,x0            ; 0.398
         move    x0,x:(r7+$08)
         move    #>$0cbd4b,x0            ; 0.0995
@@ -271,15 +266,12 @@ mo_bdim:
         bra     mo_line
 mo_bflng:
 ; FLNG: bl 0.7071, bd 0, ff -0.7071, kc 0, kb 0 (Dattorro Table 6); bl and
-; ff x 0.447, the -7 dB trim (the feedback is FDBK's, untrimmed)
+; ff x 0.447, the -7 dB trim (the feedback is FDBK's, untrimmed); bl is an
+; immediate in the loop
         clr     a
-        move    #>$286dc6,x0            ; 0.7071 x 0.447
-        move    x0,x:(r7+$07)
         move    a,x:(r7+$08)
         move    #>$d7923a,x0            ; -0.7071 x 0.447
         move    x0,x:(r7+$09)
-        move    a,x:(r7+$0a)
-        move    a,x:(r7+$0b)
         bra     mo_line
 
 ; ===========================================================================
@@ -290,35 +282,32 @@ mo_bflng:
 mo_line:
         move    #$1,n0                  ; (short immediate, stock's own form)
 ; Pointer-addressed (22 Sep 2026). The block's constants in a stream at $48
-; (r4), in the order the sample reads them: inc wid | depth centre c c' fb
-; hold mask c c' | c c' fb mask c c' | bl bd ff c200 c200' kc c200 c200' kb |
-; the same for R | MIX's run and step | the steps of wid depth centre (run values; R and both
-; fixed taps read L's depth and centre at r4 + 2/3). The states walk from $23 on r3: lpi L, latch L, lpo L, lpi R,
+; (r4), in the order the sample reads them: the fixed taps' step and delay |
+; L's slope and delay | c c' fb hold mask c c' | R's slope and delay |
+; c c' fb mask c c' | bd ff (both channels read them) | MIX's run and step |
+; the run words of wid and depth. bl, kc and kb are read from the r7 block
+; where only FLNG and DIM use them, the 200 Hz one-poles' c and c' are
+; immediates. The states walk from $23 on r3: lpi L, latch L, lpo L, lpi R,
 ; latch R, lpo R, hp L, lpb L, wet L, hp R, lpb R. r2/r6 = the lines' bases,
-; y0 = the write phase, n4 = the LFO phase, n1 = the LOFI counter, n2/n6 =
-; the taps and then the LPo outputs. r6 (the page pointer) is not read past
-; here: the dispatcher reloads it.
+; y0 = the write phase, n1 = the LOFI counter, n4 = the mode. r6 (the
+; page pointer) is not read past here: the dispatcher reloads it.
         move    r7,r4
         move    #$48,n4
         move    (r4)+n4
         move    #>$ffffff,m4
-        move    r4,r1
         move    #>$ffffff,m1
-        move    x:(r7+$01),x0
-        move    x0,x:(r1)+              ; inc
-; wid, depth and centre are RUN values stepped once per sample (the loop's
-; head) 1/1024 of the way to this block's WDTH, DPTH and DLY (26 Sep 2026;
-; steps after MIX's); the R tap reads L's depth and centre, and both fixed
-; taps read the centre and split it per sample (mo_tap), so no tap moves
-; in one step at a block edge
-        lua     (r4+$25),r3         ; the steps, the stream's last three words
         move    #>$ffffff,m3
-        move    x:(r7+$06),y1
-        bsr     mo_rset                 ; wid
-        move    x:(r7+$03),y1
-        bsr     mo_rset                 ; depth
+; The centre is a RUN value moved 1/1024 of the way to this block's DLY per
+; sample (26 Sep 2026): the fixed taps' delay, stepped in the loop's head.
+; The swept taps' delays are not computed per sample: each block sets a
+; straight line from where the last one ended to the delay the LFO, WDTH,
+; DPTH and DLY give n7 samples on (mo_knot), and the loop adds the slope. wid
+; and depth glide per block (mo_glide).
+        lua     (r4+$1),r1
+        move    r4,r3
         move    x:(r7+$02),y1
-        bsr     mo_rset                 ; centre
+        bsr     mo_rset                 ; centre: step, then delay
+        lua     (r4+$4),r1              ; L's slope and delay are set below
 ; every one-pole is s' = c x + c' s with c' = 1 - c (27 Sep 2026: two
 ; products, no halving; c' streamed after each c; the pair sums to
 ; 1 - 2^-23, a bias under 1 LSB per sample)
@@ -326,8 +315,6 @@ mo_line:
         move    #>$7fffff,a
         sub     x0,a
         move    a,x1                    ; c'
-        move    #>$039912,y0            ; c200 = 0.0281
-        move    #>$7c66ed,b             ; 1 - c200
         move    x0,x:(r1)+              ; c (lpi L)
         move    x1,x:(r1)+
         move    x:(r7+$04),x0
@@ -339,6 +326,7 @@ mo_line:
         move    x:(r7+$05),x0
         move    x0,x:(r1)+              ; c (lpo L)
         move    x1,x:(r1)+
+        lua     (r1+$2),r1              ; R's slope and delay
         move    x0,x:(r1)+              ; c (lpi R)
         move    x1,x:(r1)+
         move    x:(r7+$04),x0
@@ -348,35 +336,45 @@ mo_line:
         move    x:(r7+$05),x0
         move    x0,x:(r1)+              ; c (lpo R)
         move    x1,x:(r1)+
-        move    x:(r7+$07),x0
-        move    x0,x:(r1)+              ; bl
         move    x:(r7+$08),x0
         move    x0,x:(r1)+              ; bd
         move    x:(r7+$09),x0
         move    x0,x:(r1)+              ; ff
-        move    y0,x:(r1)+              ; c200 (HP L)
-        move    b,x:(r1)+
-        move    x:(r7+$0a),x0
-        move    x0,x:(r1)+              ; kc
-        move    y0,x:(r1)+              ; c200 (LPb L)
-        move    b,x:(r1)+
-        move    x:(r7+$0b),x0
-        move    x0,x:(r1)+              ; kb
-        move    x:(r7+$07),x0
-        move    x0,x:(r1)+              ; bl
-        move    x:(r7+$08),x0
-        move    x0,x:(r1)+              ; bd
-        move    x:(r7+$09),x0
-        move    x0,x:(r1)+              ; ff
-        move    y0,x:(r1)+              ; c200 (HP R)
-        move    b,x:(r1)+
-        move    x:(r7+$0a),x0
-        move    x0,x:(r1)+              ; kc
-        move    y0,x:(r1)+              ; c200 (LPb R)
-        move    b,x:(r1)+
-        move    x:(r7+$0b),x0
-        move    x0,x:(r1)+              ; kb
         bsr     mo_mset                 ; MIX's run and step
+; ---- the block's knots ---------------------------------------------------
+; The LFO's phase moves n7 inc (n7 is 16 on the unit, 15 in the gates), and
+; the swept delays walk to what they are there, n7 samples on.
+        move    x:(r7+$01),a            ; inc
+        asl     #$8,a,a
+        move    a,x0                    ; inc << 8
+        move    n7,a
+        asl     #$f,a,a
+        move    a,y1                    ; n7 << 15
+        mpy     x0,y1,a                 ; inc * n7, an integer in a1
+        move    x:(r7+$21),b
+        add     b,a
+        and     #>$7fffff,a
+        move    a1,x:(r7+$21)           ; the phase n7 on
+        lua     (r4+$17),r5             ; the run words: wid, depth glide per block
+        move    x:(r7+$43),b
+        move    x:(r7+$06),y1
+        bsr     mo_glide                ; wid
+        move    (r5)+
+        move    x:(r7+$03),y1
+        bsr     mo_glide                ; depth
+        move    a,y1
+        move    x:(r4+$17),x1
+        move    x:(r4+$1),y0            ; the centre
+        move    x:(r7+$21),a
+        bsr     mo_dly                  ; L's delay n7 on
+        lua     (r4+$2),r1
+        bsr     mo_knot
+        move    x:(r7+$21),a
+        add     x1,a                    ; R's phase: WID further round
+        and     #>$7fffff,a
+        bsr     mo_dly
+        lua     (r4+$b),r1
+        bsr     mo_knot
         move    #>$1,x0
         move    x0,x:(r7+$43)           ; primed
         move    x:(r7+$0e),r2
@@ -385,28 +383,14 @@ mo_line:
         move    #>$400,n6
         move    (r6)+n6
         move    #>$ffffff,m6
-        move    #>$ffffff,m3
         move    x:(r7+$20),y0
-        move    x:(r7+$21),a
-        move    a1,n4
         move    x:(r7+$41),a
         move    a1,n1
+        move    x:(r7+$0c),a
+        move    a1,n4                   ; the mode: 0 JUNO, 1 DIM, 2 FLNG
         move    #>$3ff,m5               ; the lines are modulo-1024 rings: every
                                         ; FX1 base is 1024-aligned (DSP.md's table)
         do      n7,>molinz
-        move    r4,r1
-        lua     (r4+$25),r3             ; the steps
-        move    (r1)+                   ; inc
-        move    x:(r3)+,x0
-        move    x:(r1),a
-        add     x0,a    x:(r3)+,x0
-        move    a,x:(r1)+               ; wid
-        move    x:(r1),a
-        add     x0,a    x:(r3)+,x0
-        move    a,x:(r1)+               ; depth
-        move    x:(r1),a
-        add     x0,a
-        move    a,x:(r1)+               ; centre
         move    r4,r1
         lua     (r7+$23),r3
 ; ---- advance the write phase ----------------------------------------------
@@ -414,34 +398,18 @@ mo_line:
         add     #>$1,a
         and     #>$3ff,a
         move    a1,y0                   ; a1 straight over: no limiter
-; ---- the two triangles: a = lfo L, x1 = lfo R ------------------------------
-; The stream gives inc then wid; the phase (n4) advances once and the right
-; channel reads it WID further round. tri = 4 |phase - 0.5| - 1.
-        move    n4,a
-        move    x:(r1)+,x0              ; inc
-        add     x0,a                    ; phase <= $7fffff + inc <= $790: no carry
-        and     #>$7fffff,a             ; into a2, which stays 0 through the and
-        move    a1,n4
-        move    x:(r1)+,x0              ; wid
-        add     x0,a                    ; (< 2^24: a2 = 0 through the and)
-        and     #>$7fffff,a
-        move    #$40,y1                 ; 0.5 (short immediate: bits 23-16)
-        sub     y1,a
-        abs     a                       ; 0 .. 0.5
-        asl     #$2,a,a                 ; 0 .. 2, in the guard bits
-        move    #>$7fffff,x0
-        sub     x0,a                    ; -1 .. 1
-        move    a,x1                    ; LIMITING: lfo R
-        move    n4,a
-        sub     y1,a
-        abs     a
-        asl     #$2,a,a
-        sub     x0,a                    ; lfo L
-; ---- L: the swept tap ----------------------------------------------------
-        move    a,x0                    ; lfo L
-        move    x:(r1)+,y1              ; depth, Q11.12
-        mpy     x0,y1,a x:(r1)+,x0      ; the sweep, Q11.12 signed; centre
+; ---- the delays: each is a word and its step, stepped here ---------------
+; The fixed taps' delay (the centre) first, then L's swept tap: the block's
+; knots (mo_knot) set the slope; R's pair is in the stream below.
+        move    x:(r1)+,x0              ; the centre's step
+        move    x:(r1),a
         add     x0,a
+        move    a,x:(r1)+               ; the fixed taps' delay
+; ---- L: the swept tap ----------------------------------------------------
+        move    x:(r1)+,x0              ; L's slope
+        move    x:(r1),a
+        add     x0,a
+        move    a,x:(r1)+               ; L's delay, Q11.12
         move    r2,r5                   ; line L
         bsr     mo_tap
         move    a,n2                    ; tap L
@@ -487,11 +455,10 @@ mo_line:
         move    a,x:(r3)+
         move    a,n2                    ; wo L
 ; ---- R: the swept tap ----------------------------------------------------
-        move    x1,x0                   ; lfo R
-        move    x:(r4+$2),y1            ; depth, Q11.12 (L's run value)
-        mpy     x0,y1,a                 ; the sweep, Q11.12 signed
-        move    x:(r4+$3),x0            ; centre (L's run value)
+        move    x:(r1)+,x0              ; R's slope
+        move    x:(r1),a
         add     x0,a
+        move    a,x:(r1)+               ; R's delay, Q11.12
         move    r6,r5                   ; line R
         bsr     mo_tap
         move    a,n6                    ; tap R
@@ -535,93 +502,132 @@ mo_line:
 ; both fixed taps read the centre's run value (after this sample's write:
 ; a delay >= 8 never sees it), so its split into i and f is done once here
 ; and kept for R in n3 and $44 (n3 is free until the MIX below)
-        move    x:(r4+$3),a
+; n4 = the mode: only FLNG reads the fixed taps (bl), only DIM the
+; highpass and the lift's lowpass (kc, kb); the others branch past them and
+; their states
+; MODEARM_BEGIN FIXED
+        move    n4,a
+        cmp     #>$2,a
+        bne     mo_nfl
+        move    x:(r4+$1),a             ; the fixed taps' delay
         move    a,x0
         move    x0,a                    ; clean: a0 = 0
         and     #>$fff,a
         asl     #$b,a,a
         move    a1,y1                   ; f
-        move    y1,x:(r7+$44)
+        move    y1,n3                   ; kept for R
         move    x0,a
         asr     #$c,a,a
         move    a1,x0                   ; i
-        move    x0,n3
         move    r2,r5
         bsr     mo_itap
         move    a,x0                    ; fixed L
-        move    x:(r1)+,y1              ; bl
+        move    #>$286dc6,y1            ; bl = 0.7071 x 0.447, the -7 dB trim
         mpy     x0,y1,a x:(r0),x0       ; dry L
+        bra     mo_fjl
+mo_nfl:
+        clr     a       x:(r0),x0       ; dry L
+mo_fjl:
+; MODEARM_END
         move    x:(r1)+,y1              ; bd
         mac     x0,y1,a
         move    n2,x0                   ; wo L
         move    x:(r1)+,y1              ; ff
         mac     x0,y1,a
         move    a,x1                    ; the sum so far (limited)
+; MODEARM_BEGIN HP
+        move    n4,b
+        cmp     #>$1,b
+        bne     mo_nhl
 ; HP(wo of the other side): s' = c200 x + c200' s; hp = x - s'
         move    n6,x0
-        move    x:(r1)+,y1              ; c200 = 0.0281
+        move    #>$039912,y1            ; c200 = 0.0281
         mpy     x0,y1,a x:(r3),x0       ; and s
-        move    x:(r1)+,y1              ; c200'
+        move    #>$7c66ed,y1            ; c200' = 1 - c200
         mac     x0,y1,a
         move    a,x:(r3)+
         move    n6,b
         sub     a,b                     ; hp
         move    b,x0
-        move    x:(r1)+,y1              ; kc
+        move    x:(r7+$0a),y1           ; kc
         mpy     x0,y1,a
         add     x1,a
         move    a,x1
 ; LPb(dry)
         move    x:(r0),x0
-        move    x:(r1)+,y1              ; c200
+        move    #>$039912,y1
         mpy     x0,y1,a x:(r3),x0
-        move    x:(r1)+,y1              ; c200'
+        move    #>$7c66ed,y1
         mac     x0,y1,a
         move    a,x:(r3)+
         move    a,x0
-        move    x:(r1)+,y1              ; kb
+        move    x:(r7+$0b),y1           ; kb
         mpy     x0,y1,a
         add     x1,a
+        bra     mo_whl
+mo_nhl:
+        lua     (r3+$2),r3              ; hp, lpb
+mo_whl:
+; MODEARM_END
         move    a,x:(r3)+               ; wet L (limited)
 ; ---- wet R = bl*fixed + bd*dry + ff*wo + kc*HP(wo of the other side) + kb*LPb(dry)
-        move    n3,x0                   ; the fixed tap: i and f from L's split
-        move    x:(r7+$44),y1
+        lua     (r1-$2),r1              ; bd and ff again
+; MODEARM_BEGIN FIXED
+        move    n4,a
+        cmp     #>$2,a
+        bne     mo_nfr
+        move    n3,y1                   ; the fixed tap: f from L's split, n5 still L's address
         move    r6,r5
-        bsr     mo_itap
+        move    (r5)+n5
+        bsr     mo_itrd
         move    a,x0                    ; fixed R
-        move    x:(r1)+,y1              ; bl
+        move    #>$286dc6,y1            ; bl
         mpy     x0,y1,a x:(r0+n0),x0    ; dry R
+        bra     mo_fjr
+mo_nfr:
+        clr     a       x:(r0+n0),x0    ; dry R
+mo_fjr:
+; MODEARM_END
         move    x:(r1)+,y1              ; bd
         mac     x0,y1,a
         move    n6,x0                   ; wo R
         move    x:(r1)+,y1              ; ff
         mac     x0,y1,a
         move    a,x1                    ; the sum so far (limited)
+; MODEARM_BEGIN HP
+        move    n4,b
+        cmp     #>$1,b
+        bne     mo_nhr
 ; HP(wo of the other side): s' = c200 x + c200' s; hp = x - s'
         move    n2,x0
-        move    x:(r1)+,y1              ; c200 = 0.0281
+        move    #>$039912,y1            ; c200 = 0.0281
         mpy     x0,y1,a x:(r3),x0       ; and s
-        move    x:(r1)+,y1              ; c200'
+        move    #>$7c66ed,y1            ; c200'
         mac     x0,y1,a
         move    a,x:(r3)+
         move    n2,b
         sub     a,b                     ; hp
         move    b,x0
-        move    x:(r1)+,y1              ; kc
+        move    x:(r7+$0a),y1           ; kc
         mpy     x0,y1,a
         add     x1,a
         move    a,x1
 ; LPb(dry)
         move    x:(r0+n0),x0
-        move    x:(r1)+,y1              ; c200
+        move    #>$039912,y1
         mpy     x0,y1,a x:(r3),x0
-        move    x:(r1)+,y1              ; c200'
+        move    #>$7c66ed,y1
         mac     x0,y1,a
         move    a,x:(r3)+
         move    a,x0
-        move    x:(r1)+,y1              ; kb
+        move    x:(r7+$0b),y1           ; kb
         mpy     x0,y1,a
         add     x1,a
+        bra     mo_whr
+mo_nhr:
+        lua     (r3+$2),r3
+mo_whr:
+; MODEARM_END
         move    #$3,n3                  ; wet L is three back from the cursor
 ; ---- momixs, inline (23 Sep 2026; three sites each, FREE allows it) ----
         move    a,x1                    ; wet R (limited)
@@ -654,12 +660,10 @@ mo_line:
 molinz:
         nop
         move    #>$ffffff,m5
-        move    x:(r4+$23),x0           ; MIX's run value, for the next block
+        move    x:(r4+$15),x0           ; MIX's run value, for the next block
         move    x0,x:(r7+$22)
         move    y0,a
         move    a1,x:(r7+$20)           ; the write phase
-        move    n4,a
-        move    a1,x:(r7+$21)           ; the LFO phase
         move    n1,a
         move    a1,x:(r7+$41)           ; the LOFI counter
         rts
@@ -1058,7 +1062,7 @@ norep_md_01:
 ; steps of period-1, polarity, gain (run values the R string reads at r4 +
 ; 0/1/4). The
 ; walk from
-; $23 on r3, per channel: mo_herm's eight scratch words, x1, x2, the LOFI
+; $23 on r3, per channel: mo_herm's scratch word, x1, x2, the LOFI
 ; latch, then (L only) the wet. r2/r6 = the lines' bases, y0 = the write
 ; phase, n1 = the LOFI counter.
         move    #$1,n0
@@ -1136,9 +1140,8 @@ norep_md_01:
 ; ===== channel L =====
         move    x:(r1)+,a               ; period - 1 (the FIR's own delay)
         move    r2,r5
-        bsr     mo_herm                 ; r3 -> the third word of its scratch
-        move    #$6,n3
-        move    (r3)+n3                 ; -> x1 L
+        bsr     mo_herm                 ; r3 stays on its scratch word
+        move    (r3)+                   ; -> x1 L
         move    a,x0
         move    x:(r1)+,y1              ; the polarity
         mpy     x0,y1,a x:(r0),x0
@@ -1186,9 +1189,8 @@ norep_md_01:
 ; ===== channel R =====
         move    x:(r4),a                ; period - 1 (L's run value)
         move    r6,r5
-        bsr     mo_herm                 ; r3 -> the third word of its scratch
-        move    #$6,n3
-        move    (r3)+n3                 ; -> x1 R
+        bsr     mo_herm                 ; r3 stays on its scratch word
+        move    (r3)+                   ; -> x1 R
         move    a,x0
         move    x:(r4+$1),y1            ; the polarity (L's run value)
         mpy     x0,y1,a x:(r0+n0),x0
@@ -1227,7 +1229,7 @@ norep_md_01:
         move    x1,x0                   ; the -12 dB output trim, after the line
         move    x:(r1)+,y1              ; write so the ring is untouched: 0.251
         mpy     x0,y1,a
-        move    #$c,n3                  ; wet L is twelve back from the cursor
+        move    #$5,n3                  ; wet L is five back from the cursor
 ; ---- momixs, inline (23 Sep 2026; three sites each, FREE allows it) ----
         move    a,x1                    ; wet R (limited)
         move    (r3)-n3
@@ -1360,6 +1362,40 @@ mo_para:
         rts
 
 ; ---------------------------------------------------------------------------
+; mo_dly -- a = a phase, 0 .. 1 of a cycle -> a = the swept delay at it,
+; Q11.12: y0 + y1 * (4 |phase - 0.5| - 1), y0 = the centre, y1 = the depth.
+; Clobbers x0. Straight-line.
+; ---------------------------------------------------------------------------
+mo_dly:
+        move    #$40,x0                 ; 0.5 (short immediate: bits 23-16)
+        sub     x0,a
+        abs     a                       ; 0 .. 0.5
+        asl     #$2,a,a                 ; 0 .. 2, in the guard bits
+        sub     #>$7fffff,a             ; -1 .. 1
+        move    a,x0
+        mpy     x0,y1,a                 ; depth * lfo, Q11.12
+        add     y0,a
+        rts
+
+; ---------------------------------------------------------------------------
+; mo_knot -- a = a swept delay at the block's last sample, r1 -> its pair
+; (slope, delay). The delay walks to a in 16 equal steps from where the last
+; block left it; the first block after init or a MODE change ($43 = 0) starts
+; on it. Out: r1 two on. Clobbers a, b, x0.
+; ---------------------------------------------------------------------------
+mo_knot:
+        move    x:(r7+$43),b
+        tst     b
+        move    x:(r1+$1),b             ; the delay now (moves keep the flags)
+        teq     a,b                     ; the first block: on the end
+        sub     b,a
+        add     #>$8,a                  ; rounded: a floor leaves the walk 8 LSB short on average
+        asr     #$4,a,a                 ; the slope per sample
+        move    a,x:(r1)+
+        move    b,x:(r1)+
+        rts
+
+; ---------------------------------------------------------------------------
 ; mo_tap -- a = the delay in Q11.12 (8 .. 1,015), y0 = the write phase, r5 =
 ; the line's base -> a = the tap, the fraction blended toward the OLDER
 ; neighbour: a delay of i + f lies between the samples at i and i + 1
@@ -1383,6 +1419,7 @@ mo_itap:
         and     #>$3ff,a                ; (a2 may be stale: a1 is what is read)
         move    a1,n5
         move    (r5)+n5                 ; -> delay i (r5 = the line, m5 = $3ff)
+mo_itrd:
         move    y:(r5)-,b               ; t0; the modulo steps r5 to delay i + 1
         move    y:(r5),a                ; t1
         sub     b,a                     ; t1 - t0
@@ -1393,13 +1430,16 @@ mo_itap:
 
 ; ---------------------------------------------------------------------------
 ; mo_herm -- a = the delay in Q11.12 (>= 4), y0 = the write phase, r5 = the
-; line's base, r3 -> eight words of scratch -> a = the 4-point Hermite read
+; line's base, r3 -> one word of scratch -> a = the 4-point Hermite read
 ; (stmlib's ReadHermite: xm1 one sample NEWER than i, x1 and x2 older),
-; everything scaled by 1/16 so no intermediate leaves +-1:
-;   c = (x1 - xm1)/2 ; v = x0 - x1 ; w = c + v ; a = w + v + (x2 - x0)/2 ;
-;   b = w + a ; out = (((a f) - b) f + c) f + x0
-; The scratch: xm1 c x0 x1 w x2 a; r3 leaves on its third word. Uses x0 x1
-; y1 b n3 n5. Straight-line.
+; from the successive differences e = x0 - xm1, g = x1 - x0, h = x2 - x1,
+; each shifted down 5 so no intermediate leaves +-1 (the 1/16 scaling):
+;   a = (e - 2g + h)/2 ; b = a + (e - g)/2 ; c = (e + g)/2   (each /16)
+;   out = (((a f) - b) f + c) f + x0
+; (the same polynomial as the form in c = (x1 - xm1)/2, v = x0 - x1, w = c + v,
+; a = w + v + (x2 - x0)/2, b = w + a, which kept eight scratch words). x0 waits
+; in the scratch word; r3 is where it came in. Uses x0 x1 y1 a b n3 n5.
+; Straight-line.
 ; ---------------------------------------------------------------------------
 mo_herm:
         move    a,x0                    ; the total
@@ -1416,55 +1456,37 @@ mo_herm:
         and     #>$3ff,a
         move    a1,n5
         move    (r5)+n5                 ; -> xm1 (r5 = the line, m5 = $3ff)
-        move    y:(r5)-,b               ; xm1; each next index is the last - 1
-        move    b,x:(r3)+               ; mod 1024, by the modulo
-        move    (r3)+                   ; (c's word)
-        move    y:(r5)-,b               ; x0
-        move    b,x:(r3)+
-        move    y:(r5)-,b               ; x1
-        move    b,x:(r3)+
-        move    (r3)+                   ; (w's word)
-        move    y:(r5),b                ; x2
-        move    b,x:(r3)
-; the polynomial, /16
-        move    #$2,n3
-        move    (r3)-n3                 ; -> x1
-        move    x:(r3)-,a               ; x1
-        move    (r3)-
-        move    (r3)-                   ; -> xm1
-        move    x:(r3)+,x0              ; xm1
-        sub     x0,a
-        asr     #$5,a,a                 ; c/16
-        move    a,x:(r3)+
-        move    x:(r3)+,b               ; x0
-        move    x:(r3)+,x0              ; x1
-        sub     x0,b                    ; v
-        asr     #$4,b,b                 ; v/16
-        add     b,a                     ; w/16
-        move    a,x:(r3)+
-        add     b,a                     ; w + v
-        move    x:(r3)+,b               ; x2
-        move    #$4,n3
-        move    (r3)-n3                 ; -> x0
-        move    x:(r3)+n3,x0            ; x0
+        move    y:(r5)-,x1              ; xm1; each next index is the last - 1
+        move    y:(r5)-,x0              ; x0
+        move    x0,x:(r3)               ; kept for the end
+        move    x0,a
+        sub     x1,a
+        asr     #$5,a,a                 ; e
+        move    a1,n3
+        move    y:(r5)-,x1              ; x1
+        move    x1,b
         sub     x0,b
-        asr     #$5,b,b                 ; (x2 - x0)/32
-        add     b,a                     ; a/16
-        move    a,x:(r3)-               ; a; r3 -> x2
-        move    (r3)-                   ; -> w
-        move    x:(r3)+,b               ; w
-        add     b,a                     ; b/16 = (w + a)/16
-        move    a,x1
-        move    (r3)+                   ; -> a
-        move    x:(r3),x0               ; a/16
-        mpy     x0,y1,a                 ; a f /16
-        sub     x1,a                    ; - b/16
+        asr     #$5,b,b                 ; g
+        move    y:(r5),x0               ; x2
+        move    x0,a
+        sub     x1,a
+        asr     #$5,a,a                 ; h
+        sub     b,a
+        sub     b,a                     ; h - 2g
+        move    n3,x1
+        add     x1,a                    ; a/16 = e - 2g + h
+        move    a,x0
+        move    n3,a
+        sub     b,a                     ; e - g
+        add     x0,a                    ; b/16 = a/16 + (e - g)
+        add     x1,b                    ; c/16 = e + g
+        move    a1,n3                   ; b/16
+        mpy     x0,y1,a                 ; a f /16 (x1 * y1 is a form the chip has not run)
+        move    n3,x0
+        sub     x0,a                    ; - b/16
         move    a,x0
         mpy     x0,y1,a                 ; (..) f
-        move    #$5,n3
-        move    (r3)-n3                 ; -> c
-        move    x:(r3)+,x0
-        add     x0,a                    ; + c/16
+        add     b,a                     ; + c/16
         move    a,x0
         mpy     x0,y1,a                 ; (..) f
         asl     #$4,a,a                 ; x 16

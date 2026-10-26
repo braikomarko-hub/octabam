@@ -87,8 +87,9 @@ HOW A PATH IS PLACED (28 Sep 2026; before, by directory):
 
 It refuses a tree that is not rebased onto the base (the base must be an
 ancestor of HEAD): gates run before a rebase are not a result (PR #396).
-CI runs `--run` for pushes to main and every pull request (the `gates` job
-fetches the 1.40C into the runner each run).
+CI plans with `--json` and runs each unit of its `matrix` with `--run --only
+NAME` on a runner of its own (the `gates` jobs fetch the 1.40C into the runner
+each run); for pushes to main and every pull request.
 
 Two or more remixes to check are printed as one `make check-shared
 REMIXES="..."` (once) and a `make check-remix REMIX=<r>` each; one remix
@@ -1053,6 +1054,60 @@ def replan(queue, extra, stress, jobs, keys_of=None):
     return sharded(items, jobs) if jobs > 1 else items
 
 
+# The commands that take seconds and share one entry; every other command
+# is an entry of its own (a CI runner each, with the whole setup).
+LIGHT = ("verify_docs", "selftest", "test-acceptance")
+
+
+def entry_name(kind, command):
+    if kind in ("check", "check-remix", "accept") and "REMIX=" in command:
+        return f"{kind} {accept_remix(command)}"
+    return kind
+
+
+def entries(items, jobs):
+    """The plan as units that run independently, for a caller that gives
+    each its own machine (the CI matrix): [{"name", "items"}], `items` as
+    in the plan. The quick commands are one entry, `light`; a check_shards
+    line becomes one line per remix (`--jobs` shards on that machine); every
+    other command is its own entry. `light` comes last: the dear units start first. A unit is run alone with `--only NAME`,
+    which plans again from the same diff: `jobs` must match between the two
+    calls. `identity` still queues the checks of the remixes it names inside
+    its own entry."""
+    out, light = [], []
+    for item in items:
+        kind, command, paths = item
+        if kind in LIGHT:
+            light.append(item)
+        elif is_shards(item):
+            remixes, modules = shards_line(command)
+            for r in remixes:
+                line = (f"python3 tools/verify/check_shards.py --jobs {jobs} "
+                        + (f'--modules "{",".join(modules)}" ' if modules else "") + r)
+                out.append({"name": f"check-remix {r}", "items": [(kind, line, paths)]})
+        else:
+            out.append({"name": entry_name(kind, command), "items": [item]})
+    if light:
+        out.append({"name": "light", "items": light})
+    seen = {}
+    for e in out:
+        n = seen[e["name"]] = seen.get(e["name"], 0) + 1
+        if n > 1:
+            e["name"] += f" #{n}"
+    return out
+
+
+def plan_json(base, merge_base, quick, jobs, remixes, items):
+    """The plan as data, for a caller that fans the gates out (a CI matrix):
+    `gates`, one entry per command in run order with the paths that put it
+    there, and `matrix`, the units entries() makes of them. `${STRESS_SOURCE}`
+    and `${BASE}` are left in the commands as printed; --run substitutes them."""
+    return {"base": base, "merge_base": merge_base, "tier": "quick" if quick else "full", "jobs": jobs,
+            "remixes": remixes,
+            "gates": [{"kind": k, "command": c, "paths": list(ps)} for k, c, ps in items],
+            "matrix": [{"name": e["name"], "commands": [c for _, c, _ in e["items"]]} for e in entries(items, jobs)]}
+
+
 def git(*args):
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
 
@@ -1087,9 +1142,16 @@ def main(argv=None):
                     help="the floor is every remix instead of the cover (the remixes that between them carry every module)")
     ap.add_argument("--no-cache", action="store_true",
                     help="with --run: run every gate job (check_shards' cache of passes, tools/verify/gate_cache.py)")
+    ap.add_argument("--only", metavar="NAME",
+                    help="plan as usual, then keep only the unit NAME of the matrix in --json (entries()); "
+                         "with --run, run just that unit")
+    ap.add_argument("--json", action="store_true",
+                    help="print the plan as one JSON object on stdout (the report goes to stderr) and exit; not with --run")
     ap.add_argument("--stamp-port", action="store_true",
                     help=f"record the port sources' digest at {PORT_STAMP} (make emu-cf, after its build) and exit")
     a = ap.parse_args(argv)
+    if a.json and a.run:
+        ap.error("--json prints the plan and runs nothing: not with --run")
     if a.stamp_port:
         stamp_port()
         return 0
@@ -1098,6 +1160,9 @@ def main(argv=None):
     else:
         merge_base, paths = changed_paths(a.base)
     quick = not a.full
+    report_to = sys.stdout
+    if a.json:
+        sys.stdout = sys.stderr
     if quick and a.jobs == 1:
         # the machine's gate slots no other session holds now, at least two
         # (a fixed 2 until 11 Oct 2026, with 60-70% of the CPU idle while
@@ -1111,6 +1176,9 @@ def main(argv=None):
         print(f"  {path}" + (f"   [{note}]" if note else ""))
     if not rows:
         print("  (nothing changed)")
+        if a.json:
+            sys.stdout = report_to
+            print(json.dumps(plan_json(a.base, merge_base, quick, a.jobs, [], []), indent=2))
         return 0
     print("\nremixes reached: " + (", ".join(remixes_reached(rows)) or "none"))
     print("\ngates, in order:")
@@ -1120,6 +1188,11 @@ def main(argv=None):
         items = [it for it in items if it[0] != "accept"]
     if a.jobs > 1:
         items = sharded(items, a.jobs)
+    if a.only is not None:
+        by_name = {e["name"]: e for e in entries(items, a.jobs)}
+        if a.only not in by_name:
+            sys.exit(f"reach: --only {a.only!r}: no such unit; this plan has " + (", ".join(map(repr, by_name)) or "none"))
+        items = by_name[a.only]["items"]
     for kind, command, from_paths in items:
         why = from_paths[0] + (f" +{len(from_paths) - 1}" if len(from_paths) > 1 else "")
         print(f"  {command:56}  # {why}")
@@ -1132,6 +1205,10 @@ def main(argv=None):
     if any(k == "accept" for k, _, _ in items) and not stress:
         print("\nSTRESS_SOURCE is unset: point it at a local project (never committed) for the accept line"
               " (it then runs the accepted remixes' checks itself).")
+    if a.json:
+        sys.stdout = report_to
+        print(json.dumps(plan_json(a.base, merge_base, quick, a.jobs, remixes_reached(rows), items), indent=2))
+        return 0
     if not a.run:
         return 0
     print()

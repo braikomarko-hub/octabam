@@ -15,7 +15,7 @@ make test-acceptance             the runner's, the classifier's and the shard ru
                                  (container corpus, settings, lock file, ot_brain round trip; no firmware)
 make identity                    which remixes' images this branch moved, byte for byte
 scripts/refhash.sh check         a build change produced bit-identical artifacts and reports
-make ci                          the CI jobs that need no firmware; the `gates` job also runs `make reach RUN=1 KEEP=1` on a runner that fetches the 1.40C each run
+make ci                          the CI jobs that need no firmware; the `gates` jobs also run the units of `make reach RUN=1 KEEP=1` (`reach.py --json`, `--only`), one runner each, every runner fetching the 1.40C
 ```
 
 ## 1. The instruments
@@ -38,6 +38,15 @@ or `~/.octabam_project`. `tools/harness/README.md` is `dsp_host` in depth,
 never sent to the OT's own port. A Midihub reverts to its stored preset on
 a power or USB blip, so its session pipes are saved (FROM A →
 drop-realtime-only → OCTATRACK).
+
+**The one-cable rig.** The unit on USB and nothing else: program change
+selects a layout, MIDI START and a host clock play it, the unit's USB audio
+is the capture and LOAD METER (`tools/hw/load_meter.py`) the load readout.
+`tools/hw/usb_transport_probe.py` shows START and STOP take effect;
+`tools/hw/ot_matrix.py` stamps up to 32 layouts of a remix per project and
+runs them (`docs/contributing/TOOLING.md`). `verify_usb_midi_clock` checks
+under the port that START and STOP over USB drive the sequencer's transport
+word as DIN's do. None of the three has run on a unit.
 
 **The verdict vocabulary.** A gate prints `[ok]`/`[PASS]` per check and
 exits non-zero on any `[FAIL]`. `[SKIP]` means an instrument, a project
@@ -122,6 +131,7 @@ The two tables above.
 | `verify_usb_in` | USB INPUTS AB, CD, ABCD | image | the host's channels land bit-exact on their RX slots, the others stay the jacks', the recorder ring fills, the jacks return at alt 0 | port, `.venv` |
 | `verify_usb_align` | USB LAYOUT TRACKS MAIN CUE | image | MAIN and CUE are in phase with the tracks in the twenty-channel stream (lag 0) | port, `.venv` |
 | `verify_cfmeter` | CF METER | per remix | the DSP meter under the port with T8's FX2 = CF METER: frames counted within 8 of the frames run; spin min <= max and > 0; period min <= max and > 0; DBRN 40 lowers the spin minimum with the period maximum unchanged (within 10 %); DBRN 127 raises the period maximum past 1.5 x run 1's. Cannot see: the unit's cycle costs (the port prices each instruction at one step) and the ESAI's real underrun behaviour | `.venv`, port, project |
+| `verify_usb_load_meter` | LOAD METER | image | the USB vendor request `0xc0/0x57` returns `lm_stats`, `lm_dsp` and `lm_ot` (20, 48, 256 bytes) equal to the cells at their symbols, seq rising, a 0.5 s window on timer 3, plausible period and busy, sampled slots; wValue 3 STALLs. Cannot see: the unit's timers (the port's timer 0 moves in 1,024-count steps), a project playing | `.venv`, port |
 | `verify_char_key` | CHARACTER | shared | KEY = T1 on both cores: a host-fed T3 (core 1) and T6 (core 0, also under four skews) duck in a burst; KEY = T1 with the host unfed holds no gain reduction; no host holds none; SELF is bit-identical fed or not; the master at KEY = T1 equals KEY = SELF; the host's own output is unchanged by Characters reading it. Cannot see: the chip's timing, anything the ColdFire does (knobs are poked into r6) | `dsp_host` |
 | `verify_character_txtr`, `verify_char_key_txtr` (`modules/character-txtr/`) | CHARACTER TXTR | shared | `verify_character` and `verify_char_key` run on the TXTR module (a `Gate` takes no arguments, so each names the module) | `dsp_host` |
 | `verify_fx2_lock` | FX2 LOCK | image | T2, FX2 twice, DOWN, YES leaves the live FX2 ids (`0x80000ec4`) as a run that pressed nothing; with the poke undone in RAM the ids change; the poke is in the image. Without the module the same sequence turns T2's SEND into the stock DELAY | `.venv`, port, project |
@@ -279,7 +289,11 @@ when you want those, before a flash for instance.
 `tools/verify/reach.py` reads the branch's diff against `origin/main`
 (`BASE=` for another base) and prints the gates in run order. `RUN=1` runs
 them, `KEEP=1` runs every one and prints a table instead of stopping at
-the first failure, `JOBS=n` runs the per-remix work over n worktrees. It
+the first failure, `JOBS=n` runs the per-remix work over n worktrees.
+`REACHARGS=--json` (`reach.py --json`) prints the plan as one JSON object on
+stdout (base, merge-base, tier, jobs, remixes, and per gate its kind,
+command and the paths that put it there; the report goes to stderr) and
+runs nothing. It
 refuses a tree that is not rebased onto the base, and before running it
 rebuilds `out/emu/ot_emu` when a source under `tools/emu/ot_emu` is newer
 than the binary.
@@ -677,11 +691,27 @@ PR; a first-time contributor's run waits for maintainer approval:
 | job | target | proves |
 |---|---|---|
 | 🔍 Classify Changes | `tools/verify/ci_paths.py` on the diff | each job below runs only when the diff touches its inputs (the map is `JOB_PREFIXES` there); a skipped job is a grey check, not a pass. No usable diff (a manual run) and workflow, Makefile and `scripts/` changes run everything; `make ci` locally still runs everything |
-| 🧪 Gates — make reach | `make reach RUN=1 KEEP=1` | the gates the diff reaches, on the stock 1.40C fetched into the runner (Ubuntu) |
+| 🗺️ Plan Gates | `reach.py --json --jobs 3` | the units the diff's gates split into; no firmware |
+| 🧪 Gates — `<unit>` | `make reach RUN=1 KEEP=1 JOBS=3 REACHARGS='--only "<unit>"'` | one unit of the plan, on the stock 1.40C fetched into its own runner (Ubuntu) |
+| 🧪 Gates — make reach | `needs` the two above | green when the plan ran and every unit passed (or the plan had none); the one check that stands for all of them |
 | ✅ Acceptance Runner Tests | `make test-acceptance` | the runner refuses skipped, failed, incomplete and over-budget evidence; `reach` routes as documented; the shard runner covers the recipe |
 | 🎛️ DSP Toolchain — dsp56300 | `make ci-dsp` | the vendored DSP emulator at its pin takes our patch, builds, passes upstream's runner; `dsp_asm` emits the one-word displaced move |
 | 🔌 ColdFire Port Unit Tests | `make ci-emu` | `ot_emu` builds on both hosts (the fork unshare has a macOS and a Linux path) and passes `emac` and `periph` |
 | 📚 Docs and Links | `make verify-docs` | the rendered tables are current, every remix has a README, every link between tracked files resolves |
+
+**Units.** `reach.py --json` prints `matrix`, the plan as units (`entries()`):
+`light` (`verify_docs`, `selftest`, `test-acceptance`, last), one `check-remix
+<remix>` per remix (`check_shards.py --jobs 3` on that runner), and every
+other command as its own unit (`check-shared`, `refhash`, `verify-bus`,
+`identity`, `ci`, ...). `--only <unit>` plans again from the same diff and
+keeps that unit, so the plan job and the unit jobs must pass the same
+`--jobs`. A unit's setup is the whole job's (checkout, caches, `make os`,
+`make recon`, `make emu-setup`, ports from the cache): 60 s on a warm run
+(Gates run 40145893338, 25 Oct 2026). The gate cache and the slots are per
+machine, so a unit gets no hits from another. `identity` queues the checks
+of the remixes it names inside its own unit.
+
+The run's summary page has one section per unit (its `check_shards` and `reach` result tables, and the failure excerpts when a gate failed) and the `Gates — make reach` table of units with result, time and a link to each job.
 
 **A green CI run says nothing about a remix unless `Gates — make reach` ran.**
 Building, booting and playing one needs 1.40C, which that job fetches into

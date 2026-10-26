@@ -18,7 +18,6 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1])); import toolpath  # noqa: E402,F401  (every tools/ dir on sys.path)
 BASE = 0x40000400
-FX2_IDS = 0x400d5fdc                        # build_bus.py's own
 P_FMT_A = 0x0ca
 STOPS = {("SPECTRUM", 7): {0: "LP", 32: "32", 64: "BP", 96: "96", 127: "HP"}}
 BUF = 0x47f00800                 # stock_labels' scratch: above the detour stack
@@ -43,14 +42,16 @@ def main():
     import emu_bringup as emu
     boot = emu.boot(str(IMAGE))
     uc = boot.uc
-    mods = registry.modules()
     remix = registry.remix(name)
+    mods = registry.bound(remix)                 # the remix's own ids
+    import idspace
+    fx2_ids = idspace.fx2_ids(remix)             # build_bus.py's own FX2_IDS
     cloned = [k for k in remix.modules if not mods[k].is_stock
               and mods[k].menu is not None]
     fails, checked = [], 0
     for ci, key in enumerate(cloned):
         m = mods[key]
-        P = rd32(FX2_IDS + m.menu.fx2_id * 4)      # the clone, in ROM or the DRAM runtime
+        P = rd32(fx2_ids + m.menu.fx2_id * 4)      # the clone, in ROM or the DRAM runtime
         # A BLANKED module (hidden, nowhere on FX1) draws no knobs, and the
         # build gives it no label formatters; the firmware
         # printing plain numbers for its selects is correct, not a failure.
@@ -94,7 +95,7 @@ def main():
         if key not in cloned or key in remix.blanked:
             continue
         m = mods[key]
-        P = rd32(FX2_IDS + m.menu.fx2_id * 4)
+        P = rd32(fx2_ids + m.menu.fx2_id * 4)
         fmt = rd32(P + P_FMT_A + slot * 4)
         mode_fmt = rd32(P + P_FMT_A + m.mode_slot * 4)
         for mode in range(m.params[m.mode_slot].count):

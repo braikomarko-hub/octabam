@@ -1,27 +1,29 @@
 # `sidechain-compressor` -- SIDECHAIN_COMPRESSOR
 
-Stock COMPRESSOR with a side-chain KEY: any of T1-T8 can drive its detector. Page 2 adds KEY (OFF or T1-T8), KFLT (the key's filter: 64 bypass, below low-pass, above high-pass), KGN (the key's gain, about -24..+24 dB) and MON (hear the processed key instead), beside stock's RMS.
+Stock COMPRESSOR with a side-chain KEY from any of T1-T8 and a base-width key filter. Page 2 adds MON (hear the processed key instead), KEY (OFF or T1-T8), KGN (the key's gain, about -24..+24 dB), KBAS (the key's high-pass, 18 dB/oct: OFF, 20 Hz-19.6 kHz, shown in Hz) and KWID (the key's low-pass, 12 dB/oct, this many octaves above KBAS: 0.5-9.9 or OFF, shown in octaves; with KBAS OFF a plain low-pass from 20 Hz), beside stock's RMS. The filter isolates the key (a kick's fundamental without its sub-sonic rumble, say), which reduces distortion and keeps the compression smooth at short attack and release settings.
 
 Built from [Zac-Kyoti/octatrack-kyoti-fw](https://github.com/Zac-Kyoti/octatrack-kyoti-fw)
-(submodule `upstream/`, pinned to `8e00275`). `Kind.DSP_EFFECT` with `MenuEntry(replaces="COMPRESSOR", stock_dsp=True)`: the row is COMPRESSOR's and its dispatch entry stays stock's. One linked unit (`patch_sidechain.s`, 338 B; ROM cave or DRAM by the `PLACE` setting, default CAVE: KEY's and KFLT's formatters, KEY's list widget, and `sc_norm`, reached by two `jsr` detours at the first instruction of both page-2 copiers, `0x4000cae8` and its twin `0x40003d1c`: a COMPRESSOR saved on stock firmware, whose hidden slots 8-11 hold stock's defaults `0x7f/0/0/0`, comes up with KEY OFF, KFLT and KGN centred and MON OFF); page-2 slots 8-11 as raw descriptor words; three per-payload `DspHook`s (`sctap`, `scdet`, `moncommit`); the per-core values as `DspSection.subst`; the 48 table words as one `ptable`.
+(submodule `upstream/`, pinned to `554ca1c`). `Kind.DSP_EFFECT` with `MenuEntry(replaces="COMPRESSOR", stock_dsp=True)`: the row is COMPRESSOR's and its dispatch entry stays stock's. Two linked units, in a ROM cave or DRAM by the `PLACE` setting (default CAVE): `patch_sidechain.s` (600 B: MON's, KEY's, KBAS's and KWID's formatters and `sc_norm`, reached by two `jsr` detours at the first instruction of both page-2 copiers, `0x4000cae8` and its twin `0x40003d1c`) and `ui_switch.s` (616 B, shared with VARISPEED: KEY's widget, a 9-position rotary switch like Spectrum's LADR knob in 22.5-degree steps, and KWID's, the stock knob with the link clip to KBAS, which the FX SETUP window does not draw itself); page-2 slots 7-11 as raw descriptor words; four per-payload `DspHook`s (`sctap`, `scdet`, `moncommit`, and `scinit` on COMPRESSOR's init, which resets the key filters' state at r7+$1c..$2d); the per-core values as `DspSection.subst`; the 16 + 49 table words as one `ptable`.
 `upstream/octabam-modules/sidechain-compressor/README.md` is the full description, with what was measured and what was inferred.
+
+## Changed on 22 Oct 2026: the base-width key filter
+
+This version replaces the previous one, whose page 2 was RMS · KEY · KFLT · KGN · MON with a one-knob key filter (KFLT, 6 dB/oct). The new filter isolates the key much better, but page 2 is laid out differently, so **a COMPRESSOR saved with the previous version sounds different** until its knobs are set again: it keeps its KEY; KGN gets the old KFLT value (set it back, 64 is unity), KBAS the old KGN (set the key's high-pass, OFF for none), KWID the old MON (set the key's low-pass, OFF for none), and MON (now slot 7) comes up OFF. A COMPRESSOR saved on stock firmware is not affected. The DSP section grows from 465 to 677 words (see Notes).
 
 ## Measured
 
 - Every build re-links `sc_cf` and compares it with the author's own bytes (`reference`); a difference refuses the build.
-- The cloned COMPRESSOR descriptor equals the author's standalone image's, except the three words that point into `sc_cf`.
-- On both payloads the placed DSP code is the standalone's instruction for instruction, except the two table loads (the KEY FLT load is `lua (r1+$10),r1` + `nop` from the one `ptable` base) and the keybus/MON addresses (below); the 48 table words are identical.
-- The one-pass `sctap` at this manifest's addresses leaves every Y and shared-window word as the two-loop tap of `8b2e3c9` did (`upstream/tools/emu_sc_sctap.py --layout octabam --ref 8b2e3c9`: 0 words differ).
+- `upstream/tools/emu_sc_dsp3.py --layout octabam` (this manifest's addresses): the key filters bit-exact against `upstream/tools/sc_keyfilt.py`, the MON crossfade, the KEY hold, `scinit`.
 - `make check REMIX=sidechain-compressor` (`remixes/test/sidechain-compressor/`) and `make check REMIX=kyoti-mute-sidechain` build and boot the image under the ColdFire port.
+- DSP section 677 words (612 code + the 65-word `ptable`), in SPRING REV's words.
 
 ## On the unit
 
-- 4 Oct 2026, on the author's MKI, in an octabam image with all six KYOTI modules, REC_TRIG_MUTE and this module: COMPRESSOR's two pages; KEY ducking on one core and across cores both ways (T1 to T5, T5 to T1); KFLT, KGN and MON; no reverb cross-talk with DARK or PLATE REV on T7; a muted KEY in every MUTE MODE, and the first kick after PLAY with it muted.
-- Before that: the author's standalone image and the KYOTI V1.0 combined image, on the author's MKI: KEY ducking, MON, a muted KEY with MUTE MODE.
+- 22 Oct 2026, on the author's MKI, in the author's standalone image (`140C_SCKF4`): page 2 and its readouts, a kick fundamental keyed at short attack and release, MON and KEY declick, the load with 1 + 7 and 4 + 4 COMPRESSOR / DJ EQ per core. The author's KYOTI V1.6 image (with MUTE_MODES' SC_KEY) ran on the unit the same day.
+- This version's octabam form has not been flashed. The previous version's ran on the author's MKI on 4 Oct 2026, in an octabam image with all six KYOTI modules and REC_TRIG_MUTE.
 
 ## Notes
 
-- Its DSP section needs donor words: the test remixes give up SPRING REV, as the standalone build does.
-- The keybus and MON words stay at core-private `Y:$7f0-$9ff`, which no FX2 slot reaches. Since `8e00275` the address is a build choice (`@KEYB@`/`@KEYB1@`/`@MONB@`): the author's standalone image puts them in the tail of the first internal FX2 slot, but MINIVERB, GATE VERB and WAVE fill that slot, so this manifest keeps Session 115's layout.
-- Not with BusDelay or BusVerb: its cross-core window (the last `$202` words of each core's half of the shared window) overlaps theirs, and the ledger refuses the pair.
-- The window is also the tail of T7's and T3's FX2 slot, which MINIVERB, GATE VERB (to `+$3EF7`) and WAVE fill. The ledger refuses SIDECHAIN_COMPRESSOR beside those three (#785) and allows it beside every stock effect, which stops short of the window. In the DSP host, MINIVERB on T7 wrote all 514 window words and GATE VERB 250; on the author's MKI (18 Oct 2026) an empty T7 with MINIVERB on FX2 plays a reverb ghost of a loud T5. An effect that stops at `+$3DFD` (`buffer_words` at most 15,870) can sit beside it.
+- The bigger DSP section no longer fits beside EUCLID, SHATTER or TRANSIENT when a remix frees only SPRING REV, nor beside VOID when it frees SPRING REV and PLATE REV (a pairwise survey on `ff9c5f84`, against the previous version); all four fit with all three reverbs freed. No official remix carries this module.
+- The keybus and MON words at core-private `Y:$7f0-$9ff`, and the cross-core window (the last `$202` words of each core's half of the shared window), so it is refused beside BusDelay, BusVerb and WAVE (a pairwise survey on `ff9c5f84`).
+- For a composed caller, `scmonbody` uses a, b, x0, x1, y1, r1, n1 and r3.

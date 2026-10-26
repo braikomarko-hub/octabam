@@ -3,7 +3,7 @@
 The station that dirties or tightens a track: fold, saturate, tilt,
 compress, width, mix.
 
-On stock LO-FI's id 0x1c, FX1 only: an FX2 instance runs as a dry pass
+On id 0x17 (stock LO-FI keeps 0x1c), FX1 only: an FX2 instance runs as a dry pass
 (`Claims(fx1_only=True)`, `verify_character.py`); the FX2 chooser hides the
 row. The chain is fixed: fold → saturate → tilt → compress → width → mix,
 distortion before dynamics. The saturation and compressor laws are

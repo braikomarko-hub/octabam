@@ -221,11 +221,11 @@ def main():
     ok &= good
     print(f"  stock={reached['stock']} page2-live={l}  {'ok' if good else 'FAIL'}")
 
-    # 4. FX1 page 2 via CC 68-73: every track, Character (0x1c)
+    # 4. FX1 page 2 via CC 68-73: every track, Character
     #    on FX1, CC 68 (page-2 slot 6 = SAT, count 3; top left since 16 Sep
     #    2026) value 1 -> lands as 1
     print("CC 68 (FX1 page-2 slot 6) on each track's own channel, FX1 = Character:")
-    CHAR = 0x1c
+    CHAR = registry.bound(registry.remix(FIXTURE_REMIX))["CHARACTER"].menu.fx2_id   # the id the fixture build gave it
     def send1(track, fx1_id, cc, value, channel=3):
         emu.assign_fx2(r, track=track, effect_id=9)             # SEND on FX2, irrelevant here
         uc.mem_write(_part_base(uc) + FX1_ID_OFF + track, bytes([fx1_id]))

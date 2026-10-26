@@ -71,7 +71,8 @@ plus a remix that carries it (`remixes/<name>/remix.py`, or
 (`tools/verify/verify_<name>.py`, named in the manifest's `gates`, run by
 `make check` for every remix that carries the module). Nothing else
 registers it: the registry discovers every `modules/*/manifest.py`, and
-refuses two modules on one key or one FX2 id.
+refuses two modules on one key. A module's `fx2_id` is its preferred id;
+the remix settles clashes (`registry.assign_ids`).
 
 The manifest's `category`, `author`, `author_url`, `proof` and `proof_note`
 are the README's module table (`make docs` renders it and the remix index

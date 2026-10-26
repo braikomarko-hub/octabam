@@ -1,7 +1,7 @@
 """VOID -- scrape: noise or input × audio-rate LFO, then body + drive.
 
 MODE=SCRAPE (Idea A) with one-sample FDBK through DRV (FEED start). Stages:
-src -> am -> body -> fdbk -> sat -> out (always wet). r7 $40..$4f stays
+noise → HPF/COLR → FDBK+DRV → AM → WID → BAL vs dry. r7 $40..$4f stays
 reserved for a longer FEED delay / MODE=VOID later.
 """
 import math as _m
@@ -50,8 +50,8 @@ MODULE = Module(
     author="ilia-murzinov",
     author_url="https://github.com/ilia-murzinov",
     proof=Proof.HARDWARE,
-    proof_note="MKII VOID V9 (COLR 30 Hz..16 kHz, HPF 20 Hz..8 kHz); verify_void 3s rail + two-inst",
-    doc="Input↔noise balance into audio-rate AM, body, soft drive; one-sample AC feedback.",
+    proof_note="MKII LATEST NP / VRCS VJ: SRC LFO|NBR, COLR/HPF main, SHPE/DPTH SETUP, DPTH default 127; verify_void",
+    doc="Input↔noise BAL; LFO/nbr AM + DRV/FDBK on noise only; WID stereo grit.",
     menu=MenuEntry(
         # No free custom FX2 id left in-tree (SHATTER=0x0a, …). PLATE is
         # GATE VERB's. Replace COMB FILTER; DSP still sits in harvested PLATE.
@@ -65,28 +65,30 @@ MODULE = Module(
     params=(
         # ---- page 1 --------------------------------------------------------
         Param(b"BAL", 0, 128, active=True, formatter=_P,
-              doc="input↔noise balance; 0 = full input (default), 127 = full noise"),
+              doc="dry↔noise (0=exact dry, 127=pure noise); AM/DRV/FDBK on noise only"),
         Param(b"RATE", 72, 128, active=True, formatter=_P,
-              doc="LFO rate, exponential 2 Hz .. 200 Hz"),
+              doc="LFO rate; idle when SRC=NBR"),
+        Param(b"COLR", 64, 128, active=True, formatter=_P,
+              doc="noise low-pass after HPF; 127 = open; dry untouched"),
+        Param(b"HPF", 0, 128, active=True, formatter=_P,
+              doc="noise high-pass before COLR; 0 = bypass; dry untouched"),
+        Param(b"DRV", 0, 128, active=True, formatter=_P,
+              doc="soft-clip on noise only (before BAL); 0 = bypass"),
+        Param(b"FDBK", 0, 128, active=True, formatter=_P,
+              doc="one-sample AC feedback on noise only; 0 = off"),
+        # ---- page 2 --------------------------------------------------------
+        # Top: SHPE DPTH WID ; bottom: SRC · · .
+        # SHPE=$c knob; DPTH=$c companion; WID=$d knob; SRC=$d companion.
         Param(b"SHPE", 0, 3, active=True, formatter=_S,
               labels=("SIN", "SQR", "SAW"),
-              doc="LFO shape"),
-        Param(b"DPTH", 100, 128, active=True, formatter=_P,
-              doc="AM depth: 0 = source alone, 127 = source × unipolar LFO"),
-        Param(b"DRV", 0, 128, active=True, formatter=_P,
-              doc="soft-clip after AM+body+FDBK; 0 = bypass (still in the loop)"),
-        Param(b"FDBK", 0, 128, active=True, formatter=_P,
-              doc="one-sample feedback into DRV; 0 = no recirculation"),
-        # ---- page 2 --------------------------------------------------------
-        # Top: COLR HPF NTYP; bottom blank. HPF = companion of $c.
-        Param(b"COLR", 64, 128, active=True, formatter=_P,
-              doc="body low-pass after HPF; 127 = open; turn down to darken"),
-        Param(b"HPF", 0, 128, active=True, formatter=_P,
-              doc="high-pass before COLR; 0 = bypass, turn up to thin"),
-        Param(b"NTYP", 0, 3, active=True, formatter=_S,
-              labels=("WHT", "PINK", "BRWN"),
-              doc="noise colour (heard as BAL rises from full input)"),
-        _BLANK,
+              doc="LFO shape; idle when SRC=NBR"),
+        Param(b"DPTH", 127, 128, active=True, formatter=_P,
+              doc="AM depth on noise (LFO or neighbour envelope); default max"),
+        Param(b"WID", 0, 128, active=True, formatter=_P,
+              doc="noise stereo width; 0=mono; side shares HPF/COLR/DRV"),
+        Param(b"SRC", 0, 2, active=True, formatter=_S,
+              labels=("LFO", "NBR"),
+              doc="AM source: LFO, or previous track keybus envelope (NBR)"),
         _BLANK,
         _BLANK,
     ),
@@ -100,5 +102,5 @@ MODULE = Module(
     harness=Harness(layout_char="M", is_server=False),  # B = MULTIBCOMP; W = RESONATOR; V = DARK
     gates=(Gate("tools/verify/verify_void.py", remix_arg=False),),
     dear={"BAL": 127, "RATE": 127, "SHPE": 2, "DPTH": 127, "DRV": 127,
-          "FDBK": 100, "COLR": 0, "HPF": 127, "NTYP": 2},
+          "FDBK": 100, "COLR": 0, "HPF": 127, "WID": 64},
 )

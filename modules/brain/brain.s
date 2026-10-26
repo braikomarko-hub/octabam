@@ -1508,7 +1508,7 @@ pr_step:
 	jra .L308
 .L331:
 #APP
-| 3168 "modules/brain/brain.c" 1
+| 3169 "modules/brain/brain.c" 1
 	move.w %sr,%d0
 	move.w #0x2700,%sr
 | 0 "" 2
@@ -1527,7 +1527,7 @@ pr_step:
 	jsr sw_out
 	move.l 28(%sp),%d0
 #APP
-| 3171 "modules/brain/brain.c" 1
+| 3172 "modules/brain/brain.c" 1
 	move.w %d0,%sr
 | 0 "" 2
 #NO_APP
@@ -4155,7 +4155,7 @@ snapshot:
 	lea desc,%a5
 	move.l #shadow+12,%d2
 	lea desc+4,%a3
-	move.l #1074618332,%a6
+	lea brain_fx2_ids,%a6
 .L871:
 	mvz.b (%a4),%d4
 	move.l %d4,%d0
@@ -5752,10 +5752,10 @@ trow_load:
 	clr.l %d2
 	muls.l %d3,%d0
 	move.l brain_fx_n,%d4
-	move.l #1074618200,%a3
 	move.l %a2,ld_ref
 	clr.l ld_n
-	lea ld_add,%a4
+	lea brain_fx2_ids,%a4
+	lea ld_add,%a3
 	move.l %d0,%a2
 	add.l #brain_fx+32,%a2
 .L1159:
@@ -5799,9 +5799,10 @@ trow_load:
 	jcc .L1158
 .L1157:
 	mvz.b (%a2),%d0
+	move.l #1074618200,%a0
 	move.l %d0,%d1
 	lsl.l #2,%d1
-	move.l (%a3,%d1.l),%a0
+	move.l (%a0,%d1.l),%a0
 	tst.l %a0
 	jeq .L1153
 	cmp.l (%a0),%d0
@@ -5810,20 +5811,19 @@ trow_load:
 	clr.l -(%sp)
 	move.l %d0,32(%sp)
 	move.l %d1,36(%sp)
-	jsr (%a4)
+	jsr (%a3)
 	addq.l #8,%sp
 	move.l 28(%sp),%d1
 	move.l 24(%sp),%d0
 .L1153:
-	move.l #1074618332,%a0
-	move.l (%a0,%d1.l),%a0
+	move.l (%a4,%d1.l),%a0
 	tst.l %a0
 	jeq .L1155
 	cmp.l (%a0),%d0
 	jne .L1155
 	move.l %d2,-(%sp)
 	mov3q.l #1,-(%sp)
-	jsr (%a4)
+	jsr (%a3)
 	addq.l #8,%sp
 	addq.l #1,%d2
 	moveq #8,%d0
@@ -6364,8 +6364,8 @@ ap_run:
 	mvz.b %d0,%d0
 	mov3q.l #7,%d2
 	cmp.l %d1,%d2
-	jcs .L1251
-	move.l #1074618200,%a0
+	jcc .L1251
+	lea brain_fx2_ids,%a0
 	move.l (%a0,%d0.l*4),%a0
 	tst.l %a0
 	jeq .L1244
@@ -6380,7 +6380,7 @@ ap_run:
 	jlt .L1239
 	jra .L1238
 .L1251:
-	move.l #1074618332,%a0
+	move.l #1074618200,%a0
 	move.l (%a0,%d0.l*4),%a0
 	tst.l %a0
 	jne .L1279
@@ -6594,7 +6594,7 @@ part_meta:
 	mvz.b (%a0,%d2.l),%d6
 	btst #0,%d0
 	jeq .L1317
-	move.l #1074618332,%a0
+	lea brain_fx2_ids,%a0
 .L1311:
 	move.l (%a0,%d6.l*4),%a3
 	tst.l %a3
@@ -11866,7 +11866,7 @@ build_part_page:
 	move.w %d5,16(%a2,%d0.l)
 	tst.l %a1
 	jeq .L2401
-	move.l #1074618332,%a1
+	lea brain_fx2_ids,%a1
 .L2360:
 	move.l (%a1,%d1.l*4),%a1
 	tst.l %a1
@@ -14976,7 +14976,7 @@ sc_build:
 	mvz.b (%a0,%d6.l),%d0
 	tst.b %d4
 	jeq .L2809
-	move.l #1074618332,%a0
+	lea brain_fx2_ids,%a0
 .L2554:
 	move.l (%a0,%d0.l*4),%a1
 	tst.l %a1
@@ -15484,7 +15484,7 @@ sc_build:
 	jra .L2753
 .L2759:
 #APP
-| 3168 "modules/brain/brain.c" 1
+| 3169 "modules/brain/brain.c" 1
 	move.w %sr,%d6
 	move.w #0x2700,%sr
 | 0 "" 2
@@ -15516,7 +15516,7 @@ sc_build:
 	clr.l -(%sp)
 	jsr (%a6)
 #APP
-| 3171 "modules/brain/brain.c" 1
+| 3172 "modules/brain/brain.c" 1
 	move.w %d6,%sr
 | 0 "" 2
 #NO_APP
@@ -15697,7 +15697,7 @@ sc_build:
 	jsr (%a6)
 	move.l %a2,%a4
 #APP
-| 3171 "modules/brain/brain.c" 1
+| 3172 "modules/brain/brain.c" 1
 	move.w %d6,%sr
 | 0 "" 2
 #NO_APP
@@ -16302,7 +16302,7 @@ ted_adjust:
 	move.l %d0,16(%sp)
 	tst.l %a0
 	jeq .L3275
-	move.l #1074618332,%a1
+	lea brain_fx2_ids,%a1
 	move.l 32(%sp),%a0
 .L3277:
 	move.l %a0,%d0

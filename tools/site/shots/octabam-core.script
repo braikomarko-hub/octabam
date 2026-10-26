@@ -1,4 +1,4 @@
-# octabam-core: menu, BRAIN screens, kits, tuner
+# octabam: menu, BRAIN screens, kits, tuner
 # Walk (measured, probe-walk boot): PROJ opens MAIN MENU; DOWN x4, RIGHT
 # enters the BRAIN pane; YES on a row opens its screen; NO from a screen
 # returns to the pane with the cursor kept; NO in the pane closes the menu.

@@ -53,7 +53,7 @@ MODULE = Module(
     proof=Proof.HARDWARE, proof_note="Ignorato's MKII, images OCTABAM2 and OCTABAM3 (remix transient), 3 Oct 2026",
     doc="Transient shaper: ATCK and SUST reshape onsets and tails, level-independent.",
     menu=MenuEntry(
-        fx2_id=0x0f,
+        fx2_id=0x0a,
         donor_desc=0x400d58b8,        # DARK REV
         abbr=b"TRNS",
         fullname=b"TRANSIENT",      # all caps, as the stock names

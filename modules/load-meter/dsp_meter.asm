@@ -63,7 +63,7 @@
 ;
 ; A core's block: +0 the start stamp, +1 busy, +2 period, +3 OTOP's start
 ; stamp, +4 OTOP's next cost cell, +5 armed ($5a5a5a), +6 frames (core 0:
-; counted by the publish); core 0's at $37F10, core 1's at $37F18; core 0's
+; counted by the publish, wrapping at 2^23); core 0's at $37F10, core 1's at $37F18; core 0's
 ; publish keeps each record's running sum in b and lm_three's scratch in x1;
 ; +$10 to +$12 are unused.
 ;
@@ -97,6 +97,7 @@ lm_start:
         move    a,x:(r1+0)
         move    #>$5a5a5a,x0
         move    x0,x:(r1+5)
+; LM_FRAME0
         move    a,x:>$ffff8e            ; TLR0 = 0
         move    #>$ffffff,x0            ; TCPR0 all ones
         move    x0,x:>$ffff8d
@@ -211,6 +212,8 @@ lm_pub:
         bsr     lm_low                  ; publishes the slot
         move    x:(r1+6),a              ; frames
         add     #<$1,a
+        and     #>$7fffff,a             ; wrap at 2^23: with bit 23 set the next load sign-extends A2, and
+                                        ;   `and #>$f` leaves it, so `move a,n1` limits n1 to $800000
         move    a1,x:(r1+6)
         lua     (r1+$30),r1             ; the 16 cost cells, contiguous from $37F40
         move    x:(r1+n1),a             ; the cost

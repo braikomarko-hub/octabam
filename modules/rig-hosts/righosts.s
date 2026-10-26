@@ -36,7 +36,6 @@
 | the firmware create one; its live ids read FX1 0 x8, FX2 6 9 9 9 7 9 9 8.
 
         .include "remix.inc"           | ID_DELAY, ID_VERB, ID_SEND, ID_ECHO
-        .set    FX2_IDS, 0x400d5fdc    | id -> descriptor P (build_bus.py FX2_IDS)
         .set    IDS_NEXT, 0x40005696
         .set    P1_NEXT,  0x4000583a
         .set    P2_NEXT,  0x4000584a

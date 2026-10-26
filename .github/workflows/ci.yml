@@ -1,7 +1,9 @@
 # Most jobs run without Elektron bytes. `gates` downloads the 1.40C from
 # Elektron's site (scripts/fetch-os.sh, zip hash pinned) into the runner's
-# working tree on every run and runs `make reach RUN=1 KEEP=1`; the bytes are
-# not cached, not uploaded as an artifact and not printed. It runs for pushes
+# working tree on every run and runs the gates `make reach` plans, one unit
+# per runner (`plan` lists the units, `gates` is the matrix over them,
+# `gates-result` is the one check that stands for all of them); the bytes
+# are not cached, not uploaded as an artifact and not printed. It runs for pushes
 # to main and for every pull request, fork PRs included: a fork PR's code runs
 # with the firmware on the runner's disk, and the repository's approval policy
 # for fork PR workflows (first_time_contributors) decides who is held first.
@@ -56,18 +58,71 @@ jobs:
           fi
           python3 tools/verify/ci_paths.py --base "$base" --github-output >> "$GITHUB_OUTPUT"
 
-  gates:
-    # make reach RUN=1 KEEP=1 against the stock 1.40C fetched into this
-    # runner. The caches hold the toolchain, the dsp56300 build, the ColdFire
-    # port and compiler output; no cache or upload step touches downloads/ or
-    # out/ (the stock OS and what is derived from it).
-    name: 🧪 Gates — make reach
+  plan:
+    # The gates this diff reaches, as the units that run on a runner each
+    # (tools/verify/reach.py --json: `matrix`). Runs no firmware.
+    name: 🗺️ Plan Gates
     needs: classify
     if: >-
       (github.event_name == 'push' || github.event_name == 'pull_request')
       && needs.classify.outputs.reach == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: true
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      # --jobs is the shards per remix on a runner; the `gates` job passes the
+      # same value, because --only plans again and the two plans must agree
+      - name: 🗺️ Plan
+        id: plan
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          python3 tools/verify/reach.py --json --jobs 3 --base "$base" > plan.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          m = json.load(open("plan.json"))["matrix"]
+          print("matrix=" + json.dumps([{"name": e["name"]} for e in m]))
+          print(f"count={len(m)}")
+          PY
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          m = json.load(open("plan.json"))["matrix"]
+          print("| unit | commands |\n|---|---|")
+          for e in m:
+              print(f"| {e['name']} | " + "<br>".join(f"`{c}`" for c in e["commands"]) + " |")
+          PY
+
+  gates:
+    # One unit of the plan (make reach --only) against the stock 1.40C fetched
+    # into this runner. The caches hold the toolchain, the dsp56300 build, the ColdFire
+    # port and compiler output; no cache or upload step touches downloads/ or
+    # out/ (the stock OS and what is derived from it).
+    name: 🧪 Gates — ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       OS_HASH_STRICT: '1'
       # no PGO training in CI (tools/emu/port_store.py)
@@ -173,14 +228,39 @@ jobs:
           path: .git/octabam-port
           key: port-${{ steps.port.outputs.key }}
 
+      # the unit's name goes through the environment: it can carry a remix name
       - name: 🧪 Run Gates
+        env:
+          UNIT: ${{ matrix.name }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="origin/${{ github.base_ref }}"
           else
             base="${{ github.event.before }}"
           fi
-          make reach RUN=1 KEEP=1 BASE="$base"
+          set -o pipefail
+          make reach RUN=1 KEEP=1 JOBS=3 BASE="$base" REACHARGS='--only "'"$UNIT"'"' 2>&1 | tee reach.log
+
+      # the unit's result tables and failure excerpts on the run's summary
+      # page, under its name
+      - name: 📝 Unit Summary
+        if: always()
+        env:
+          UNIT: ${{ matrix.name }}
+        run: |
+          [ -f reach.log ] || exit 0
+          {
+            echo "### 🧪 $UNIT"
+            echo '```'
+            awk '/^check_shards: results/ {p=1} p && /^$/ {p=0} p' reach.log
+            sed -n '/^reach: results/,$p' reach.log
+            echo '```'
+            if grep -qE '^(check_shards: .* failed \(exit|  \| )' reach.log; then
+              echo '```'
+              grep -E '^(check_shards: .* failed \(exit|  \| )' reach.log | head -60
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 🧮 Check ColdFire Port Built
         id: portdone
@@ -194,9 +274,10 @@ jobs:
           path: .git/octabam-port
           key: port-${{ steps.port.outputs.key }}
 
+      # one unit saves it: the key is per run and every unit would write 130 MB
       - name: 💾 Save Compiler Cache
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: always()
+        if: always() && strategy.job-index == 0
         with:
           path: ~/.cache/ccache
           key: ccache-${{ runner.os }}-${{ github.run_id }}
@@ -204,6 +285,44 @@ jobs:
       - name: 📊 Compiler Cache Statistics
         if: always()
         run: ccache -s || true
+
+  gates-result:
+    # The one check for the gates: green when the plan ran and every unit
+    # passed (or the plan had none).
+    name: 🧪 Gates — make reach
+    needs: [classify, plan, gates]
+    if: >-
+      always()
+      && (github.event_name == 'push' || github.event_name == 'pull_request')
+      && needs.classify.outputs.reach == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - name: 🧮 Gate Results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          PLAN: ${{ needs.plan.result }}
+          GATES: ${{ needs.gates.result }}
+          COUNT: ${{ needs.plan.outputs.count }}
+        run: |
+          echo "plan: $PLAN, units: $COUNT, gates: $GATES"
+          {
+            echo "### 🧪 Gates"
+            echo "plan: $PLAN, units: $COUNT, gates: $GATES"
+            echo
+            echo "| unit | result | time |"
+            echo "|---|---|---|"
+            gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" --jq '
+              .jobs[] | select(.name | startswith("🧪 Gates — ")) | select(.name != "🧪 Gates — make reach")
+              | "| [\(.name | ltrimstr("🧪 Gates — "))](\(.html_url)) | \(.conclusion // .status) | "
+                + "\(if .completed_at then ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)) else 0 end) s |"' || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$PLAN" = success ] || exit 1
+          [ "$GATES" = success ] || { [ "$COUNT" = 0 ] && [ "$GATES" = skipped ]; }
 
   acceptance-runner:
     name: ✅ Acceptance Runner Tests (${{ matrix.os }})

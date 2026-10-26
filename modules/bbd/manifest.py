@@ -26,6 +26,11 @@ from remix.schema import (Gate, Category, Proof, BusRole, Claims, Detour, DspSec
 
 FX2_ID = 0x1b
 
+
+def id_inc(modules, remix):
+    """BBD's id in this remix (`registry.assign_ids`), for kill.s."""
+    return f"        .set    BBD_ID, {modules['BBD'].menu.fx2_id}\n"
+
 MODULE = Module(
     name="bbd", key="BBD", kind=Kind.DSP_EFFECT,
     category=Category.TRACK, author="JamCones", author_url="https://github.com/JamCones",
@@ -61,7 +66,7 @@ MODULE = Module(
                    bus_role=BusRole.NONE, ybase=YBase.NEVER,
                    r7_latch_slot=None, gate_label=None),
     claims=Claims(stock_instance_buffer=True, buffer_words=0x203A),   # 8,250: up to the FREQ bandpass at +$2039
-    linked=(Linked("bbd_kill", "modules/bbd/kill.s", defsyms=(("BBD_ID", FX2_ID),)),),
+    linked=(Linked("bbd_kill", "modules/bbd/kill.s", include=id_inc),),
     detours=(Detour(0x40004d0c, bytes.fromhex("302a00380680ffffffec"), "bbd_kill", "bbd_kill",
                     "the stop kill's reverb test: BBD's id too, slot 11 only", pad_to=10),),
     harness=Harness(layout_char=None, is_server=False),

@@ -1,0 +1,154 @@
+# Stress sequences of program changes and CCs replayed under the ColdFire port, spread over runners.
+# Manual only (workflow_dispatch): it is hours of runner time. Every shard fetches the stock 1.40C
+# from Elektron's site (scripts/fetch-os.sh via `make os`, zip hash pinned) into the runner's working
+# tree, as ci.yml's `gates` job does, makes its own fresh project with the firmware under the port
+# (tools/hw/ot_fresh.py: no file from a unit), builds the stimuli projects, optionally has the firmware
+# migrate the stock Parts into Kits (and rotates the assignment), and replays its seeds
+# (tools/hw/ot_fuzz.py port). The bytes derived from the OS (card images, projects, logs) are not
+# uploaded; the artifact is the verdict text and, for each seed, its sequence and MIDI script.
+# A red shard reproduces locally with the same command and seed (docs/contributing/HARDWARE_MATRIX.md).
+name: 🎲 Port stress
+on:
+  workflow_dispatch:
+    inputs:
+      remix:
+        description: 'remix to build and replay on'
+        default: 'octabam'
+      kits:
+        description: 'Kits: none (the template library, empty), identity (migrated), or rotated (each pattern plays the next Kit)'
+        type: choice
+        default: 'rotated'
+        options: ['none', 'identity', 'rotated']
+      profile:
+        description: 'sequence profile'
+        type: choice
+        default: 'pc'
+        options: ['pc', 'transport', 'xf', 'mix']
+      seconds:
+        description: 'seconds of emulated play per seed'
+        default: '60'
+      seeds_per_shard:
+        description: 'seeds each shard replays (they share one load, 3 at a time)'
+        default: '6'
+permissions:
+  contents: read
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  replay:
+    name: 🎲 shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      OS_HASH_STRICT: '1'
+      OCTABAM_PGO: '0'
+      OPTIONAL_TOOLS: '0'
+      EXTRA_PACKAGES: ccache
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_MAXSIZE: 300M
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: true
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: 🔢 Toolchain Versions
+        id: m68kver
+        run: echo "v=$(scripts/m68k-toolchain.sh --versions)" >> "$GITHUB_OUTPUT"
+
+      - name: 💾 Restore Toolchain Cache
+        id: m68k
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.local/m68k-elf
+          key: m68k-elf-${{ runner.os }}-${{ steps.m68kver.outputs.v }}
+
+      - name: 💾 Restore DSP Toolchain Cache
+        id: dsp
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: vendor/dsp56300
+          key: dsp56300-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/vendor.sh', 'scripts/setup.sh', 'tools/patches/dsp56300.patch', 'tools/harness/dsp_host/dsp_host.cpp') }}
+
+      - name: 💾 Restore Compiler Cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: 🚀 Install System Tools and Toolchain
+        run: |
+          echo "$HOME/.local/m68k-elf/bin" >> "$GITHUB_PATH"
+          scripts/setup-linux.sh
+
+      - name: ⬇️ Fetch Stock OS
+        run: make os
+
+      - name: 🔬 Extract Main OS
+        run: make recon
+
+      - name: 📦 Emulator Dependencies
+        run: pip install uv && make emu-setup
+
+      - name: 🔧 Build the ColdFire Port
+        run: make emu-cf
+
+      - name: 🆕 A Fresh Project, Made by the Firmware
+        run: |
+          python3 tools/hw/ot_fresh.py --remix "${{ inputs.remix }}"
+          python3 tools/hw/ot_matrix.py audit out/fresh/"${{ inputs.remix }}"/NOPROJ
+
+      - name: 🧱 The Stimuli Project
+        run: |
+          python3 tools/hw/ot_matrix.py proj out/fresh/"${{ inputs.remix }}"/NOPROJ out/fresh/MXCI "${{ inputs.remix }}" \
+            --stimuli hits,pink,two_tones,sweep --clean
+          case "${{ inputs.kits }}" in
+            identity) python3 tools/hw/ot_kits.py migrate out/fresh/MXCI_01 "${{ inputs.remix }}" ;;
+            rotated)  python3 tools/hw/ot_kits.py migrate out/fresh/MXCI_01 "${{ inputs.remix }}" --rotate 1 ;;
+          esac
+
+      - name: 🎲 Replay the Seeds
+        id: replay
+        run: |
+          per=${{ inputs.seeds_per_shard }}
+          lo=$(( ${{ matrix.shard }} * per + 1 )); hi=$(( lo + per - 1 ))
+          layouts=$(python3 -c "import json;print(len(json.load(open('out/fresh/MXCI_01/OCTABAM_MATRIX.json'))['layouts']))")
+          mkdir -p out/ci_upload
+          set +e
+          python3 tools/hw/ot_fuzz.py port "${{ inputs.remix }}" out/fresh/MXCI_01 ci${{ matrix.shard }} \
+            --seeds $lo-$hi --seconds ${{ inputs.seconds }} --profile ${{ inputs.profile }} --layouts $layouts --jobs 3 \
+            | tee out/ci_upload/summary_${{ matrix.shard }}.txt
+          rc=${PIPESTATUS[0]}
+          cp out/fuzz_port/ci${{ matrix.shard }}/*.json out/fuzz_port/ci${{ matrix.shard }}/*.midi out/ci_upload/ 2>/dev/null || true
+          exit $rc
+
+      # the verdict text and the sequences only: no card image, project, log or anything else derived from the OS
+      - name: 📤 Upload Verdict and Sequences
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-shard-${{ matrix.shard }}
+          path: out/ci_upload
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: 💾 Save Compiler Cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: always()
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-${{ github.run_id }}

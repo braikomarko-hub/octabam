@@ -5,10 +5,10 @@ that carries VOID, COMB is off the FX chooser; a Part saved with stock COMB
 opens without that effect (re-pick VOID or stamp defaults). Code sits in
 harvested **PLATE REV** words.
 
-Grit: track input blended with white / pink / brown noise,
-amplitude-modulated by an audio-rate LFO, then a mild HP/LP body and a soft
-clip. **FDBK** recirculates the post-clip sample into the drive (one-sample
-loop). Always wet — there is no dry/wet MIX.
+Grit: this track’s input blended with white noise (shape with COLR/HPF; WID
+for stereo), amplitude-modulated by an audio-rate LFO or (SETUP **SRC=NBR**)
+the previous track’s keybus envelope. HPF/COLR/DRV/FDBK/AM hit the **noise**
+only; dry is unfiltered. Always wet — no dry/wet MIX.
 
 r7 `$40..$4f` stays reserved for a longer FEED delay later.
 
@@ -16,20 +16,30 @@ r7 `$40..$4f` stays reserved for a longer FEED delay later.
 
 | page | slot | name | range | what it does |
 |---|---|---|---|---|
-| 1 | 0 | BAL | 0–127 | input↔noise; **0 = full input (default)**, 127 = full noise |
-| 1 | 1 | RATE | 0–127 | LFO rate, expo 2 Hz … 200 Hz |
-| 1 | 2 | SHPE | SIN / SQR / SAW | LFO shape |
-| 1 | 3 | DPTH | 0–127 | AM depth; 0 = source alone |
-| 1 | 4 | DRV | 0–127 | soft-clip after AM+body+FDBK; 0 = bypass |
-| 1 | 5 | FDBK | 0–127 | one-sample feedback into DRV; 0 = off |
-| 2 | 6 | COLR | 0–127 | body low-pass ~30 Hz..16 kHz; 127 = open — **turn down to darken** |
-| 2 | 7 | HPF | 0–127 | high-pass before COLR ~20 Hz..8 kHz; **0 = bypass, turn up to thin** |
-| 2 | 8 | NTYP | WHT / PINK / BRWN | noise colour (as BAL rises) |
+| 1 | 0 | BAL | 0–127 | dry↔noise (**0 = exact dry**, 127 = pure noise) |
+| 1 | 1 | RATE | 0–127 | LFO rate; idle when SRC=NBR |
+| 1 | 2 | COLR | 0–127 | noise low-pass ~30 Hz..16 kHz; 127 = open |
+| 1 | 3 | HPF | 0–127 | noise high-pass before COLR; **0 = bypass** |
+| 1 | 4 | DRV | 0–127 | soft-clip on **noise** only; 0 = bypass |
+| 1 | 5 | FDBK | 0–127 | one-sample AC feedback on **noise** only |
+| 2 | 6 | SHPE | SIN / SQR / SAW | LFO shape; idle when SRC=NBR |
+| 2 | 7 | DPTH | 0–127 | AM depth on **noise** only (LFO or nbr uni) |
+| 2 | 8 | WID | 0–127 | mono → stereo grit (2nd noise, same HPF/COLR/DRV) |
+| 2 | 9 | SRC | LFO / NBR | AM source (NBR = previous track keybus) |
+
+**SRC=NBR:** noise opens from the previous track’s SC keybus level and stops
+when that goes quiet (no LFO free-run). Default **SRC=LFO** keeps RATE/SHPE
+on any track. On **track 1**, abs track and FX2 position are both 0, so NBR
+reads `Y:$800` — T1’s own keybus lane (it follows itself). Tracks 2–8 read
+the previous track. AM and DRV/FDBK hit **noise only**:
+`wet = (1−BAL)·dry + BAL·noise''`. BAL=0 is always exact dry; BAL=127 =
+AM’d noise. SETUP **WID**: 0 = mono; >0 = second white → same HPF/COLR/DRV
+(no FDBK) → same AM; `L/R = mid ± (w/2)·side` (mono sum keeps mid/LFO).
 
 Noise peaks around −6 dB at BAL=127. High FDBK + DRV screams (AC feedback —
 a raw one-sample loop was railing to DC / silence past ~FDBK 50 with drive).
 
-SETUP top row: COLR · HPF · NTYP.
+SETUP: SHPE · DPTH · WID / SRC · · .
 
 ## Storage and stock firmware
 
@@ -43,14 +53,15 @@ If the same page bytes are loaded under DARK REV, they read as DARK's knobs:
 |---|---|---|
 | 0 | BAL | TIME |
 | 1 | RATE | SHVG |
-| 2 | SHPE (0–2) | SHVF |
-| 3 | DPTH | HP |
+| 2 | COLR | SHVF |
+| 3 | HPF | HP |
 | 4 | DRV | LP |
 | 5 | FDBK | MIX |
-| 6 | COLR | PRE |
-| 7 | HPF | BAL |
-| 8 | NTYP (0–2) | MONO |
-| 9–10 | (blank) | (blank) |
+| 6 | SHPE (0–2) | PRE |
+| 7 | DPTH | BAL |
+| 8 | WID | MONO |
+| 9 | SRC (0–1) | (blank) |
+| 10 | (blank) | (blank) |
 | 11 | (blank) | MIXF |
 
 Saving on stock with DARK selected writes DARK's names into those slots; the
@@ -59,17 +70,13 @@ and save, before going back to stock.
 
 ## Measured
 
-- `verify_void.py`: passthrough; AM / FDBK vs `void_ref.py`; NTYP pink/brown
-  diverge from white; COLR closed vs open; FDBK+DRV not DC-silent; max-knob
-  true 3 s with rail-hit budget; two FX2 instances each have energy and stay
-  off the rail.
-- Hardware **VOID V9** (21 Oct 2026, tip `dd89e2e2`+): BRAIN `VOID V9.RMX` —
-  same `void.asm` as V8, COLR 30 Hz..16 kHz / HPF 20 Hz..8 kHz tables. V8 did
-  **not** have these tables (still 200 Hz / 2 kHz). See test-remix README for
-  the full knob report.
-- Earlier: **V7** handoff (`y0` mpy); **V8** signed `y1` mpy, old coef tables.
-
-## Sources
-
-- Carrier: WarpFold-style parabola (LOFI2 RING family).
-- Pink: Paul Kellet economy; brown: one-pole leaky integrator.
+- `verify_void.py`: passthrough; AM / FDBK vs `void_ref.py`; WID mono/stereo
+  + 0→1 continuity + L/R anti-corr at full; COLR closed vs open; FDBK+DRV
+  not DC-silent; max-knob true 3 s rail budget; two FX2 instances; SRC=LFO
+  RATE moves / SRC=NBR RATE idle; quiet NBR ≈ silence; BAL0 ignores
+  DRV/FDBK/DPTH/WID.
+- Hardware **LATEST NP** / **VRCS VJ** (22 Oct 2026, Ilia's MKII): current
+  layout — SRC LFO|NBR; COLR/HPF main; SHPE/DPTH SETUP; mid±(w/2) WID;
+  DPTH default 127. See test-remix README.
+- Earlier: **VOID V9** (COLR/HPF tables); **V215 N7** (Y-direct nbr, pre-SRC);
+  **LATEST NN** (noise-only path, pre-SRC WID). Superseded by NP/VJ.

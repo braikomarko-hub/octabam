@@ -8,7 +8,7 @@ Needs your own OS 1.40C extraction at out/raw/section_3_MAIN_OS.bin and the patc
 the space of SPRING REV and PLATE REV, as remixes/test/bbd places it (see DONORS). The image, dumps and renders are deleted.
 
 Gates:
-  source      init leaves r1/n1/m1 alone (verify_initregs.py's scan); cycle_count.py prices the
+  source      init leaves r1/n1/m1 alone (verify_init_regs.py's scan); cycle_count.py prices the
               per-sample loop and four instances fit a core's 3120 usable cycles
   placement   the image builds and BBD sits in the donor run on both payloads, clear of the
               SPRING REV words DARK REV calls
@@ -26,7 +26,7 @@ Gates:
               settles it at least 8 dB under LIM 0 (the governor off)
   isolation   eight instances, four per core, own knobs and input, under -guard 0x4000
               -guard-shared -dirty 0x5a: no stray write or clobber, each identical alone
-  garbage     from an instance block pre-filled with garbage (verify_dirtystate.py's fills),
+  garbage     from an instance block pre-filled with garbage (verify_dirty_state.py's fills),
               silence renders exactly as from a zeroed block (the bucket noise: at most 2 LSB)
               and a tone starts like a zeroed start
   zipper      every continuous knob (HPF too) and TONE in the loop jumped and turned under a steady tone: no block-rate
@@ -229,10 +229,10 @@ def residual_db(dsp, ref, start):
 
 
 def gate_source(g):
-    import verify_initregs
+    import verify_init_regs
     src = (FOLDER / 'bbd.asm').read_text()
-    block = verify_initregs.init_block(src)
-    g.check('source: init leaves r1/n1/m1 alone', bool(block) and not verify_initregs.WRITE.search(block))
+    block = verify_init_regs.init_block(src)
+    g.check('source: init leaves r1/n1/m1 alone', bool(block) and not verify_init_regs.WRITE.search(block))
     registry.remix = lambda _: Remix(name='bbd-verify', doc='cycle count', modules=('BBD',), fallback='NONE')
     import cycle_count
     row = cycle_count.measure('bbd')
@@ -486,7 +486,7 @@ def gate_isolation(g, host, work):
 
 
 def gate_garbage(g, host, work):
-    import verify_dirtystate as vd
+    import verify_dirty_state as vd
     blocks = 600
     silent = write_raw(work / 'g_silent.raw', [(0.0, 0.0)] * (blocks * FR))
     tone = write_raw(work / 'g_tone.raw', [(0.3 * math.sin(2 * math.pi * 438.75 * i / 44100),) * 2 for i in range(blocks * FR)])
@@ -496,7 +496,7 @@ def gate_garbage(g, host, work):
         _, (z,) = host.run([dict(core=0, pos=0, knobs=kn)], blocks, [tone])
         zero[k] = max(abs(v) for v in z[:2 * 256 * FR])
     # The bucket noise, lifted by the compander's warm start, leaves 1-2 LSB for ~0.2 s after a
-    # reset from ANY start: the hygiene test is that garbage changes nothing (verify_dirtystate.py)
+    # reset from ANY start: the hygiene test is that garbage changes nothing (verify_dirty_state.py)
     clean = {k: host.run([dict(core=0, pos=0, knobs=kn)], blocks, [silent])[1][0] for k, kn in enumerate(sets)}
     same, within, loudest = True, True, max(max(map(abs, o)) for o in clean.values())
     for fill in vd.FILLS:

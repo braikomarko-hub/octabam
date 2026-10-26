@@ -1,4 +1,4 @@
-"""stock effects with SIDECHAIN_COMPRESSOR in COMPRESSOR's row: KEY, KFLT, KGN and MON on page 2;
+"""stock effects with SIDECHAIN_COMPRESSOR in COMPRESSOR's row: MON, KEY, KGN, KBAS and KWID on page 2;
 SPRING REV gives up its words for the DSP section, as in the standalone build."""
 
 from remix.schema import Proof, Remix
@@ -6,7 +6,7 @@ from remix.schema import Proof, Remix
 REMIX = Remix(
     name="sidechain-compressor",
     family="mods", proof=Proof.CHECK, proof_note="",
-    doc="stock effects with SIDECHAIN_COMPRESSOR in COMPRESSOR's row: KEY, KFLT, KGN and MON on page 2.",
+    doc="stock effects with SIDECHAIN_COMPRESSOR in COMPRESSOR's row: MON, KEY, KGN, KBAS and KWID on page 2.",
     modules=(
              "FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER",
              "CHORUS", "SPATIALIZER", "COMB FILTER", "SIDECHAIN_COMPRESSOR", "LO-FI",

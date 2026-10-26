@@ -1,0 +1,785 @@
+{
+ "bases": {
+  "octabam-inserts": {
+   "cf_share": 61.45,
+   "core0": 22.45,
+   "core1": 14.87,
+   "reports": {
+    "euc01": [
+     22.45,
+     14.86,
+     61.44
+    ],
+    "ins01": [
+     22.45,
+     14.87,
+     61.43
+    ],
+    "ins02": [
+     22.45,
+     14.86,
+     61.45
+    ],
+    "ins03": [
+     22.45,
+     14.87,
+     61.44
+    ],
+    "mod_i4": [
+     22.44,
+     14.86,
+     61.44
+    ]
+   }
+  },
+  "stock-meter-a": {
+   "cf_share": 59.43,
+   "core0": 22.45,
+   "core1": 14.86,
+   "reports": {
+    "stock_a": [
+     22.45,
+     14.86,
+     59.43
+    ]
+   }
+  },
+  "stock-meter-b": {
+   "cf_share": 59.44,
+   "core0": 22.44,
+   "core1": 14.85,
+   "reports": {
+    "stock_b": [
+     22.44,
+     14.85,
+     59.44
+    ]
+   }
+  }
+ },
+ "effects": {
+  "CHARACTER": {
+   "costs": {
+    "FX1 dear": {
+     "cf_over_base": 0.0,
+     "core0": 8.73,
+     "core1": 8.72,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 def": {
+     "cf_over_base": -0.0,
+     "core0": 0.64,
+     "core1": 0.64,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode1": {
+     "cf_over_base": -0.0,
+     "core0": 0.62,
+     "core1": 0.62,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode1+dear": {
+     "cf_over_base": -0.0,
+     "core0": 8.9,
+     "core1": 8.89,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode2": {
+     "cf_over_base": -0.0,
+     "core0": 0.55,
+     "core1": 0.56,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode2+dear": {
+     "cf_over_base": -0.0,
+     "core0": 7.81,
+     "core1": 7.81,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 dear": {
+     "cf_over_base": 0.0,
+     "core0": 8.73,
+     "core1": 8.72,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 0.64,
+     "core1": 0.64,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode1": {
+     "cf_over_base": 0.1,
+     "core0": 0.62,
+     "core1": 0.62,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode1+dear": {
+     "cf_over_base": 0.1,
+     "core0": 8.9,
+     "core1": 8.89,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode2": {
+     "cf_over_base": 0.1,
+     "core0": 0.55,
+     "core1": 0.55,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode2+dear": {
+     "cf_over_base": 0.1,
+     "core0": 7.81,
+     "core1": 7.81,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    }
+   }
+  },
+  "CHORUS": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": -0.0,
+     "core0": 6.29,
+     "core1": 6.29,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.1,
+     "core0": 6.29,
+     "core1": 6.29,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "COMB FILTER": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": -0.0,
+     "core0": 2.74,
+     "core1": 2.74,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 2.74,
+     "core1": 2.74,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "COMPRESSOR": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": -0.0,
+     "core0": 2.18,
+     "core1": 2.18,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 2.18,
+     "core1": 2.18,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "DARK REV": {
+   "costs": {
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 5.49,
+     "core1": 5.48,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "DELAY": {
+   "costs": {
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 0.0,
+     "core1": 0.0,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "DJ EQ": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 7.3,
+     "core1": 7.3,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 7.3,
+     "core1": 7.3,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "EQUALIZER": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 4.1,
+     "core1": 4.1,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.1,
+     "core0": 4.1,
+     "core1": 4.1,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "EUCLID": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": 6.8,
+     "core0": 4.87,
+     "core1": 4.86,
+     "remix": "octabam-inserts",
+     "report": "ins03"
+    },
+    "FX1 mode1": {
+     "cf_over_base": 6.4,
+     "core0": 4.72,
+     "core1": 4.72,
+     "remix": "octabam-inserts",
+     "report": "ins03"
+    },
+    "FX1 mode2": {
+     "cf_over_base": 6.6,
+     "core0": 4.72,
+     "core1": 4.72,
+     "remix": "octabam-inserts",
+     "report": "ins03"
+    },
+    "FX1 mode3": {
+     "cf_over_base": 6.6,
+     "core0": 4.72,
+     "core1": 4.72,
+     "remix": "octabam-inserts",
+     "report": "ins03"
+    },
+    "FX2 mode2": {
+     "cf_over_base": 6.7,
+     "core0": 4.72,
+     "core1": 4.72,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 mode3": {
+     "cf_over_base": 6.7,
+     "core0": 4.72,
+     "core1": 4.72,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    }
+   }
+  },
+  "FILTER": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 5.11,
+     "core1": 5.1,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 5.11,
+     "core1": 5.1,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "FLANGER": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": -0.0,
+     "core0": 3.14,
+     "core1": 3.15,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 3.14,
+     "core1": 3.15,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "GATE VERB": {
+   "costs": {
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 7.76,
+     "core1": 7.75,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    }
+   }
+  },
+  "LO-FI": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": -0.0,
+     "core0": 6.66,
+     "core1": 6.66,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 6.66,
+     "core1": 6.66,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "LOFI2": {
+   "costs": {
+    "FX2 dear": {
+     "cf_over_base": 0.3,
+     "core0": 13.63,
+     "core1": 13.62,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.1,
+     "core0": 8.68,
+     "core1": 8.68,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 mode0+dear": {
+     "cf_over_base": 0.3,
+     "core0": 8.73,
+     "core1": 8.72,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 mode1": {
+     "cf_over_base": 0.1,
+     "core0": 13.6,
+     "core1": 13.59,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 mode1+dear": {
+     "cf_over_base": 0.2,
+     "core0": 13.64,
+     "core1": 13.64,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 mode2": {
+     "cf_over_base": 0.1,
+     "core0": 13.58,
+     "core1": 13.58,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    }
+   }
+  },
+  "MODULATION": {
+   "costs": {
+    "FX1 dear": {
+     "cf_over_base": 0.0,
+     "core0": 8.66,
+     "core1": 8.65,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 0.24,
+     "core1": 0.24,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode0": {
+     "cf_over_base": 0.0,
+     "core0": 7.21,
+     "core1": 7.21,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode0+dear": {
+     "cf_over_base": 0.0,
+     "core0": 7.21,
+     "core1": 7.21,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode1": {
+     "cf_over_base": 0.0,
+     "core0": 8.76,
+     "core1": 8.75,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode1+dear": {
+     "cf_over_base": 0.0,
+     "core0": 8.76,
+     "core1": 8.75,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode2": {
+     "cf_over_base": 0.0,
+     "core0": 8.96,
+     "core1": 8.95,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode2+dear": {
+     "cf_over_base": -0.0,
+     "core0": 8.96,
+     "core1": 8.95,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode3": {
+     "cf_over_base": 0.0,
+     "core0": 7.93,
+     "core1": 7.93,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode3+dear": {
+     "cf_over_base": 0.0,
+     "core0": 7.93,
+     "core1": 7.93,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX1 mode4": {
+     "cf_over_base": 0.0,
+     "core0": 8.66,
+     "core1": 8.65,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 dear": {
+     "cf_over_base": 0.1,
+     "core0": 8.66,
+     "core1": 8.65,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 0.25,
+     "core1": 0.25,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode0": {
+     "cf_over_base": -0.0,
+     "core0": 7.21,
+     "core1": 7.21,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode0+dear": {
+     "cf_over_base": -0.0,
+     "core0": 7.21,
+     "core1": 7.21,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode1": {
+     "cf_over_base": 0.1,
+     "core0": 8.76,
+     "core1": 8.75,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode1+dear": {
+     "cf_over_base": 0.1,
+     "core0": 8.76,
+     "core1": 8.75,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode2": {
+     "cf_over_base": 0.1,
+     "core0": 8.96,
+     "core1": 8.95,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode2+dear": {
+     "cf_over_base": 0.1,
+     "core0": 8.96,
+     "core1": 8.95,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode3": {
+     "cf_over_base": 0.1,
+     "core0": 7.93,
+     "core1": 7.93,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode3+dear": {
+     "cf_over_base": 0.1,
+     "core0": 7.93,
+     "core1": 7.93,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    },
+    "FX2 mode4": {
+     "cf_over_base": 0.0,
+     "core0": 8.66,
+     "core1": 8.65,
+     "remix": "octabam-inserts",
+     "report": "mod_i4"
+    }
+   }
+  },
+  "PHASER": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 5.19,
+     "core1": 5.18,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.1,
+     "core0": 5.18,
+     "core1": 5.18,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "PLATE REV": {
+   "costs": {
+    "FX2 def": {
+     "cf_over_base": -0.1,
+     "core0": 5.27,
+     "core1": 5.27,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "SPATIALIZER": {
+   "costs": {
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 1.28,
+     "core1": 1.28,
+     "remix": "stock-meter-a",
+     "report": "stock_a"
+    },
+    "FX2 def": {
+     "cf_over_base": -0.0,
+     "core0": 1.28,
+     "core1": 1.28,
+     "remix": "stock-meter-a",
+     "report": "stock_a"
+    }
+   }
+  },
+  "SPECTRUM": {
+   "costs": {
+    "FX1 dear": {
+     "cf_over_base": -0.0,
+     "core0": 7.08,
+     "core1": 7.08,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 0.53,
+     "core1": 0.53,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode0+dear": {
+     "cf_over_base": -0.0,
+     "core0": 6.55,
+     "core1": 6.55,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode1": {
+     "cf_over_base": -0.0,
+     "core0": 4.78,
+     "core1": 4.78,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode1+dear": {
+     "cf_over_base": -0.0,
+     "core0": 4.73,
+     "core1": 4.73,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode2": {
+     "cf_over_base": -0.0,
+     "core0": 7.9,
+     "core1": 7.9,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode2+dear": {
+     "cf_over_base": -0.0,
+     "core0": 7.9,
+     "core1": 7.9,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX1 mode3": {
+     "cf_over_base": -0.0,
+     "core0": 7.13,
+     "core1": 7.14,
+     "remix": "octabam-inserts",
+     "report": "ins02"
+    },
+    "FX2 dear": {
+     "cf_over_base": 0.1,
+     "core0": 7.08,
+     "core1": 7.08,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 0.53,
+     "core1": 0.53,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode0+dear": {
+     "cf_over_base": 0.0,
+     "core0": 6.55,
+     "core1": 6.55,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode1": {
+     "cf_over_base": 0.1,
+     "core0": 4.78,
+     "core1": 4.78,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode1+dear": {
+     "cf_over_base": 0.1,
+     "core0": 4.73,
+     "core1": 4.73,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode2": {
+     "cf_over_base": 0.1,
+     "core0": 7.9,
+     "core1": 7.9,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode2+dear": {
+     "cf_over_base": 0.1,
+     "core0": 7.9,
+     "core1": 7.9,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 mode3": {
+     "cf_over_base": 0.1,
+     "core0": 7.13,
+     "core1": 7.13,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    }
+   }
+  },
+  "SPRING REV": {
+   "costs": {
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 6.38,
+     "core1": 6.38,
+     "remix": "stock-meter-b",
+     "report": "stock_b"
+    }
+   }
+  },
+  "TRANSIENT": {
+   "costs": {
+    "FX1 dear": {
+     "cf_over_base": 0.0,
+     "core0": 5.32,
+     "core1": 5.31,
+     "remix": "octabam-inserts",
+     "report": "ins03"
+    },
+    "FX1 def": {
+     "cf_over_base": 0.0,
+     "core0": 5.32,
+     "core1": 5.31,
+     "remix": "octabam-inserts",
+     "report": "ins03"
+    },
+    "FX2 dear": {
+     "cf_over_base": 0.0,
+     "core0": 5.32,
+     "core1": 5.32,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    },
+    "FX2 def": {
+     "cf_over_base": 0.0,
+     "core0": 5.32,
+     "core1": 5.31,
+     "remix": "octabam-inserts",
+     "report": "ins01"
+    }
+   }
+  }
+ },
+ "limit": 0.95,
+ "slots_per_kind": 4
+}

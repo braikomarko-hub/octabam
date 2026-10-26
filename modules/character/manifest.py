@@ -62,8 +62,7 @@ MODULE = Module(
     proof=Proof.HARDWARE, proof_note="Sam's MKII",
     doc="FX1 station: fold, saturation, tilt, compressor, width.",
     menu=MenuEntry(
-        fx2_id=0x1c,
-        replaces="LO-FI",
+        fx2_id=0x17,
         donor_desc=0x400d58b8,        # DARK REV: 12 active slots, selects 7/9/11
         abbr=b"CHAR",
         fullname=b"Character",

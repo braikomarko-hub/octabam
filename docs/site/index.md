@@ -25,9 +25,8 @@ damage to your Octatrack.
 
 | Remix | What you get |
 |---|---|
-| [Octabam Core](remix-core.md) | The core features on the 14 stock effects. |
-| [Octabam Inserts](remix-inserts.md) | The core features plus seven effects that run on any track. |
-| [Octabam Bus](remix-bus.md) | The core features plus a shared delay and reverb bus and three FX1 effects. |
+| [Octabam](remix-octabam.md) | The core features, the 14 stock effects and five more effects that run on any track. |
+| [Octabam Bus](remix-bus.md) | The core features plus a shared delay and reverb bus, three more FX1 effects and ten stock effects on FX1. |
 
 ## Everyday use
 

@@ -42,7 +42,9 @@ played, and switched away again, so the chip runs code in the
 exception-vector slots and takes the bridge jump between two runs.
 
 The top of P is free. ✅ Measured 29 Sep 2026: the core's default map gives
-8K words of P (`0x2000`); payload A's code ends at `0x01fdf` (33 words
+8K words of P (`0x2000`; and 25 Oct 2026 on the unit: a word written at
+`P:0x2000`, `0x2100`, `0x2400`, `0x2800`, `0x3000` or `0x3800` does not read back,
+while the spare `P:0x1fe0` does, `modules/pextprobe`); payload A's code ends at `0x01fdf` (33 words
 spare, `0x01fdf..0x01fff`), payload B's at `0x01d9f` (609). Stock's low P
 is full: A loads all 8,159 words in 66 records, B all 7,583 in 46, with no
 holes. No record covers the spare words, and growing payload A's blob in
@@ -83,6 +85,88 @@ poke, a grown table) are `Detour`, `Poke`, `TableGrow`, wired by symbol;
 stock bytes a module relies on without writing are a `Keep`.
 `tools/remix/ledger.py` refuses two modules that claim one byte before
 a byte is written.
+
+## Code in the shared window (measured 25 Oct 2026, unmeasured where marked)
+
+A DSP core's P ends at `P:0x1fff` on the default map (`DSP.md` section 3), so
+code that is not in the image's P records has to run from the shared window,
+`P:0x30000..0x3ffff`. ✅ On the unit (PEXT PROBE v2, image P2, 25 Oct 2026,
+`modules/pextprobe`): each core wrote a three-word routine (`move #>$a5a5a5,x0`
+/ `rts`) at `P:0x30100`, `0x35900`, `0x36300`, `0x36800`, `0x37000`, `0x37800` and
+`0x37e00`, called it with `jsr (r5)` and read `x0` back: seven of seven, on core 0
+(track 5) and on core 1 (track 1), so core 1 runs code that sits in payload A's
+half. The window is one memory: the words are visible to both cores, so one copy
+of a routine serves both.
+
+Which words are free, from `tools/remix/dsp_ranges.py` (the ledger's claims, not a
+measurement):
+
+| remix | payload A's half `0x30000..0x37fff` | payload B's half `0x38000..0x3ffff` |
+|---|---|---|
+| `octabam-bus` | free: `0x30048..0x30800` (1,976 words), `0x35800..0x36000` (2,048), `0x36200..0x37f00` (7,424); 11,448 in all. Owned: stock staging `0x30000..0x30048`, BusVerb `0x30800..0x35800`, the bus scratch `0x36000..0x36200`, the mailbox `0x37f00..0x37f10`, LOAD METER's figures `0x37f10..0x37f50` | BusDelay's LineL, all of it |
+| `octabam-inserts` | MODULATION and GATE VERB claim the whole half as the allocator's FX2 buffers (`Claims.stock_instance_buffer`); the tail a given effect leaves unused is not in the ledger | the same |
+
+Not measured: the cost of running an effect from the window (`CHIP.md` records one wait
+state as P against none as X or Y, and contention per 8 K block when both cores use the
+same block), and whether the stock effects a remix keeps use any of the words
+the ledger shows as free.
+
+The other lever in `CHIP.md` is the OMR memory switch (MS, MSW1:MSW0), which would give
+a core 16 K, 24 K or 32 K words of P at the cost of Y (48 K, 40 K, 32 K, 24 K);
+nothing writes OMR in either payload and it has not been tried. The bus remix's
+BusVerb and BusDelay own `Y:0x4000..0xc000` on each core.
+
+## The 64-id layout
+
+`Remix.id_space = 64` (`tools/build/idspace.py`). The build works on the stock
+layout throughout, writes the tables it grows into a virtual window, and
+`idspace.convert` turns the finished image into this layout:
+
+- Each payload gets one more X load record at `X:0x8da0` (129 words:
+  INIT[64], PROC[64], a spare), appended before its terminator (+396 B each).
+  The six `move x:(r1+$215|$235),r2` words of the dispatcher (A `P:0x4b4`,
+  `0x4cb`, `0x4ce`, `0x4ea`, `0x501`, `0x504`; B `0x2a9`, `0x2c0`, `0x2c3`,
+  `0x2df`, `0x2f6`, `0x2f9`) are repointed. The old record stays, holding the
+  entries for ids below 32, so tools that read `X:0x215` see them.
+- B moves by A's growth. The boot copy sites take the new lengths and starts
+  (`0x40000478`, `0x4000048a`, `0x400004d6`: A; `0x400004ac`, `0x400004fa`: B;
+  `0x400004b2`, `0x40000502`, `0x40001ed4`: B's start). The image keeps its
+  size: B's end now covers the head of the SRAM-init image (`0x401086f4`
+  onward), whose first 792 bytes are zero but for eight at offset `0xe8`. The
+  routine at `0x4000f938` that copies that image to SRAM is replaced by a
+  60-byte cave at `0x400d797c` that zeroes the covered head, writes the eight
+  bytes and copies from B's new end.
+- `FX2_IDS` and `ID2POS` are written at `0x400d79bc` and `0x400d7abc` (256 B
+  each, just below the long chooser list) and the nine stock `lea` sites that
+  read them (`idspace.LEA_SITES`) are repointed. The three regions are
+  reserved: the build ends its caves at `0x400d797c`. FX1's tables stay at
+  their stock addresses.
+
+Measured in the port (22 Oct 2026): the image boots and loads a project as
+stock does; id `0x25` poked into T1 makes core 1 run BBD's process entry every
+frame with `r1 = 0x25`; the firmware's resolver `0x40031da4` returns BBD's
+descriptor for it; `make check REMIX=ids64` passes. Not measured: a boot on
+hardware, that `X:0x8da0..0x8e21` is physical X RAM on the chip (X above
+`0x8d8b` holds no loaded record today and `docs/firmware/DSP.md` section 7
+says high X is not usable memory), the chooser and UI with ids of 32 or more,
+and the FX1 side. A 62-byte per-frame SRAM buffer at `0x800017d6` differs
+between the stock and the grown image after the same emulated time (the stock
+image is deterministic; the cause was not confirmed).
+
+Hardware, in this order (each step isolates one unknown; none has been run):
+
+1. `X:0x8da0..0x8e20` is X RAM. `XBUS=1 XPROBE=1 XPROBE_SRC=dsp/xmem_probe_ids64.asm
+   REMIX=bus python3 tools/build/build_bus.py` builds a stock-layout image whose
+   REVERB SERVER is `dsp/xmem_probe_ids64.asm`: half volume on a track carrying
+   it (T5-T8) is both blocks good, LEFT silent is the 129-word block bad, RIGHT
+   silent is the 1,024 words above it bad. The probe builds; it has not been
+   rendered.
+2. The grown image boots: `make image REMIX=ids64`, load a project, play. This
+   exercises the shifted blob chain, the lengths the boot copy takes and the
+   SRAM-init cave.
+3. BBD selected on id `0x25` from the chooser on a track: audible, knobs
+   respond, the stop kill silences it (`kill.s` compares against the id the
+   remix gave it).
 
 ## The free ROM (measured)
 

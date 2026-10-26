@@ -8,12 +8,13 @@
 | slot 11 is 127 otherwise, and 0 there makes it cut to dry and clear its
 | line (bbd.asm).
 
+        .include "remix.inc"                    | BBD_ID
         .text
         .globl  bbd_kill
 
 bbd_kill:
         mvz.w   56(%a2),%d0                     | the track's FX2 id
-        moveq   #BBD_ID,%d1                     | the manifest's fx2_id
+        moveq   #BBD_ID,%d1                     | the id this remix gave BBD
         cmp.l   %d1,%d0
         bne.s   1f
         clr.b   53(%a2)                         | BBD: slot 11 = 0

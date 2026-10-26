@@ -51,7 +51,7 @@
         .set    SCENE_A_OFF, 0x80000006     | nonzero: scene A disabled
         .set    SCENE_B_OFF, 0x80000007
         .set    DESC1,      0x400d5f58      | FX1 descriptor pointers by id
-        .set    DESC2,      0x400d5fdc      | FX2 descriptor pointers by id
+        | DESC2 (FX2 descriptor pointers by id) comes from remix.inc
         .set    DBPTR,      0x46c82456      | long: the Part DB base (UI code)
         .set    PART_DISP,  0x100b14cf      | the part the panel edits
         .set    TRACK_CUR,  0x80000000

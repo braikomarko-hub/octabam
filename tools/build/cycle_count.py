@@ -283,6 +283,24 @@ def _measure_loop(name, src, lines, i):
     if fork and set(fork) != {"begin", "mid", "end"}:
         sys.exit(f"{name}: incomplete MODEFORK markers ({sorted(fork)})")
     fork_lines = set(range(fork["begin"], fork["end"] + 1)) if fork else set()
+    # MODEARM_BEGIN <arm> .. MODEARM_END: a stretch of the body that only some
+    # modes run. Arms are MUTUALLY EXCLUSIVE (a mode runs at most one), and
+    # one arm is the sum of all its stretches; the loop is charged its shared
+    # code plus the worst arm. Unlike a MODEFORK the stretches may be many and
+    # interleaved with shared code (MODULATION's LINE loop: the fixed taps are
+    # FLNG's, the highpass and lift DIM's, each on both channels). Branches
+    # inside a stretch are exempt: they only skip code the span has counted.
+    arm_spans = []                      # (arm, begin line, end line)
+    open_arm = None
+    for si, sl in enumerate(lines):
+        s = sl.strip()
+        if s.startswith("; MODEARM_BEGIN"):
+            open_arm = (s.split()[2], si)
+        elif s.startswith("; MODEARM_END") and open_arm:
+            if i < open_arm[1] and si < end_line:     # this loop's own stretches
+                arm_spans.append((open_arm[0], open_arm[1], si))
+            open_arm = None
+    arm_lines = {j for _a, b, e in arm_spans for j in range(b, e + 1)}
     # A `bsr <label>` in the body is priced AS IF INLINED: the callee's word
     # span (label..rts, straight-line required) is charged at every call site,
     # plus a small constant for the call/return pair. Added when
@@ -340,7 +358,7 @@ def _measure_loop(name, src, lines, i):
                 fwd_ok.add(j)
     bad = [(j + 1, lines[j].strip()) for j in range(i + 1, end_line)
            if j not in shim_lines and j not in fork_lines and j not in bsr_lines
-           and j not in fwd_ok
+           and j not in fwd_ok and j not in arm_lines
            and CONTROL_FLOW.match(lines[j]) and not INNER_LOOP.match(lines[j])]
     if bad:
         print(f"{name}: loop body is not straight-line -- words != cycles here.",
@@ -399,6 +417,11 @@ def _measure_loop(name, src, lines, i):
             inserts.append((si, f"{lbl}:"))
             fork_labels[f"mid{n}"] = lbl
             fork_mid_labels.append(lbl)
+    arm_labels = []
+    for n, (arm, b, e) in enumerate(arm_spans):
+        inserts.append((b, f"__cyc_arm{n}b:"))
+        inserts.append((e, f"__cyc_arm{n}e:"))
+        arm_labels.append((arm, f"__cyc_arm{n}b", f"__cyc_arm{n}e"))
     marked = list(lines)
     for j, txt in sorted(inserts, reverse=True):
         marked = marked[:j + 1] + [txt] + marked[j + 1:]
@@ -458,12 +481,28 @@ def _measure_loop(name, src, lines, i):
         notes.append("fork worst-path (dispatch %dw, alts %s)"
                      % (disp_w, "/".join(f"{w}w" + (f"+{s}roll" if s else "") + (f"+{c}call" if c else "")
                                          for w, s, c in zip(alt_w, alt_sur, alt_call))))
+    arm_cyc = {}
+    if arm_labels:
+        for arm, lb, le in arm_labels:
+            if lb not in syms or le not in syms:
+                sys.exit(f"{name}: assembler dropped a MODEARM label")
+            lo, hi = syms[lb], syms[le]
+            w = hi - lo
+            s = sum(x for at, x in rolls if lo <= at < hi)
+            c = sum(x for at, x in calls if lo <= at < hi)
+            arm_cyc[arm] = arm_cyc.get(arm, 0) + w + s + c
+        # the span priced every arm; a mode runs one
+        cycles -= sum(arm_cyc.values()) - max(arm_cyc.values())
+        notes.append("arms worst-path (%s)" % "/".join(f"{a} {c}" for a, c in sorted(arm_cyc.items())))
     note = ", ".join(notes) if notes else ""
     # every priced path of this loop: the fork's alternatives each on the
     # loop's shared cost, or the loop alone
     if fork_labels:
         shared = cycles - max(alt_cyc)
         modes = [(end_label, f"alt {k + 1}", shared + c) for k, c in enumerate(alt_cyc)]
+    elif arm_cyc:
+        shared = cycles - max(arm_cyc.values())
+        modes = [(end_label, f"arm {a}", shared + c) for a, c in sorted(arm_cyc.items())]
     else:
         modes = [(end_label, "", cycles)]
     return dict(name=name, words=words, cycles=cycles, inner=note,

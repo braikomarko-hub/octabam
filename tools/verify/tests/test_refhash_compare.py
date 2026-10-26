@@ -67,6 +67,31 @@ class Compare(unittest.TestCase):
             "deadbeef00000000000000000000000000000000000000000000000000000000  <report>")
         self.assertEqual(exit_of(BASE, cur), 1)
 
+    def exit_with_logs(self, base_log: str, cur_log: str) -> int:
+        cur = BASE.replace(
+            "ppp0000000000000000000000000000000000000000000000000000000000000",
+            "ppp1111111111111111111111111111111111111111111111111111111111111")
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            (d / "baseline").mkdir()
+            (d / "current").mkdir()
+            (d / "baseline" / "manifest.txt").write_text(BASE)
+            (d / "current" / "manifest.txt").write_text(cur)
+            (d / "baseline" / "plain.log").write_text(base_log)
+            (d / "current" / "plain.log").write_text(cur_log)
+            return C.main([str(d / "baseline" / "manifest.txt"), str(d / "current" / "manifest.txt")])
+
+    def test_rc1_report_differing_only_in_membership_lines_exits_0(self):
+        # a module's `replaces` moves it between "LEFT STOCK" and "not in this remix"
+        base = "refused: no XBUS\n  not in this remix, LEFT STOCK: A, B -- why\n  not in this remix: C -- alias\n"
+        cur = "refused: no XBUS\n  not in this remix, LEFT STOCK: A -- why\n  not in this remix: B, C -- alias\n"
+        self.assertEqual(self.exit_with_logs(base, cur), 0)
+
+    def test_rc1_report_with_another_refusal_reason_exits_1(self):
+        base = "refused: no XBUS\n  not in this remix: C -- alias\n"
+        cur = "refused: something else\n  not in this remix: C -- alias\n"
+        self.assertEqual(self.exit_with_logs(base, cur), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

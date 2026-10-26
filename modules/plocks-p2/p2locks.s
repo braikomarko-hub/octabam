@@ -45,7 +45,7 @@
         .set    ID2_OFF,    0x8ed88
         .set    P2_OFF,     0x8f07e         | part: FX1 page 2 slot 0, +track*30; FX2 at +6
         .set    DESC1,      0x400d5f58
-        .set    DESC2,      0x400d5fdc
+        .include "remix.inc"            | DESC2: the FX2 descriptor table
         .set    ENC_DEFAULT, 0x4003240c
         .set    DIRTY,      0x40027e00
         .set    REDRAW,     0x46c7d244

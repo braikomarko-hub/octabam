@@ -7,10 +7,11 @@ track `PTCH` becomes `QUAN` (the ratio p/q: 1/2 to 2/1). Nothing is emulated: th
 and SPRING REV stays.
 
 Built from [Zac-Kyoti/octatrack-kyoti-fw](https://github.com/Zac-Kyoti/octatrack-kyoti-fw)
-(submodule `upstream/`, pinned to `8fe11df`). `Kind.CF_PATCH`:
+(submodule `upstream/`, pinned to `9b2e35a`). `Kind.CF_PATCH`:
 - the linked unit `vari_cf` (`varispeed.s`; DRAM or a ROM cave by the `PLACE` setting,
   default DRAM). It is VARISPEED_EMUS's source with its switch at 0, read from
-  `../varispeed-emus/` in the same checkout, so the two modules assemble one source;
+  `../varispeed-emus/` in the same checkout, so the two modules assemble one source, with
+  QUAN's rotary switch (`tools/ui_switch.s`, shared with SIDECHAIN_COMPRESSOR) inlined;
 - 16 detours, four pokes and six symbol refs on the STATIC / FLEX descriptors;
 - a STORE client (`vari_store`, `varispeed_store.s`; requires STORE): the PART menu's CLEAR is
   STORE's site (`0x4004a9d0`), so VARISPEED holds its per-track state on `partclear` and lets

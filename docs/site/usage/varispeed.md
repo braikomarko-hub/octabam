@@ -23,6 +23,8 @@ A sample or project tempo outside 30–300 BPM plays as TSTR OFF.
 
 On a VARI track the PTCH knob becomes QUAN, the ratio p/q: 1/2, 2/3, 3/4,
 4/5, 1/1 (the default), 5/4, 4/3, 3/2 or 2/1. One detent moves one ratio.
+The knob is drawn as a nine-position switch: 1/2 points left, 1/1 up and
+2/1 right.
 
 ![The SRC page of a VARI track: PTCH is QUAN, here 3/2.](../../img/varispeed/quan.png)
 

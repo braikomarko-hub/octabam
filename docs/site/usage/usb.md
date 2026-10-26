@@ -45,8 +45,8 @@ at USB high speed only.
 
 ![The end of the USB group: TRACKS, with * AT NEXT BOOT under the list.](../../img/usb/settings-end.png)
 
-A remix can fix a setting. `octabam-core` fixes IN at OFF; `octabam-bus` and
-`octabam-inserts` set it to OFF without fixing it.
+A remix can fix a setting. `octabam` and `octabam-bus` set IN to OFF without
+fixing it.
 
 ### Without BRAIN
 

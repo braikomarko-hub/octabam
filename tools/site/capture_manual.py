@@ -367,7 +367,7 @@ def prepare(remix,project,assignments):
         if len(nested)!=1:
             raise SystemExit(f'{fixture}: no bank*.work and no unique nested project')
         fixture=nested[0]
-    if remix=='octabam-core':
+    if remix=='octabam':
         values=otp.module_defaults(registry.modules()['DELAY'])
         otp.set_fx(fixture,'fx2',1,'DELAY',page=values[:6],page2=values[6:],guard=False)
     if remix=='octabam-bus':
@@ -415,18 +415,18 @@ def main():
     a=ap.parse_args();OUT.mkdir(parents=True,exist_ok=True)
     for group in a.groups:
         assignments=[]
-        if group=='core': jobs=[('octabam-core',capture_core,[])]
+        if group=='core': jobs=[('octabam',capture_core,[])]
         elif group=='midi-loopback':jobs=[('midi-loopback',capture_midi_loopback,[])]
-        elif group=='plocks': jobs=[('octabam-core',capture_plocks,[(1,'fx2','PLATE REV')])]
+        elif group=='plocks': jobs=[('octabam',capture_plocks,[(1,'fx2','PLATE REV')])]
         elif group=='midi-scales':jobs=[('midi-scales',capture_midi_scales,[])]
         elif group=='features':
             # A scratch selection: THR and REC_TRIG_MUTE share a hook and cannot coexist.
             scratch=OUT/'features.py'
-            scratch.write_text('import dataclasses,runpy\nbase=runpy.run_path("remixes/octabam-core/remix.py")["REMIX"]\nREMIX=dataclasses.replace(base,name="manual-features",modules=tuple(k for k in base.modules if k!="REC_TRIG_MUTE")+("REC THRESHOLD","EUCLID FILL","RND NAME","STEM REC"))\n')
+            scratch.write_text('import dataclasses,runpy\nbase=runpy.run_path("remixes/octabam/remix.py")["REMIX"]\nREMIX=dataclasses.replace(base,name="manual-features",modules=tuple(k for k in base.modules if k!="REC_TRIG_MUTE")+("REC THRESHOLD","EUCLID FILL","RND NAME","STEM REC"))\n')
             jobs=[('../out/manual-captures/features',capture_features,[])]
         elif group=='inserts':
-            assignments=[(i+1,'fx1' if i<5 else 'fx2',key) for i,key in enumerate(('SPECTRUM','CHARACTER','MODULATION','TRANSIENT','EUCLID','LOFI2','GATE VERB','DELAY'))]
-            jobs=[('octabam-inserts',capture_fx,assignments)]
+            assignments=[(i+1,'fx1' if i<4 else 'fx2',key) for i,key in enumerate(('SPECTRUM','CHARACTER','MODULATION','TRANSIENT','GATE VERB','DELAY'))]
+            jobs=[('octabam',capture_fx,assignments)]
         elif group=='bus':jobs=[('octabam-bus',capture_bus,[])]
         elif group=='usb':jobs=[('octabam-bus',capture_usb,[])]
         elif group=='octa303':jobs=[('octa303',capture_octa303,[])]

@@ -1,9 +1,14 @@
 """octabam-bus -- the core ColdFire modules plus the delay and reverb bus.
 
-CORE (see octabam-inserts) with the bus effects: BusDelay on T1's FX2,
-BusVerb on T5's FX2, SEND on every other track's FX2, the stock DELAY on T8,
-SPECTRUM, CHARACTER and MODULATION on FX1, TEMPO SYNC, TEMPO BUS, MODE DEFAULTS,
-RIG HOSTS and FX2 LOCK. USB is MAIN CUE.
+CORE (see octabam) with the bus effects: BusDelay on T1's FX2, BusVerb on T5's FX2,
+SEND on every other track's FX2, the stock DELAY on T8, TEMPO SYNC, TEMPO BUS, MODE
+DEFAULTS, RIG HOSTS and FX2 LOCK, and LOFI AMF FIX. USB is MAIN CUE.
+
+FX1 lists SPECTRUM, CHARACTER and MODULATION and ten stock effects (FILTER,
+EQUALIZER, DJ EQ, PHASER, FLANGER, CHORUS, SPATIALIZER, COMB FILTER, COMPRESSOR,
+LO-FI). The stock effects stay in internal P untouched; the servers, SEND, the stations
+and LOAD METER's DSP half run from the shared P window. The three stock reverbs have
+no chooser row: FX2 is locked and BusVerb replaces them.
 """
 
 from remix.schema import Pin, Proof, Remix
@@ -15,20 +20,25 @@ CORE = ("BRAIN", "STORE", "KITS", "MIDI SCENES", "SCENES P2", "PLOCKS P2",
         "SCALE QUANTIZER", "TUNER", "DIRECT_JUMP_KYOTI", "RELOAD_FROM_PROJECT", "RLEN PLEN",
         "ATA WRITE GUARD",
         "LOAD METER")
+STOCK_FX1 = ("FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER", "CHORUS", "SPATIALIZER",
+             "COMB FILTER", "COMPRESSOR", "LO-FI")
 
 REMIX = Remix(
     name="octabam-bus",
-    family="rig", proof=Proof.HARDWARE, proof_note="cursory testing on Sam's MKII (owner report, 16 Oct 2026)",
-    doc="CORE + the delay and reverb bus (BusDelay on T1's FX2, BusVerb on T5's FX2, SEND on every other track's FX2, the stock DELAY on T8) + SPECTRUM, CHARACTER and MODULATION on FX1.",
-    modules=("REVERB SERVER", "DELAY SERVER", "SEND", "SPECTRUM", "CHARACTER", "MODULATION",
+    family="rig", proof=Proof.CHECK, proof_note="",
+    doc="CORE + the delay and reverb bus (BusDelay on T1's FX2, BusVerb on T5's FX2, SEND on every other track's FX2, the stock DELAY on T8) + SPECTRUM, CHARACTER and MODULATION and ten stock effects on FX1.",
+    modules=("LOFI AMF FIX", "REVERB SERVER", "DELAY SERVER", "SEND", "SPECTRUM", "CHARACTER", "MODULATION",
              "TEMPO SYNC", "MODE DEFAULTS", "RIG HOSTS", "TEMPO BUS",
              "DELAY",       # the stock DELAY keeps its chooser row: T8 hosts it
              "FX2 LOCK") + CORE,   # the chooser cannot change any track's FX2
     fallback="SEND",
+    window=(("DELAY SERVER:B", 0x35800), ("SEND", 0x35df0), ("SEND:B", 0x35f00),
+            ("MODULATION", 0x36200), ("SPECTRUM", 0x36820), ("CHARACTER", 0x36da0),
+            ("REVERB SERVER", 0x371a0), ("LOAD METER", 0x37b00), ("LOAD METER:B", 0x37bc0)),
     hidden=("REVERB SERVER", "DELAY SERVER"),
     host_slots=(("DELAY SERVER", 2), ("REVERB SERVER", 2)),
     locked=("REVERB SERVER", "DELAY SERVER"),
-    fx1=("SPECTRUM", "CHARACTER", "MODULATION"),
+    fx1=("SPECTRUM", "CHARACTER", "MODULATION") + STOCK_FX1,
     settings={("octabam.usb", "TRACKS"): "PRE", ("octabam.usb", "MAIN"): 1,
               ("octabam.usb", "CUE"): 1, ("octabam.usb", "MASTER"): 0,
               ("octabam.usb", "IN"): "OFF",

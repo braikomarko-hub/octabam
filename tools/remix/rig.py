@@ -194,8 +194,12 @@ def drawn_as(fx2_id: int, img: bytes | None = None):
         i = p - base + off
         return img[i:i + n].split(b"\0")[0].decode("latin1", "replace")
 
-    p2 = rd32(_FX2_IDS + fx2_id * 4)
-    p1 = rd32(_FX1_IDS + fx2_id * 4)
+    import idspace
+    grown = idspace.layout_of(img) == 64       # a 64-id image keeps its FX2 tables elsewhere
+    fx2_ids = idspace.FX2_IDS64 if grown else _FX2_IDS
+    fx2_id2pos = idspace.ID2POS64 if grown else _FX2_ID2POS
+    p2 = rd32(fx2_ids + fx2_id * 4)
+    p1 = rd32(_FX1_IDS + fx2_id * 4) if fx2_id < 32 else 0     # FX1's tables hold 32 ids
     desc = p2 if p2 and p2 != _NONE_DESC else p1
     if not desc or desc == _NONE_DESC:
         return None
@@ -215,7 +219,7 @@ def drawn_as(fx2_id: int, img: bytes | None = None):
             "slots": tuple(slots),
             "fx1": (rd32(_FX1_ID2POS + fx2_id * 4)
                     if p1 and p1 != _NONE_DESC else None),
-            "fx2": (rd32(_FX2_ID2POS + fx2_id * 4)
+            "fx2": (rd32(fx2_id2pos + fx2_id * 4)
                     if p2 and p2 != _NONE_DESC else None)}
 
 

@@ -174,7 +174,7 @@ def make_ladder_project(src, dest, remix_name, pattern="A2"):
     sys.path.insert(0, str(HERE.parent)); import toolpath  # noqa: E402,F401
     from remix import registry
     remix = registry.remix(remix_name)
-    mods = registry.modules()
+    mods = registry.bound(remix)               # the remix's own ids
 
     sbank, spat = _pattern_ref(pattern)
     sdata = (src / f"bank{sbank:02d}.work").read_bytes()

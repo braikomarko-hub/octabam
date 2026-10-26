@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1])); import toolpath  # noqa: E402,F401  (every tools/ dir on sys.path)
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -21,7 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 from remix import ledger, registry, schema, state, stock  # noqa: E402
 from remix.schema import (BusRole, CavePatch, Claims, Detour, DramRegion, DspHook,  # noqa: E402
                           DspRange, DspSection, Formatter, Keep, Kind, Linked, MenuEntry,
-                          Module, Param, Poke, SymbolRef, TableGrow, YBase)
+                          Module, Param, Poke, Proof, Remix, SymbolRef, TableGrow, YBase)
 
 
 _PRIORITY = iter(range(100, 1000))      # distinct unless a case sets one
@@ -372,6 +373,66 @@ def main():
         print("  [FAIL] a module on a stock FX2 id (0x0c, EQUALIZER) was accepted")
     except ValueError:
         print("  [PASS] a module on a stock FX2 id is refused")
+
+    # FX2 ids are settled per remix: modules preferring one id do not
+    # refuse each other, one of them moves, and a full id space refuses.
+    from remix.schema import FREE_FX2_IDS
+
+    def _ids(*effects, space=32, fx1=()):
+        mods = {m.key: m for m in effects}
+        r = SimpleNamespace(name="fixture", modules=list(mods), id_space=space, fx1=fx1)
+        out = registry.assign_ids(r, mods)
+        return {k: m.menu.fx2_id for k, m in out.items()}
+
+    got = _ids(_effect("beta", 0x07), _effect("alpha", 0x07))
+    if got != {"ALPHA": 0x07, "BETA": FREE_FX2_IDS[0]}:
+        bad += 1
+        print(f"  [FAIL] two modules preferring 0x07 resolved to {got}")
+    else:
+        print("  [PASS] two modules preferring one FX2 id: the first by key keeps it, the other moves")
+    got = _ids(_effect("alpha", 0x07), _effect("beta", 0x09))
+    if got != {"ALPHA": 0x07, "BETA": 0x09}:
+        bad += 1
+        print(f"  [FAIL] modules preferring distinct ids resolved to {got}")
+    else:
+        print("  [PASS] modules preferring distinct FX2 ids keep them")
+    got = _ids(*[_effect(f"m{i:02d}", 0x07) for i in range(len(FREE_FX2_IDS) + 1)], space=64)
+    if len(set(got.values())) != len(got) or max(got.values()) < 0x20:
+        bad += 1
+        print(f"  [FAIL] a 64-id remix did not spread its modules past 0x1f: {got}")
+    else:
+        print("  [PASS] a 64-id remix gives modules ids above 0x1f")
+    got = _ids(_effect("a", 0x07), _effect("b", 0x07), _effect("c", 0x07), space=64, fx1=("B", "C"))
+    if got != {"A": 0x07, "B": 0x06, "C": 0x09}:
+        bad += 1
+        print(f"  [FAIL] fx1 modules in a 64-id remix resolved to {got}")
+    else:
+        print("  [PASS] fx1 modules in a 64-id remix keep ids below 0x20")
+    for label, kw in (("a pin above 0x1f in a 32-id remix", dict(id_space=32, ids={"ALPHA": 0x25})),
+                      ("a pin on a stock id", dict(id_space=64, ids={"ALPHA": 0x0c})),
+                      ("a pin on a module outside the remix", dict(id_space=64, ids={"NOPE": 0x25})),
+                      ("a pin above 0x1f for a module in fx1", dict(id_space=64, ids={"ALPHA": 0x25}, fx1=("ALPHA",))),
+                      ("two modules pinned to one id", dict(id_space=64, ids={"ALPHA": 0x25, "BETA": 0x25}))):
+        try:
+            Remix(family="effects", proof=Proof.CHECK, proof_note="fixture", name="pins", doc="fixture",
+                  modules=("ALPHA", "BETA"), fallback="NONE", **kw)
+            bad += 1
+            print(f"  [FAIL] {label} was accepted")
+        except ValueError:
+            print(f"  [PASS] {label} is refused")
+    pinned = SimpleNamespace(name="fixture", modules=["ALPHA", "BETA"], id_space=64, fx1=(), ids={"BETA": 0x25})
+    got = registry.assign_ids(pinned, {m.key: m for m in (_effect("alpha", 0x07), _effect("beta", 0x07))})
+    if (got["ALPHA"].menu.fx2_id, got["BETA"].menu.fx2_id) != (0x07, 0x25):
+        bad += 1
+        print("  [FAIL] a pinned id was not honoured")
+    else:
+        print("  [PASS] a pinned id is honoured and the other module keeps its preference")
+    try:
+        _ids(*[_effect(f"m{i:02d}", 0x07) for i in range(len(FREE_FX2_IDS) + 1)])
+        bad += 1
+        print("  [FAIL] more effects than free FX2 ids were accepted")
+    except SystemExit:
+        print("  [PASS] more effects than free FX2 ids is refused")
 
     for label, make in (
             ("a module keeping bytes it pokes",
@@ -903,7 +964,7 @@ def main():
     _rig = ("FILTER", "SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS",
                  "PLATE REV", "SPRING REV", "DARK REV", "COMPRESSOR", "LO-FI",
                  "DJ EQ", "COMB FILTER")
-    _want = {"midi-loopback": (), "midi-scales": (), "mods": (), "ata-write-guard": (), "octabam-core": (), "usb-out-tracks-main-cue": ("PLATE REV",), "usb-out-tracks": (), "usb-out-master": (),
+    _want = {"midi-loopback": (), "midi-scales": (), "mods": (), "ata-write-guard": (), "usb-out-tracks-main-cue": ("PLATE REV",), "usb-out-tracks": (), "usb-out-master": (),
              "usb-out-tracks-post": (),
              "remix-switch": (), "remix-switch-trace": (),   # REMIX SWITCH's park in dead vectors, no region words
              "usb-io-stock14": (),   # USB's RX inject at payload A's tail (DspSection.tail), no region words
@@ -920,10 +981,19 @@ def main():
                                   "quantize-live-rec-toggle", "erase-empty-trigless-locks",
                                   "mute-modes", "kyoti-mute-jump", "kyoti-fixes", "rec-trig-mute",
                                   "euclid-fill", "varispeed", "copy-project",
+                                  "scope",  # SCOPE: ColdFire window, no DSP words
                                   "cxosc", "cxosc-core")},  # CX OSC (+ CORE handoff); ColdFire, no DSP words
+             "trackpatterns": (),   # pgstath's ColdFire module on the stock effects, no DSP words
+             "trackpatterns-core": (),   # TRACK PATTERNS on the core modules and the 14 stock effects, which gives up nothing
              # the twelve io remixes: the IN module's RX inject is placed in SPATIALIZER's words
              **{f"usb-io-{o}-{i}": ("SPATIALIZER",) for o in ("tracks", "tracks-main-cue", "main-cue", "main") for i in ("ab", "cd", "abcd")},
              "octatrick": ("SPATIALIZER",),   # USB's ABCD input inject, as in the io remixes
+             "pext-probe": ("EQUALIZER", "PLATE REV", "SPRING REV"),   # the probe takes EQUALIZER's id and the two reverbs' words
+             "window-mod": ("CHORUS", "PLATE REV", "SPRING REV", "DARK REV"), "window-ctl": ("CHORUS", "PLATE REV", "SPRING REV", "DARK REV"),   # MODULATION takes CHORUS's id; the reverbs' words hold LOAD METER and CORE
+             "octabam": (),   # all 14 stock effects stay; ours and LOAD METER run from the window
+             "dlspike": (),   # all 14 stock effects stay; MODULATION is loaded on demand
+             "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
+             "stock-meter-a": ("PHASER",), "stock-meter-b": ("SPATIALIZER",),   # LOAD METER's DSP half in the given-up effect's words
              "sos-capture": ("SPATIALIZER",),   # usb-io-tracks-ab + the recorder fixes
              "cfmeter": ("DARK REV",), "cfmeter-port": ("DARK REV",), "cfmeter-post": ("DARK REV",), "cfmeter-tracks": ("DARK REV",),   # the readout insert's words
              "waveload": ("DARK REV",), "waveload-port": ("DARK REV",),   # CF METER's readout insert, as cfmeter
@@ -937,6 +1007,7 @@ def main():
              "shatter": ("PLATE REV",),   # SHATTER runs in its words; the other 13 stay
              "stuttr": ("PLATE REV",),   # STUTTR runs in its words; the other 13 stay
              "devilish": ("PHASER",),   # dEVILish is on PHASER's id; its pass-through runs in PHASER's words
+             "ids64": ("PLATE REV", "SPRING REV"),   # the bbd remix with id_space=64 and BBD pinned to 0x25
              "testgen": ("PLATE REV",),     # TESTGEN runs in its words; the other 13 stay
              "resonator": ("PLATE REV",),   # RESONATOR runs in its words; the other 13 stay
              "vocoder": ("PLATE REV", "DJ EQ"),   # VOCODER runs in PLATE's words; DJ EQ out so the tables sit in X
@@ -947,8 +1018,7 @@ def main():
              "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "CHORUS", "PLATE REV", "SPRING REV"),
              "rig": _rig,
              "character-txtr": _rig,   # octabam-bus with the TXTR station
-             "octabam-bus": _rig,
-             "octabam-inserts": _rig,   # COMPRESSOR's id is undisturbed since SIDECHAIN_COMPRESSOR was dropped (4dacb61d)
+             "octabam-bus": ("PLATE REV", "SPRING REV", "DARK REV"),   # FX2 is locked, so no row for the reverbs; nothing is harvested
              "stations-fx2": _rig}
     for _n in registry.remix_names():
         _r = registry.remix(_n)

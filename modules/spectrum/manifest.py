@@ -73,8 +73,7 @@ MODULE = Module(
     proof=Proof.HARDWARE, proof_note="Sam's MKII",
     doc="FX1 station: a filter pedal -- the Moog ladder, SEM (LP -> BP -> HP by SHPE), Airwindows Capacitor2, formants; ENV and LFO onto the cutoff; width.",
     menu=MenuEntry(
-        fx2_id=0x04,
-        replaces="FILTER",            # stock FILTER's id: both menus, every part
+        fx2_id=0x0f,
         donor_desc=0x400d58b8,        # DARK REV: 12 active slots, selects on 7/9/11
         abbr=b"SPEC",
         fullname=b"Spectrum",

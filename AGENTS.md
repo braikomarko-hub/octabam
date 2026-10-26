@@ -14,7 +14,7 @@ carries one module for its gates).
 `make modules` lists them, with the compatibility matrix; `make remix`
 composes one. `docs/contributing/MODULES.md` is the contributor guide and
 `CONTRIBUTING.md` the contract. The build refuses to start when two selected
-modules claim the same FX2 id, cave, hook or detour span, poke, table or
+modules claim the same cave, hook or detour span, poke, table or
 symbol ref, runtime write, kept stock bytes, grown stock table,
 core-private Y word, per-core FX2 buffer region or DSP data range
 (`Claims.dsp_ranges`), or declare each other a conflict — by name.
@@ -58,19 +58,22 @@ make render REMIX=<name>        # hear the bus locally, ~6x real time
 make reverb IN=loop.wav ARGS='--wet --mode all'
 ```
 
-Never claim something works because it assembled or linked. `make check` is
+Never claim something works because it assembled or linked. `make check` (run by CI) is
 the floor; `docs/contributing/TESTING.md` says what each gate proves and what
 none of them can see.
 
 **Before opening a PR, and again before merging one:** rebase onto
-`origin/main`. CI's `Gates — make reach` job runs `make reach RUN=1 KEEP=1`
-on every push to `main` and every PR, fork PRs included, on a runner that
-downloads the 1.40C for that run
+`origin/main`. CI's reach job runs the gates the diff reaches, and the
+`refhash` bit-identity pass for a build change, on every push to `main` and every
+PR, fork PRs included, on a runner that downloads the 1.40C for that run
 (`CONTRIBUTING.md` "Before you open a PR" is the rule and the reason); the
 PR body links the run and lists each gate's result from its log. A first-time
-contributor's run waits for maintainer approval. Locally,
-iterate with `make check REMIX=<name>` and the one gate script for the change
-(`python3 tools/verify/verify_<name>.py <remix>`). A change to
+contributor's run waits for maintainer approval. **Run no whole-remix check
+and no reach or refhash pass locally before a PR: they take hours and CI runs
+them.** Locally, run only the one gate script for the change
+(`python3 tools/verify/verify_<name>.py <remix>`), push, and read
+`gh pr checks`; a local whole-remix run is for a failure CI has reported that
+the one script cannot reproduce. A change to
 `.github/`, `scripts/` or the Makefile runs every CI job. Passes whose image
 and inputs did not move are reported `cached`.
 
@@ -153,6 +156,7 @@ moment it costs real work, and add its line here.
 - [A dump can resolve a dispatch entry for an effect it does not contain](docs/contributing/TRAPS.md#trap-dump-alias) — `SPEC=1` aliases the absent server to SEND; check which code the entry points at before believing negatives.
 - [Payload A's half of the shared window is fully owned](docs/contributing/TRAPS.md#trap-shared-window) — no delay lines below `0x38000`.
 - [An FX2 id is also an FX1 id](docs/contributing/TRAPS.md#trap-fx2-id) — schema refuses stock ids; a client keys its slot on r7, never X:$213.
+- [A module's id is the remix's, not the manifest's](docs/contributing/TRAPS.md#trap-module-id) — `registry.bound(remix)` for ids, `idspace` for the FX2 table and dispatch addresses; a 64-id image moves both.
 - [`dsp_host`'s default audio block sits in stock scratch](docs/contributing/TRAPS.md#trap-audio-block) — `-audio 0` for a stock render.
 - [An absolute stock-table address is right in A and 13 words off in B](docs/contributing/TRAPS.md#trap-stock-tables) — declare table addresses; audit both payloads.
 - [A knob word under an LFO has non-zero low bits](docs/contributing/TRAPS.md#trap-lfo-word) — mask with `and #>$7f0000`; store from `a1`/`b1`.
@@ -164,6 +168,9 @@ moment it costs real work, and add its line here.
 - [A slot can draw a knob and publish nothing](docs/contributing/TRAPS.md#trap-knob-publish) — panel and DSP are separate; `docs/firmware/PARAM_PAGES.md`.
 - [Flash cycles are expensive](docs/contributing/TRAPS.md#trap-flash) — render locally and measure first.
 - [The unit misbehaves](docs/contributing/TRAPS.md#trap-failure-modes) — `docs/contributing/FAILURE_MODES.md` first; add new failures the moment they are seen.
+- [Window code above `0x37f00` is wiped at boot; below `0x33da3` DARK REV can write it](docs/contributing/TRAPS.md#trap-window-zero) — resident code in `0x33da3..0x37eff`; the build refuses the rest.
+- [A host write at the frame interrupt's entry is lost on every other frame](docs/contributing/TRAPS.md#trap-host-mask) — send to core B on ping-0 frames; never to core A.
+- [`dsp_asm` does not assemble a backward `bra`](docs/contributing/TRAPS.md#trap-bra-back) — trampolines go before their target.
 - [A persistent slot init doesn't clear holds the previous effect's state](docs/contributing/TRAPS.md#trap-dirty-state) — zero every slot the sample loop reads; `verify_dirty_state` refuses.
 - [`dsp_asm` puts a label's absolute address in `brclr`'s displacement word](docs/contributing/TRAPS.md#trap-brclr) — write the displacement as a number; the roundtrip cannot see it.
 - [A zero CS1 with a valid settings tail boots stock's settings as zeros](docs/contributing/TRAPS.md#trap-cs1-zero) — lay the early block over `cs1_boot(image)`.
@@ -190,6 +197,8 @@ moment it costs real work, and add its line here.
 - [A forked port shares its DSP memory with its siblings](docs/contributing/TRAPS.md#trap-fork-shm) — `unshareRanges`; new shared maps need the same.
 - [The port ran under Rosetta and nothing said so](docs/contributing/TRAPS.md#trap-rosetta) — `file out/emu/ot_emu` is the check.
 - [The report is API and prints paths](docs/contributing/TRAPS.md#trap-report-api) — re-save refhash only after the artifacts are shown identical.
+- [A frame count past $7fffff reaches `move a,n1` with A2 stale; the unit's frame interrupt stopped 50.7 min after power-up](docs/contributing/TRAPS.md#trap-frame-count) — keep the count below bit 23; preset it to test (`LM_FRAME0`).
+- [An EP0 reply is DMA'd from memory the cache may not have written; a 64-multiple reply breaks the next request](docs/contributing/TRAPS.md#trap-ep0-dma) — copy through `+UNCACHED`; never answer a multiple of 64 bytes.
 - [Same-named labels across units resolve by nm table order](docs/contributing/TRAPS.md#trap-nm-order) — per-unit tables; a ref naming a symbol its unit does not define is refused.
 - [`moveml %sp@` is the mode-2 form and stores at sp unchanged](docs/contributing/TRAPS.md#trap-movem-sp) — the lea-framed save/restore idiom, or `%sp@-`/`%sp@+`.
 - [cfgsel served one MAIN and one CUE short of the declared nch](docs/contributing/TRAPS.md#trap-cfgsel-nch) — 16 × TRACKS + 2 × (MAIN + CUE + MASTER); every consumer agrees on usb_nch.

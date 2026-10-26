@@ -49,6 +49,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1])); import toolpath  # noqa: E402,F401  (every tools/ dir on sys.path)
 from remix import booted, registry, stock  # noqa: E402
+import idspace  # noqa: E402
 
 BASE = 0x40000400
 FX2_IDS = 0x400d5fdc
@@ -119,6 +120,7 @@ def static_checks(fails):
 def check_image(name, img, pristine, fails):
     mods = registry.modules()
     remix = registry.remix(name)
+    fx2_ids = idspace.fx2_ids(remix)         # where this image's FX2 id table is
     declared = {}
     for key in remix.modules:
         m = mods.get(key)
@@ -141,8 +143,9 @@ def check_image(name, img, pristine, fails):
             # MenuEntry.stock_dsp: the id still dispatches the stock code
             if mods[declared[eid]].menu.stock_dsp:
                 for tag, xtab, _ni, _np in PAYLOADS:
-                    for slot in (eid, 32 + eid):
-                        got, want = rdw(img, xtab + slot * 3), rdw(pristine, xtab + slot * 3)
+                    for kind in (0, 1):
+                        got = idspace.dispatch_word(img, tag, kind, eid)
+                        want = idspace.dispatch_word(pristine, tag, kind, eid)
                         if got != want:
                             fails.append(
                                 f"{name}: payload {tag} dispatch[0x{eid:02x}] is "
@@ -170,7 +173,7 @@ def check_image(name, img, pristine, fails):
             # row at all if it did not -- never stock's descriptor.
             if remix.fx1:
                 _live = _live_fx1_list(img)
-                _clone = rd32(img, FX2_IDS + eid * 4)
+                _clone = rd32(img, fx2_ids + eid * 4)
                 if want_desc in _live:
                     fails.append(
                         f"{name}: the composed FX1 chooser still draws stock "
@@ -202,20 +205,22 @@ def check_image(name, img, pristine, fails):
         # whose chooser slot is NONE) has a descriptor in stock.py but
         # FX2_IDS[id] == NONE on a stock image.
         want_fx2 = rd32(pristine, FX2_IDS + eid * 4)
-        got_desc = rd32(img, FX2_IDS + eid * 4)
+        got_desc = rd32(img, fx2_ids + eid * 4)
         if got_desc != want_fx2:
             fails.append(
                 f"{name}: FX2_IDS[0x{eid:02x}] ({eff.key}) is "
                 f"0x{got_desc:08x}, not stock's 0x{want_fx2:08x} -- nothing "
                 f"in this remix declared replaces={eff.key!r}")
         for tag, xtab, nul_i, nul_p in PAYLOADS:
-            for slot, nul in ((eid, nul_i), (32 + eid, nul_p)):
-                got = rdw(img, xtab + slot * 3)
-                want = rdw(pristine, xtab + slot * 3)
+            for kind, nul in ((0, nul_i), (1, nul_p)):
+                got = idspace.dispatch_word(img, tag, kind, eid)
+                want = idspace.dispatch_word(pristine, tag, kind, eid)
                 if got == want:
                     continue
                 if got == nul and eff.key in _given_up:
                     continue               # its words were taken; see above
+                if eff.key in remix.window_guard and 0x30000 <= got < 0x40000:
+                    continue               # fronted by the demand loader's guard, which runs the stock code
                 fails.append(
                     f"{name}: payload {tag} dispatch[0x{eid:02x}] "
                     f"({eff.key}) is 0x{got:05x}, not stock's 0x{want:05x}"

@@ -3,7 +3,7 @@
 
     make webpatch BUILD=N [OUT=out/web]
 
-For each official remix (`remixes/octabam-*`) it runs `make image`, turns
+For each official remix (`remixes/octabam*`) it runs `make image`, turns
 `out/mainos_bus.bin` into an OBP1 patch against the stock MAIN OS
 (`tools/web/obpatch.py` applies and leak-checks it), and writes
 
@@ -39,7 +39,7 @@ def git(*a):
 
 
 def remixes():
-    return sorted(p.name for p in (ROOT / "remixes").glob("octabam-*") if (p / "remix.py").exists())
+    return sorted(p.name for p in (ROOT / "remixes").glob("octabam*") if (p / "remix.py").exists())
 
 
 def image_name(remix, build):

@@ -14,6 +14,7 @@ import struct
 import sys
 
 from remix import schema
+import idspace
 from remix.schema import (Binary, Category, Detour, Gate, Kind, Linked, Module, Poke, Proof, Scope, Setting,
                           Store, SymbolRef)
 
@@ -30,6 +31,7 @@ def fx_inc(modules, remix):
     mods = modules if isinstance(modules, dict) else {}
     targets = [m for m in mods.values() if m.menu is not None and len(m.params) == 12]
     out = ["| remix.inc -- brain_fx: the effects in this image (modules/brain/manifest.py)",
+           f"        .set    brain_fx2_ids, {idspace.fx2_ids(remix):#x}",
            "        .section .rodata", "        .balign 4", "        .globl  brain_fx, brain_fx_n",
            f"brain_fx_n: .long {len(targets)}", "brain_fx:"]
     for i, m in enumerate(targets):

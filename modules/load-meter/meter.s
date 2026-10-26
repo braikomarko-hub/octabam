@@ -24,7 +24,12 @@ lm_in:
         movem.l %d0-%d7/%a0-%a6,%sp@            | displaced: moveml %d0-%fp,%sp@
         move.l  DTCN3,%d0                       | every register is saved: d0 is free
         move.l  %d0,lm_t0
-        jmp     BODY
+        .weak   dl_pump                         | DLPUMP, when the remix carries it
+        move.l  #dl_pump,%d0
+        beq.s   1f
+        move.l  %d0,%a0
+        jsr     %a0@
+1:      jmp     BODY
 
 | ---- 0x4000d9a6: the epilogue, every exit path --------------------------
 | d0-a6 are saved at (sp) and restored below, so every register is free.

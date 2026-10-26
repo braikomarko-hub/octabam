@@ -85,6 +85,13 @@ STOCK_FX2_IDS = frozenset({0x04, 0x05, 0x08, 0x0c, 0x0d, 0x10, 0x11, 0x12,
                            0x13, 0x14, 0x15, 0x16, 0x18, 0x19, 0x1c})
 
 
+# The id space an image is built with: 32 is stock's (the DSP dispatch tables
+# and the ColdFire id tables hold 32 entries); 64 grows both (tools/build/idspace.py).
+ID_SPACES = (32, 64)
+FREE_FX2_IDS = tuple(i for i in range(0x04, 0x20) if i not in STOCK_FX2_IDS)
+FREE_FX2_IDS_64 = tuple(i for i in range(0x04, 0x40) if i not in STOCK_FX2_IDS)
+
+
 STEPPED_ONLY = (6, 7, 8, 9, 10, 11)
 
 
@@ -556,9 +563,10 @@ class MenuEntry:
         # 0x00-0x03 are the ids stock treats as bare synonyms for "no effect";
         # the first hardware test used them and got correct names with dead
         # knobs and garbage audio.
-        if not 0x04 <= self.fx2_id <= 0x1f:
+        if not 0x04 <= self.fx2_id <= FREE_FX2_IDS_64[-1]:
             raise ValueError(f"fx2 id 0x{self.fx2_id:02x} is out of range "
-                             f"(0x00-0x03 are stock's 'no effect' synonyms)")
+                             f"(0x00-0x03 are stock's 'no effect' synonyms; "
+                             f"0x{FREE_FX2_IDS_64[-1]:02x} is the top of the 64-id space)")
         if len(self.abbr) > 4:
             raise ValueError(
                 f"abbr {self.abbr!r} is {len(self.abbr)} characters -- the "
@@ -1705,7 +1713,7 @@ class Module:
                 f"this id would hijack that effect on both menus (see "
                 f"STOCK_FX2_IDS). Declare MenuEntry(replaces=\"<KEY>\") if "
                 f"that is what you mean. Free ids: "
-                f"{', '.join(f'0x{i:02x}' for i in range(0x04, 0x20) if i not in STOCK_FX2_IDS)}")
+                f"{', '.join(f'0x{i:02x}' for i in FREE_FX2_IDS)}")
         if self.menu is not None and self.menu.replaces:
             if self.kind is Kind.STOCK:
                 raise ValueError(f"{self.name}: a STOCK entry cannot replace "
@@ -2022,6 +2030,31 @@ class Remix:
     # that itself, the way modules/modulation does with its allocator slot.
     hidden: tuple[str, ...] = ()
     named: tuple[str, ...] = ()
+    # EFFECT CODE IN THE SHARED WINDOW (25 Oct 2026): (module key, P address) pairs. The
+    # module is assembled ONCE at that address in `P:0x30000..0x3ffff`, its P table (if any)
+    # behind it, written into the window as a load record of payload A's upload (the same
+    # pre-boot copy a DspSection.tail uses), and both payloads' dispatch entries for its id
+    # point there: one copy, run by both cores. It takes no words from the harvested region.
+    # Core 1 running code that sits in payload A's half is measured on the unit
+    # (modules/pextprobe). The build refuses an address inside another owner's range
+    # (tools/remix/dsp_ranges.py) or a module whose two payload sources assemble differently.
+    # A module placed this way has no hooks, no LFO or second table, and no tail.
+    window: tuple[tuple[str, int], ...] = ()
+    # DEMAND-LOADED WINDOW EFFECTS (docs/proposals/DEMAND_LOAD.md): module keys, each also in `window`
+    # (at the address its code runs from). The module is assembled and placed as above but left out of
+    # payload A's upload: its words, address, entry points and id go to out/dsp/demand_records.json for
+    # the ColdFire loader (modules/dlpump). Its id's dispatch entries point at a trampoline of the stub
+    # (modules/dlcopy/dlstub.asm) that passes the audio through until DLCOPY has published the code. The
+    # position in this tuple is the effect's index k, 0..3 (the entry at x:$33da3 + 8 k).
+    window_demand: tuple[str, ...] = ()
+    # STOCK REVERBS KEPT OFF LOADED CODE: stock keys. The build assembles modules/dlcopy/dlwrap.asm once
+    # per payload (the stock entries differ), with a pair of trampolines per reverb, and points each
+    # reverb's id at them: the reverb then runs only while its buffer range misses every loaded
+    # `window_demand` effect.
+    window_guard: tuple[str, ...] = ()
+    # Where the stub and then the two wrapper copies are laid out, one after the other (P address, in a
+    # run of window words no stock effect writes: docs/proposals/DEMAND_LOAD.md).
+    window_loader: int = 0
     # THE HOST PAGE DRAWS ITS FIRST SLOTS ONLY (26 Sep 2026, Sam: "want
     # all the tracks to look the same"): (key, n) pairs. The hidden
     # module's page draws slots 0..n-1 under their manifest names (the rig:
@@ -2067,6 +2100,15 @@ class Remix:
     # offsets have no such exact identity.
     grains: int = 4
     fx1: tuple[str, ...] = ()
+    # The FX id space: 32 is stock's. 64 grows the DSP dispatch tables and
+    # the FX2 id tables (tools/build/idspace.py); a module in `fx1` keeps an
+    # id below 32 because FX1's own tables stay at 32 entries.
+    id_space: int = 32
+    # Module key -> FX2 id this remix puts it on, instead of the allocator's
+    # choice: a project saved on this remix keeps meaning the same module
+    # whatever else the registry gains. A pinned id above 0x1f needs
+    # id_space=64, and a module in `fx1` stays below 0x20.
+    ids: Mapping = field(default_factory=dict, hash=False)
     # LAYER 2 OF EACH SETTING (docs/proposals/BRAIN.md section 4.2):
     # (store id, setting name) -> a value (a new default the card and the
     # project may still change) or Pin(value) (fixed: no row, nothing stored).
@@ -2081,6 +2123,20 @@ class Remix:
     defaults: Mapping = field(default_factory=dict, hash=False)
 
     def __post_init__(self):
+        if self.id_space not in ID_SPACES:
+            raise ValueError(f"remix {self.name!r}: id_space={self.id_space}; "
+                             f"it is one of {ID_SPACES}")
+        _top = 0x3f if self.id_space == 64 else 0x1f
+        for _k, _i in self.ids.items():
+            if _k not in self.modules:
+                raise ValueError(f"remix {self.name!r}: ids pins {_k!r}, which is not in the remix")
+            if not 0x04 <= _i <= _top or _i in STOCK_FX2_IDS:
+                raise ValueError(f"remix {self.name!r}: ids pins {_k!r} to 0x{_i:02x}; "
+                                 f"free ids are 0x04..0x{_top:02x} but stock's")
+            if _k in self.fx1 and _i > 0x1f:
+                raise ValueError(f"remix {self.name!r}: {_k!r} is in fx1, so its id stays below 0x20")
+        if len(set(self.ids.values())) != len(self.ids):
+            raise ValueError(f"remix {self.name!r}: ids pins two modules to one id")
         if self.grains not in (2, 4):
             raise ValueError(f"grains={self.grains}: BusDelay's GRAIN reader "
                              f"is built for 4 or 2 per line, nothing else")

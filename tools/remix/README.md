@@ -16,6 +16,7 @@ The code that turns `modules/<name>/manifest.py` files and a
 | `store.py` | settings resolved for a remix through layers 1 and 2, the remix refusals, the CS1 budget for early settings, each module's `brain.lock` (`docs/proposals/BRAIN.md` sections 2 and 4) |
 | `brainfile.py` | the brain file: reader, writer, the `.work` / `.strd` pair rule (`docs/proposals/BRAIN.md` sections 6.2 and 7) |
 | `stock.py` | the stock FX2 effects as rows a remix can keep in the chooser; what a remix harvests |
+| `costs.py`, `slot_costs.json` | slot costs measured on a unit per effect, merged from the matrix reports, and the worst-case DSP load of a remix bounded from them (`docs/contributing/COSTS.md`) |
 | `rig.py` | a module's category, track range and chooser, derived from the manifests |
 | `index.py` | `make modules`, `make docs`: the module table in `README.md` and the remix index |
 | `selftest.py` | proves the ledger catches each collision class and every shipped remix is clean |

@@ -65,7 +65,9 @@
 .set GETIFACE_STOCKP,0x400e20a1     | the stock 1-byte "00" the send reads
 .set SETUP_BMREQ,    0x46c8ce08     | SETUP bmRequestType
 .set SETUP_BREQ,     0x46c8ce09     | SETUP bRequest
+.set SETUP_WVALL,    0x46c8ce0a     | SETUP wValue low
 .set SETUP_WVALH,    0x46c8ce0b     | SETUP wValue high = control selector
+.set SETUP_WIDXL,    0x46c8ce0c     | SETUP wIndex low
 .set SETUP_WIDXH,    0x46c8ce0d     | SETUP wIndex high = entity id
 .set EP0_SEND_TAIL,  0x4001de5c     | jsr usb_ep0_send(len, buf); addq; done
 .set CTRL_STOCK,     0x4001de6a     | the stock STALL, after the displaced movel
@@ -1882,13 +1884,78 @@ audio_ctrl_shim:
     | stream. Any driver a host attached to the interfaces is bypassed: a
     | device-recipient control request needs no interface claim.
     cmpil   #0xc0,%d0
-    bnes    .Lctrl_class
+    bne     .Lctrl_class
     mvzb    SETUP_BREQ,%d0
     cmpil   #0x55,%d0
-    bne     .Lctrl_stock
+    bne     .Lctrl_lm
     pea     usbaudio_consumed
     moveq   #60,%d0
     bra     .Lctrl_send
+    | 0xc0/0x57 reads LOAD METER's published figures (modules/load-meter), the
+    | block wValue low names: 0 lm_stats (5 longs), 1 lm_dsp (12), 2 lm_ot
+    | (16 slots of {last, sum, count, max}), from byte wIndex low on. Each
+    | LM_* is 0 without that module, and a request for a block it does not
+    | have STALLs as stock does.
+    |
+    | Two things measured on a unit (24 Oct 2026) shape it. The controller's
+    | DMA does not see the CPU's cached stores (the note at the data), and
+    | lm_stats is stored once in 0.5 s, so its line stayed in the cache: the
+    | request returned the same window for minutes, then jumped 100 windows.
+    | The reply is therefore copied, byte by byte from the CPU's view, into
+    | lm_reply through the uncached alias. And a control reply whose length is
+    | a multiple of 64 makes the NEXT control request return 0 bytes once
+    | (wLength 64, 128, 192 and 256 did; 63, 100, 252, 255 did not), so a
+    | reply that would be one is sent a byte short and the host asks again
+    | from the new offset.
+.Lctrl_lm:
+    cmpil   #0x57,%d0
+    bne     .Lctrl_stock
+    lea     %sp@(-12),%sp
+    movem.l %d3/%a2-%a3,%sp@
+    mvzb    SETUP_WVALL,%d0
+    moveq   #20,%d1
+    movel   #LM_STATS,%d3
+    tstl    %d0
+    beqs    3f
+    moveq   #48,%d1
+    movel   #LM_DSP,%d3
+    cmpil   #1,%d0
+    beqs    3f
+    movel   #256,%d1
+    movel   #LM_OT,%d3
+    cmpil   #2,%d0
+    bne     9f
+3:  tstl    %d3
+    beq     9f                      | the remix has no LOAD METER
+    mvzb    SETUP_WIDXL,%d0         | byte offset into the block
+    cmpl    %d1,%d0
+    bcc     9f                      | at or past its end
+    subl    %d0,%d1                 | bytes left
+    addl    %d0,%d3                 | source
+    cmpl    %d2,%d1                 | min(wLength, bytes left)
+    bls     4f
+    movel   %d2,%d1
+4:  tstl    %d1
+    beqs    5f
+    movel   %d1,%d0
+    andil   #63,%d0
+    bnes    5f
+    subql   #1,%d1                  | never a multiple of 64
+5:  moveal  %d3,%a2
+    moveal  #(lm_reply+UNCACHED),%a3
+    movel   %d1,%d0
+    beqs    7f
+6:  moveb   %a2@+,%a3@+
+    subql   #1,%d0
+    bnes    6b
+7:  movem.l %sp@,%d3/%a2-%a3
+    lea     %sp@(12),%sp
+    pea     lm_reply
+    movel   %d1,%d0
+    bra     .Lctrl_send
+9:  movem.l %sp@,%d3/%a2-%a3
+    lea     %sp@(12),%sp
+    bra     .Lctrl_stock
 .Lctrl_class:
     cmpil   #0x21,%d0               | class SET, interface recipient
     beq     .Lctrl_set
@@ -2047,6 +2114,8 @@ aud_step:          .long STEP_HS    | frames per packet x1000, set by the speed
 aud_ring:          .space AUD_FRAMES*SLOT_BYTES  | 1024 x 22 ch, 24 in 4 B LE; the
                                                  | unchecked fields stay unwritten
 aud_sum:           .space AUD_FRAMES*SUM_BYTES   | 1024 x stereo sum (the priority pair)
+    .balign 4
+lm_reply:          .space 256       | 0xc0/0x57's reply, written only through the uncached alias
 usbaudio_alt:      .byte 0          | alt setting the host asked for
 uac2_set_pending:  .byte 0          | a clock SET CUR's data stage is primed
 aud_running:       .byte 0          | EP3 is up (frame-ISR owned)

@@ -2,8 +2,8 @@
 
 Every directory under `modules/` holding a `manifest.py` that exports a
 `MODULE` is a contribution; there is no central list. The registry refuses
-duplicate keys and ids. Directories whose name starts with `_` or `.` are
-skipped (`modules/_template/`).
+duplicate keys; FX2 ids are settled per remix (`assign_ids`). Directories
+whose name starts with `_` or `.` are skipped (`modules/_template/`).
 
 The stock FX2 effects (tools/remix/stock.py) are registered alongside under
 their own keys ("FILTER", "CHORUS", ...), so a remix keeps one in the
@@ -85,11 +85,8 @@ def modules() -> dict[str, object]:
             raise SystemExit(f"two modules claim the key {m.key!r}: "
                              f"{seen_dirs[m.key]} and {d.name}")
         if m.menu is not None:
-            if m.menu.fx2_id in seen_ids:
-                raise SystemExit(
-                    f"two modules claim FX2 id 0x{m.menu.fx2_id:02x}: "
-                    f"{seen_ids[m.menu.fx2_id]} and {d.name}")
-            seen_ids[m.menu.fx2_id] = d.name
+            # Two modules may prefer one id; `assign_ids` settles it per remix.
+            seen_ids.setdefault(m.menu.fx2_id, d.name)
         seen_dirs[m.key] = d.name
         found[m.key] = m
     from remix import stock
@@ -336,6 +333,62 @@ def bound(r) -> dict[str, object]:
             if not m.dsp_if(fixed.get(k, {})):
                 m = dataclasses.replace(m, dsp=None)
         out[k] = m
+    return assign_ids(r, out)
+
+
+def assign_ids(r, mods: dict[str, object]) -> dict[str, object]:
+    """Resolve each selected module's FX2 id for this remix.
+
+    `MenuEntry.fx2_id` is the id a module prefers. Stock rows and modules
+    with `replaces` carry a stock effect's id and keep it. Of the other
+    selected modules, those that prefer an id nobody else here prefers keep
+    it; where several prefer one id, the first by key keeps it and the rest
+    take the lowest free id of the remix's id space. A remix whose modules
+    all prefer distinct ids below 32 is unchanged. Modules not selected keep
+    their preferred id.
+
+    A module in `Remix.fx1` takes an id below 32 in either space: FX1's own
+    id tables keep 32 entries. In a 32-id remix every module does.
+    """
+    pool = schema.FREE_FX2_IDS_64 if r.id_space == 64 else schema.FREE_FX2_IDS
+    sel = [mods[k] for k in r.modules if mods[k].menu is not None]
+    taken = {m.menu.fx2_id for m in sel if m.is_stock or m.menu.replaces}
+    free = [i for i in pool if i not in taken]
+    movable = sorted((m for m in sel if not (m.is_stock or m.menu.replaces)),
+                     key=lambda m: m.key)
+    low = set(schema.FREE_FX2_IDS)
+    given: dict[str, int] = {}
+    pinned = dict(getattr(r, "ids", {}) or {})
+    for m in movable:
+        if m.key in pinned:
+            if pinned[m.key] not in free:
+                raise SystemExit(f"remix {r.name!r}: ids pins {m.key!r} to 0x{pinned[m.key]:02x}, "
+                                 f"which a stock effect holds or another pin took")
+            free.remove(pinned[m.key])
+            given[m.key] = pinned[m.key]
+    for m in movable:
+        if m.key in given:
+            continue
+        want = m.menu.fx2_id
+        if want in free and (want in low or m.key not in r.fx1):
+            free.remove(want)
+            given[m.key] = want
+    for m in movable:
+        if m.key in given:
+            continue
+        pick = [i for i in free if i in low or m.key not in r.fx1]
+        if not pick:
+            raise SystemExit(
+                f"remix {r.name!r}: no free FX2 id for {m.name}; the image "
+                f"holds at most {len(pool)} modules that are not stock effects"
+                + ("" if r.id_space == 64 else " (id_space=64 raises that)"))
+        given[m.key] = pick[0]
+        free.remove(pick[0])
+    out = dict(mods)
+    for k, i in given.items():
+        if i != mods[k].menu.fx2_id:
+            out[k] = dataclasses.replace(
+                mods[k], menu=dataclasses.replace(mods[k].menu, fx2_id=i))
     return out
 
 

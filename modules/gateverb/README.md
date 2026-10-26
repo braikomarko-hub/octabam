@@ -2,7 +2,7 @@
 
 A gated reverb for FX2, built on the reverb stage of Mutable Instruments Clouds
 ([`clouds/dsp/fx/reverb.h`](https://github.com/pichenettes/eurorack/blob/master/clouds/dsp/fx/reverb.h),
-MIT, Emilie Gillet 2014), ported to fixed point. On stock PLATE REV's id `0x14`; one instance per FX2 slot.
+MIT, Emilie Gillet 2014), ported to fixed point. On id `0x1a` (PLATE REV keeps `0x14`); one instance per FX2 slot.
 
 The reverb is Clouds': a Griesinger plate (the Dattorro paper's layout) of four input
 allpasses and a loop of two halves, each two allpasses and a delay. The first allpass is
