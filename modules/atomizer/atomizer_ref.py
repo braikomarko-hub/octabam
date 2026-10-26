@@ -11,11 +11,11 @@ through a linear-interpolated Q9 position and a trapezoid window, the voices pan
 
 M24 = 0xFFFFFF
 FS = 0x7FFFFF
-N0, N1 = 15870, 8192            # the ring: RCYC's 15,870 words (+$0000..$3dfd), the others' 8,192
-AUX = 7678                      # layout 1's aux, +$2000..$3dfd
+N0, N1 = 15779, 8192            # the ring: RCYC's 15,779 words (+$0000..$3da2), the others' 8,192
+AUX = 7587                      # layout 1's aux, +$2000..$3da2
 AUXB = 0x2000
-PING = 3839                     # PING: two lines of 3,839
-LSMAX = 7616                    # the REP slot's ceiling (the aux holds one slot)
+PING = 3793                     # PING: two lines of 3,793
+LSMAX = 7552                    # the REP slot's ceiling (the aux holds one slot)
 
 CHOP_HT = (3, 4, 6, 8, 12, 16, 24, 48)        # SYNC: CHOP's divisions, half MIDI ticks: 1/64 .. 1/4
 TIME_HT = (3, 6, 9, 12, 18, 24, 36, 48)       # SYNC: TIME's: 1/64 1/32 3/64 1/16 3/32 1/8 3/16 1/4

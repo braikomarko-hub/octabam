@@ -9,15 +9,17 @@ repeat), with the changelog's improvements: AUTO feedback (post delay in
 DELAY + DENS), a density floor, the BLEND law (dry whole to 64), no knob jumps
 when MODE changes, FREZ 0 always releases.
 
-FX2 only: reads the allocator at init (x:>$213) and uses 15,870 words of the Y
-slot (README, "Memory and cost"); an FX1 slot (3,072 words) is too small. State in
-r7 + $00..$5f. atomizer_ref.py is the bit-exact model the DSP is proven against
+FX2 only: reads the allocator at init (x:>$213) and uses 15,779 words of the Y
+slot, up to +$3DA2 like DARK REV, so it never reaches the demand loader's words in the
+window slots (README, "Memory and cost"); an FX1 slot (3,072 words) is too small. State
+in r7 + $00..$5f. atomizer_ref.py is the bit-exact model the DSP is proven against
 (tools/verify/verify_atomizer.py).
 
-The id is PROVISIONAL. Every free FX2 id (0x04..0x1f) is claimed in this tree, and a
-16K-buffer effect may not take a stock id FX1 lists (an FX1 slot is 3,072 words:
-state.fx1_hazard). Development uses DELAY's (0x08, FX2 only); the id for a remix that keeps
-the stock DELAY is the owner's decision (README, "Open").
+0x1e is the PREFERRED id: registry.assign_ids gives the remix's own (docs/contributing/
+MODULES.md), so AtoMizer replaces nothing and the stock DELAY stays. Its 1,520 words fit
+a donor run or, loaded on demand (Remix.window_demand, docs/proposals/DEMAND_LOAD.md), a
+window slot at +$1000: remixes/test/atomizer is built that way, with every stock effect.
+On the track whose FX2 slot holds the loaded code the instance stays dry (atomizer.asm).
 """
 
 from remix.schema import (BusRole, Category, Claims, DspSection, Formatter, Gate, Harness, Kind,
@@ -50,8 +52,7 @@ MODULE = Module(
     proof_note="its own render gates (dsp_host, bit-exact against atomizer_ref.py); not on hardware",
     doc="Granular delay after the Red Panda Particle V1: 8 modes, freeze, recycle/post/ping/repeat feedback; FX2.",
     menu=MenuEntry(
-        fx2_id=0x08,                  # PROVISIONAL (development): DELAY's, the one FX2-only stock id unclaimed
-        replaces="DELAY",
+        fx2_id=0x1e,                  # preferred; the remix assigns the id (registry.assign_ids)
         donor_desc=0x400d58b8,        # DARK REV: 12 active slots
         abbr=b"ATMZ",
         fullname=b"ATOMIZER",
@@ -94,7 +95,7 @@ MODULE = Module(
         r7_latch_slot=None,
         gate_label=None,
     ),
-    claims=Claims(stock_instance_buffer=True, buffer_words=15870),
+    claims=Claims(stock_instance_buffer=True, buffer_words=15779),
     harness=Harness(layout_char=None, is_server=False),
     gates=(Gate("tools/verify/verify_atomizer.py", remix_arg=False),),
     dear={"CHOP": 127, "TIME": 127, "PARA": 0, "FDBK": 127, "FREZ": 0, "MIX": 64,

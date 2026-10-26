@@ -992,6 +992,7 @@ def main():
              "window-mod": ("CHORUS", "PLATE REV", "SPRING REV", "DARK REV"), "window-ctl": ("CHORUS", "PLATE REV", "SPRING REV", "DARK REV"),   # MODULATION takes CHORUS's id; the reverbs' words hold LOAD METER and CORE
              "octabam": (),   # all 14 stock effects stay; ours and LOAD METER run from the window
              "dlspike": (),   # all 14 stock effects stay; MODULATION is loaded on demand
+             "atomizer": (),  # all 14 stock effects stay; ATOMIZER is loaded on demand into T8's FX2 slot
              "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
              "ext-probe": ("EQUALIZER",),   # EXTPROBE takes EQUALIZER's id
              "stock-meter-a": ("PHASER",), "stock-meter-b": ("SPATIALIZER",),   # LOAD METER's DSP half in the given-up effect's words
