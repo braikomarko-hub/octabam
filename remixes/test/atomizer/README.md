@@ -18,8 +18,12 @@ code there. On the other seven FX2 slots it works.
 
 ## Where it has run
 
-Port and `dsp_host` gates only (26 Oct 2026): `verify_atomizer`, `verify_dlstub`,
-`verify_dlwrap`, `verify_dlload`. Not flashed.
+Port and `dsp_host` gates only (26 Oct 2026): `verify_atomizer`, `verify_dlstub` and
+`verify_dlwrap` pass. `verify_dlload` (port, project OCTA303 of the owner): 20 of 24 pass --
+AtoMizer loads, is reached on both cores, is withdrawn, honours the grace and the reverb
+blocks. The four chooser-pick checks fail, and fail the same way on `test/dlspike` with the
+same project and port build, so they are not AtoMizer's; not yet run with another project.
+Not flashed.
 
 ## Build
 
