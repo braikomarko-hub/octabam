@@ -9,11 +9,17 @@
 ; MODE r6+$c hi (slot 6), TONE r6+$c lo (7), FBMD r6+$d hi (8), SPRD r6+$d
 ; lo (9), SYNC r6+$e hi (10), V1 r6+$e lo (11). Tempo24 at r6+$13.
 ;
-; Y: the allocator's FX2 slot, up to +$3DFD (15,870 words: SIDECHAIN_COMPRESSOR's
-; window sits above, tools/remix/stock.py). Layout 0 (RCYC): a 15,870-word ring.
+; Y: the allocator's FX2 slot, up to +$3DA2 (15,779 words, DARK REV's extent: above it,
+; in the T7 and T8 slots, are the demand loader's entries, DLCOPY and LOAD METER's DSP
+; half, docs/proposals/DEMAND_LOAD.md). Layout 0 (RCYC): a 15,779-word ring.
 ; Layout 1 (the other FBMDs): an 8,192-word ring at +$0000, the aux at +$2000,
-; 7,678 words (PING: two lines of 3,839). Every index wraps by compare, not mask.
+; 7,587 words (PING: two lines of 3,793). Every index wraps by compare, not mask.
 ; A layout change passes dry while the slot clears, 256 words a call.
+;
+; Demand loading: when the slot's range covers the code of a loaded window effect
+; (AtoMizer's own included: it sits at +$1000 of one slot), the instance passes the
+; audio through and writes nothing, checked every call as DLWRAP checks the stock
+; reverbs; when the range is free again the slot clears and the engine restarts.
 ;
 ; ---- r7 slots ($00..$5f; the OS allows $00..$83) --------------------------
 ;   $00 Y base   $01 clear calls left   $02 layout   $03 LCG seed
@@ -64,6 +70,15 @@ proc:
         move    #>$ffffff,m3
         move    #>$ffffff,m4
         move    #>$ffffff,m5
+; ---- demand loading: never write over loaded window code (the header) ------
+        move    x:(r7+$00),x1           ; the slot's base
+        bsr     amgchk
+        tst     a
+        beq     amgclr
+        move    #>$3e,a
+        move    a,x:(r7+$01)            ; the slot clears once the range is free again
+        rts                             ; dry: the block passes untouched
+amgclr:
 ; ---- MODE, FBMD (AUTO resolved), the layout -------------------------------
         move    x:(r6+$c),a
         and     #>$070000,a
@@ -105,10 +120,10 @@ amlaysame:
         move    x:(r7+$00),x0
         add     x0,a
         move    a,r4
-        move    #>$100,a                ; 256 words; the top chunk (+$3d00) stops at +$3dfd
+        move    #>$100,a                ; 256 words; the top chunk (+$3d00) stops at +$3da2
         move    #>$3d,x0
         cmp     x0,b
-        move    #>$fe,x0
+        move    #>$a3,x0
         teq     x0,a
         move    a1,n4
         clr     a
@@ -159,7 +174,7 @@ amtk:
         and     #>$010000,a
         move    a1,x0
         move    x0,x:(r7+$43)
-        move    #>15870,a
+        move    #>15779,a
         move    x:(r7+$02),b
         tst     b
         move    #>8192,x0
@@ -528,11 +543,11 @@ ammix:
         teq     x0,b                    ; 127: frozen
         move    b1,x0
         move    x0,x:(r7+$33)
-        move    #>7678,a                ; the aux: 7,678 words, PING two of 3,839
+        move    #>7587,a                ; the aux: 7,587 words, PING two of 3,793
         move    x:(r7+$34),b
         move    #>$020000,x0
         cmp     x0,b
-        move    #>3839,x0
+        move    #>3793,x0
         teq     x0,a
         move    a1,x0
         move    x0,x:(r7+$52)
@@ -555,7 +570,7 @@ ammix:
         move    a1,x0
         move    x0,x:(r7+$51)           ; the post time
         move    x:(r7+$3d),a
-        move    #>7616,x0
+        move    #>7552,x0
         cmp     x0,a
         tgt     x0,a
         move    a1,x0
@@ -719,8 +734,8 @@ amfpo:                                  ; POST: the grains into a delay line, FD
 ; MODEFORK_MID
 amfpi:                                  ; PING: in on the left; left feeds right, right (toned) left
         bsr     amaux
-        move    #>3839,n4
-        move    #>3839,n5
+        move    #>3793,n4
+        move    #>3793,n5
         move    y:(r4),x0               ; pl
         move    x0,x:(r7+$4f)
         move    y:(r4+n4),x1            ; pr
@@ -1277,4 +1292,32 @@ amdr1:
         tst     a
         tlt     x0,a
         move    a1,x1
+        rts
+
+; a = 1 when [x1, x1 + $3da3) covers a word of any loaded window effect's code, else 0.
+; DLCOPY's entries at x:$33da3 + 8 k: +0 BOUND ($b0a5ed), +3 and +4 the span [first word,
+; word after the last) -- dlwrap.asm's dw_over with AtoMizer's extent. A remix without the
+; loader leaves those words zero (no BOUND): never dry.
+amgchk:
+        clr     b
+        move    #>$33da3,r5
+        do      #4,>amgnxt
+        move    x:(r5),a
+        move    #>$b0a5ed,x0
+        cmp     x0,a
+        bne     amgskp
+        move    x1,a
+        move    x:(r5+4),x0
+        cmp     x0,a
+        bge     amgskp                  ; the range starts at or after the end of the code
+        move    #>$3da3,x0
+        add     x0,a
+        move    x:(r5+3),x0
+        cmp     x0,a
+        ble     amgskp                  ; the range ends at or before the start of the code
+        move    #>$1,b
+amgskp:
+        lua     (r5+8),r5
+amgnxt:
+        move    b,a
         rts

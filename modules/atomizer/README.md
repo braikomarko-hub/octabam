@@ -4,11 +4,11 @@ A granular delay for FX2, by Marko Brajković, after the **Red Panda Particle**
 (V1 on the Spin FV-1, 2011; Particle 2, 2019). Particle is Red Panda's name and
 pedal: AtoMizer re-derives its behaviour for the Octatrack from the Particle 2
 owner's manual (firmware 2.2, July 2023) and Red Panda's public changelog. No
-Red Panda code or firmware was read or used. 1,478 DSP words and a 42-word
+Red Panda code or firmware was read or used. 1,516 DSP words and a 42-word
 P table; `atomizer.asm` is proven BIT-IDENTICAL against an integer model of
 the same arithmetic, `atomizer_ref.py`.
 
-The mono sum of the track goes into a ring (15,870 words, 360 ms, in RCYC;
+The mono sum of the track goes into a ring (15,779 words, 358 ms, in RCYC;
 8,192 words, 186 ms, in the other feedback modes, whose second half of the
 slot is the aux line). Two grain voices read the ring through a
 linear-interpolated position (9 fractional bits) and a window, and SPRD pans
@@ -52,9 +52,9 @@ overtakes the write head.
 - **AUTO**: POST in DDEN, RCYC in every other MODE (the Particle 2.2.0 default).
 - **RCYC**: recycle -- the ring takes the input plus FDBK x TONE(wet), so the
   repeats go back through the grains.
-- **POST**: the grains go into a separate delay line (7,678 words) with FDBK x
+- **POST**: the grains go into a separate delay line (7,587 words) with FDBK x
   TONE feedback; its time is the delay (2 L in the pitch modes).
-- **PING**: two lines of 3,839 words; the grains enter on the left and each
+- **PING**: two lines of 3,793 words; the grains enter on the left and each
   repeat changes side.
 - **REP**: slots of L samples: a live slot is captured, then the next N slots
   (FDBK: 0..8) replay it, then live again.
@@ -68,10 +68,32 @@ edges do not click.
 
 ## Memory and cost
 
-The FX2 slot from the allocator (read at init, `x:>$213`), up to +$3DFD:
-15,870 words (SIDECHAIN_COMPRESSOR's window sits above). State in r7 +
-$00..$5f, all zeroed at init; the slot is cleared (256 words a call, dry
-meanwhile) before the first wet sample and on every layout change.
+The FX2 slot from the allocator (read at init, `x:>$213`), up to +$3DA2:
+15,779 words, DARK REV's extent (`stock.SLOT_EXTENT`). Above it, in the T7 and
+T8 slots, sit the demand loader's entries, DLCOPY and LOAD METER's DSP half
+(`docs/proposals/DEMAND_LOAD.md`). State in r7 + $00..$5f, all zeroed at init;
+the slot is cleared (256 words a call, dry meanwhile) before the first wet
+sample and on every layout change.
+
+## Placement and id
+
+0x1e is the id AtoMizer prefers; `registry.assign_ids` gives it the remix's
+own, so it replaces no stock effect. Its code goes either into a harvested
+donor run (1,558 words with the table, which takes SPRING REV, PLATE REV and
+DARK REV) or into the shared window, loaded on demand while a track uses it
+(`Remix.window_demand`). `remixes/test/atomizer` does the latter: the code at
+`P:0x35000`, offset +$1000 of T8's FX2 slot on core A, beside all 14 stock
+effects, with LOAD METER, DLPUMP and DLCOPY; the stock reverbs are wrapped by
+DLWRAP.
+
+Loaded on demand, the code lives inside one track's FX2 buffer, so AtoMizer
+guards itself the way DLWRAP guards the reverbs: every call it reads DLCOPY's
+four entries (`x:$33da3 + 8 k`: BOUND, the span) and, when `[base, base +
+$3DA3)` covers a loaded span, passes the audio through and writes nothing.
+In `test/atomizer` that is AtoMizer on **T8's FX2**: it stays dry there and
+works on the other seven FX2 slots. When the range is free again the slot
+clears and the engine restarts. A remix without the loader leaves those
+words zero, so the check never fires.
 
 `cycle_count.py`: 599 cycles a sample per instance, pricing a grain start on
 every sample and the worst feedback mode; four on a core 2,396 of the 3,120
@@ -80,10 +102,9 @@ instance in steady state (the dispatcher included), 359 in the worst block.
 
 ## Measured
 
-All gates of `tools/verify/verify_atomizer.py` pass on this tree, 20 Oct 2026
+All gates of `tools/verify/verify_atomizer.py` pass on this tree, 26 Oct 2026
 (`dsp_host`, a private image with the stock code built in and AtoMizer in the
-space of DELAY, SPRING REV, PLATE REV and DARK REV, as `remixes/test/atomizer`
-places it):
+space of DELAY, SPRING REV, PLATE REV and DARK REV):
 
 - **reference**: every MODE, every FBMD, FREZ held and by threshold, SYNC with
   a tempo, SPRD, MIX and TONE: the DSP output is bit-identical to
@@ -95,6 +116,18 @@ places it):
 - **isolation**: eight instances, four a core, under the write guard: no stray
   write, each identical alone. **garbage**: a garbage instance block renders as
   a zeroed one.
+- **demand**: with a loaded effect's entry written into the dump (BOUND and a
+  span, as DLCOPY publishes it): the slot that covers the span (AtoMizer's own
+  code in T8's slot; a span on the slot's last word; a span in core B's T4
+  slot) passes the input through sample for sample and writes no Y word; a
+  span from +$3DA3 or ending at the base, and every other slot, render
+  bit-identically to the dump without it. `dsp_host` keeps P and Y apart, so
+  this proves the decision, not the chip's overwrite.
+
+On `remixes/test/atomizer` the demand loader's own gates pass with AtoMizer
+as the loaded effect: `verify_dlstub` (unbound dry, bound equal to the direct
+render, 1,558 words at `P:0x35000`, a bad sum or a missing doorbell stays dry)
+and `verify_dlwrap` (the three reverbs on every slot and payload).
 
 What none of them can see: the unit itself (memory-contention stalls, the
 real cycle wall with other effects loaded), and how it sounds -- the model is
@@ -102,11 +135,10 @@ the reference, not the pedal.
 
 ## Open
 
-- **The FX id.** Every free FX2 id (0x04..0x1f) is claimed in this tree, and a
-  16K-buffer effect may not take a stock id FX1 lists (an FX1 slot is 3,072
-  words). Development uses DELAY's (0x08, FX2 only); a remix that keeps the
-  stock DELAY needs the owner to free an id.
-- **Code space.** 1,520 words with the table: a remix needs a harvested run that
-  large (here SPRING REV + PLATE REV + DARK REV).
+- **The unit.** Nothing has run on hardware: not the code from the window, not
+  the cost beside other effects (LOAD METER will show it), not the ~25 ms of dry
+  audio while the block arrives.
+- **T8's FX2.** AtoMizer is silent there in `test/atomizer` (above). A toast
+  like the loader's `NEEDS Tn FX2 FREE` would say why; not done.
 - Not yet: the V1 colour (the FV-1's 1s3e10m memory and 32 kHz band limit),
   the LFO restart at the pattern start (the Particle's TAP), a smoothed MIX.
