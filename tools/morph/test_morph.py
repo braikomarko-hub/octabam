@@ -557,5 +557,16 @@ apex = (C['X_ICON'] + 5, C['Y_LINE'] + 5)
 check('loop_icon_apex_drawn', sum(1 for r in ui['inv'] if r[:4] == apex + apex) == 1)
 key('mw_no'); reset_all()
 
+# ---- the port's finding (26 Oct 2026): the layer must not swallow a track key's release, or HELD
+# (kept by the stock handler) stays set: [TRACK]+[UP]'s window never closed on the release
+reset_all()
+def trel(code): mem.w(SP - 8, 'l', code); mem.w(SP - 4, 'l', 2); cpu.a[7] = SP - 8; cpu.call('mw_trk')
+key('morph_up', 0b1)
+trel(0x10)
+check('track_release_reaches_stock', mem.r(HELD, 'l') == 0 and (0x10, 2) in ui['stock'], str(ui['stock'][-2:]))
+tick()
+check('track_up_window_closes_on_the_real_release', win() == 0 and state(0) == 4, str((win(), state(0))))
+reset_all()
+
 print('%d failure(s)' % fails)
 sys.exit(1 if fails else 0)

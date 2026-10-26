@@ -421,7 +421,7 @@ ms_2:   rts
         .set    WINH,     64
 | the layout, y up from the bottom (the window's inside: x 2..112, y 3..61; the frame at x 1 and
 | x 113, y 2 and y 62 -- an INVERT on them turns them white: v1's white column)
-        .set    FB_ADJ,   5             | FONT_BIG: TEXT's y = the glyph's bottom row + FB_ADJ
+        .set    FB_ADJ,   0             | FONT_BIG: TEXT's y = the glyph's bottom row (measured, port 26 Oct)
         .set    FS_ADJ,   0             | FONT: TEXT's y = the glyph's bottom row (v1, measured)
         .set    Y_TBAR1,  53            | the title bar 53..61
         .set    Y_TBAR2,  61
@@ -835,7 +835,7 @@ mw_down:
 mw_trk:
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
-        bne     mw_k9
+        bne     lp_tpress               | release, repeat: stock's (HELD follows the key), as without us
         tst.l   mw_lp
         beq     mw_k9
         move.l  4(%sp),%d0

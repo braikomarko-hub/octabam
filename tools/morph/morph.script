@@ -44,4 +44,11 @@ key 0x32
 wait 1
 shot morph/13_no_closes_nothing_starts
 release 0x10
+hold 0x11
+key 0x33
+wait 1
+shot morph/14_t2_up_armed
+release 0x11
+wait 2
+shot morph/15_t2_released_closes
 quit
