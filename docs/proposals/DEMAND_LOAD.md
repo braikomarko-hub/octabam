@@ -77,6 +77,7 @@ Layout (words are `X:` or `P:` as in the window, which aliases):
 | `P:0x33dc3..0x33e34` | DLCOPY; the stub follows at `window_loader` (`0x33e40`), then the guard's trampolines for payload A and B, then its body (to `0x33fd2` in octabam) |
 | `P:0x37da3..0x37eff` | LOAD METER's DSP half (A and B) |
 | slot offset `0x1000` | the effects: SPECTRUM `0x31000`, MODULATION `0x35000`, CHARACTER `0x39000`, TRANSIENT `0x3d000`, not uploaded |
+| `test/atomizer` | ATOMIZER at `0x35000` (T8's FX2 slot). Its own buffer reaches +$3DA2 of a slot, so it guards itself as DLWRAP guards the reverbs (it reads the entries every call and is dry while its range covers a loaded span): dry on T8's FX2, wet on the other FX2 slots (`modules/atomizer/README.md`) |
 
 The clear gaps are `0x33da3..0x33fff` (605 words) and `0x37da3..0x37eff` (349 words); resident code above `0x37f00` is wiped at
 boot. octabam uses 559 and 340.
