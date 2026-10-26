@@ -78,7 +78,7 @@ MODULE = Module(
     ),
     dsp=DspSection(
         asm="modules/devilish/devilish.asm",
-        priority=22,                  # 20 is REMIX SWITCH's (both payloads)
+        priority=27,                  # 20 is REMIX SWITCH's (both payloads), 22 DLCOPY's
         bus_role=BusRole.NONE,        # an insert; never on the bus
         ybase=YBase.NEVER,            # no buffers
         r7_latch_slot=None,

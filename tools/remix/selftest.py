@@ -1066,6 +1066,9 @@ def main():
              "octabam-full": (),   # octabam with TRANSIENT, DISTORX and SIDECHAIN_COMPRESSOR as well
              "dlspike": (),   # all 14 stock effects stay; MODULATION is loaded on demand
              "atomizer": (),  # all 14 stock effects stay; ATOMIZER is loaded on demand into T8's FX2 slot
+             # DISTORX on SPATIALIZER's id, dEVILish on PHASER's, dB666 on EQUALIZER's; their DSP words come
+             # from the others the remix does not list; ATOMIZER is loaded on demand (no words)
+             "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "CHORUS", "PLATE REV", "SPRING REV"),
              "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
              "ext-probe": ("EQUALIZER",),   # EXTPROBE takes EQUALIZER's id
              "stock-meter-a": ("PHASER",), "stock-meter-b": ("SPATIALIZER",),   # LOAD METER's DSP half in the given-up effect's words
