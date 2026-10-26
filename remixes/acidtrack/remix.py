@@ -2,7 +2,7 @@
 from remix.schema import Proof, Remix
 
 REMIX = Remix(
-    name="acidtrack", family="machines", proof=Proof.HARDWARE,
+    name="acidtrack", family="mods", proof=Proof.CHECK,
     proof_note="26 Oct 2026: on Sam's tree of 26 Oct with MORPH v1.1, AtoMizer (loaded on demand) and LOAD METER, "
                "TAPE ECHO left out; not yet on the unit in this form. Before: ACIDV77 (24 Oct 2026, the author's MKI: "
                "OCTA303 v7.1, dEVILish, MORPH v1, DISTORX, dB666, TAPE ECHO, BRAIN) 'works perfectly'; ACIDV68..ACIDV71 "
@@ -13,7 +13,7 @@ REMIX = Remix(
              'ATOMIZER', 'LOAD METER', 'DLPUMP', 'DLCOPY'),
     fx1=('FILTER', 'DJ EQ', 'FLANGER', 'COMB FILTER', 'COMPRESSOR', 'LO-FI', 'DEVILISH', 'DISTORX', 'DB666'),
     # The shared window (docs/proposals/DEMAND_LOAD.md, as remixes/test/atomizer): DLCOPY, the stub and DARK
-    # REV's guard from 0x33DC3 (below dB666's side-chain bus at Y:0x33FF8), AtoMizer at +0x1000 of T8's FX2
+    # REV's guard from 0x33DC3 (dB666's side-chain bus sits at Y:0x37FF8 / 0x3FFF8), AtoMizer at +0x1000 of T8's FX2
     # slot (core A), copied there while a track uses it, LOAD METER's DSP half in the gap below 0x37F00.
     window=(("DLCOPY", 0x33DC3), ("ATOMIZER", 0x35000), ("LOAD METER", 0x37DA3), ("LOAD METER:B", 0x37E50)),
     window_demand=("ATOMIZER",),

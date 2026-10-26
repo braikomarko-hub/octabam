@@ -3,7 +3,7 @@
 
     python3 tools/verify/verify_dlwrap.py [REMIX]       (default test/dlspike)
 
-PLATE REV is rendered directly and through the wrapper, on each payload, on the allocator slots that put its buffer
+Each reverb the remix wraps (Remix.window_guard: PLATE REV, SPRING REV, DARK REV) is rendered directly and through the wrapper, on each payload, on the allocator slots that put its buffer
 at Y:0x4000, 0x8000 and the two window slots, with and without code published inside one window slot (BOUND and
 the span words are written into a copy of the dump). Clear of the code the wrapper's output and its Y writes equal the direct render's.
 On the 0x34000 slot with code loaded the instance passes the audio through and writes nothing to Y. dsp_host keeps P
@@ -119,5 +119,7 @@ for key, sid, tag, bases, (lo, hi) in [(k, i, t, b, w) for k, i in (("PLATE REV"
                 check(f"{what} loaded, buffer at Y:0x{base:05x} clear of it: the wrapper equals the stock render",
                       w_out == d_out and w_y == d_y)
 
+if not set(R.window_guard) & {"PLATE REV", "SPRING REV", "DARK REV"}:
+    check("the remix wraps at least one stock reverb (Remix.window_guard)", False, "nothing was checked")
 print("PASS" if not fails else f"{fails} FAIL")
 sys.exit(1 if fails else 0)

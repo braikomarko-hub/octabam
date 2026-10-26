@@ -31,6 +31,7 @@ nav:
       - Feature Directory: reference/modules.md
       - About: about.md
   - Effects:
+      - AtoMizer: reference/modules/atomizer.md
       - BBD Delay: reference/modules/bbd.md
       - Character: reference/modules/character.md
       - Character TXTR: reference/modules/character-txtr.md

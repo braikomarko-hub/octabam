@@ -92,6 +92,7 @@ def _label(m) -> str:
     names = {
         "analog-bassdrum": "Analog BD",
         "ata-write-guard": "ATA write guard",
+        "atomizer": "AtoMizer",
         "bbd": "BBD delay",
         "character-txtr": "Character TXTR",
         "db666": "dB666",
