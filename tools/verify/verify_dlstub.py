@@ -76,9 +76,12 @@ def write_records(path, recs):
 base_recs = records(mem)
 
 
+ALLOC = "0"                                # the slot: FX1's first; an FX2-only effect gets FX2's first (below)
+
+
 def run(memfile, init, proc, tag, vals):
     out = TMP / f"{tag}.raw"
-    cmd = [HOST, "-mem", str(memfile), "-init", f"{init:x}", "-proc", f"{proc:x}", "-inst", "1", "-r7", "1", "-alloc", "0",
+    cmd = [HOST, "-mem", str(memfile), "-init", f"{init:x}", "-proc", f"{proc:x}", "-inst", "1", "-r7", "1", "-alloc", ALLOC,
            "-inmask", "1", "-frames", str(FRAMES), "-blocks", str(BLOCKS), "-in", str(TMP / "in.raw"),
            "-out", str(out), "-params", ",".join(str(v) for v in vals)]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -92,6 +95,10 @@ for k, key in enumerate(R.window_demand):
     print(f"{key} (effect {k}):")
     mod = registry.modules()[key]
     rec = RECS[key]
+    # An effect whose buffer outgrows an FX1 slot (3,072 words) runs on FX2 only: rendered on FX2's first
+    # slot (Y:0x4000). AtoMizer (15,779 words) passes the audio through on an FX1 base by design.
+    _c = getattr(mod, "claims", None)
+    ALLOC = "1" if _c is not None and (_c.buffer_words or 0) > 3072 else "0"
     init_m, proc_m = rec["init"], rec["proc"]                          # the real code, loaded on demand
     init_s, proc_s = send_probe.entry_points(mem, mod.menu.fx2_id)     # its id dispatches to the stub
     entry = ENTRY + 8 * k

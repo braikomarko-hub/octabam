@@ -4,7 +4,7 @@ A granular delay for FX2, by Marko Brajković, after the **Red Panda Particle**
 (V1 on the Spin FV-1, 2011; Particle 2, 2019). Particle is Red Panda's name and
 pedal: AtoMizer re-derives its behaviour for the Octatrack from the Particle 2
 owner's manual (firmware 2.2, July 2023) and Red Panda's public changelog. No
-Red Panda code or firmware was read or used. 1,516 DSP words and a 42-word
+Red Panda code or firmware was read or used. 1,522 DSP words and a 42-word
 P table; `atomizer.asm` is proven BIT-IDENTICAL against an integer model of
 the same arithmetic, `atomizer_ref.py`.
 
@@ -79,7 +79,7 @@ sample and on every layout change.
 
 0x1e is the id AtoMizer prefers; `registry.assign_ids` gives it the remix's
 own, so it replaces no stock effect. Its code goes either into a harvested
-donor run (1,558 words with the table, which takes SPRING REV, PLATE REV and
+donor run (1,564 words with the table, which takes SPRING REV, PLATE REV and
 DARK REV) or into the shared window, loaded on demand while a track uses it
 (`Remix.window_demand`). `remixes/test/atomizer` does the latter: the code at
 `P:0x35000`, offset +$1000 of T8's FX2 slot on core A, beside all 14 stock
@@ -94,6 +94,11 @@ In `test/atomizer` that is AtoMizer on **T8's FX2**: it stays dry there and
 works on the other seven FX2 slots. When the range is free again the slot
 clears and the engine restarts. A remix without the loader leaves those
 words zero, so the check never fires.
+
+AtoMizer is FX2 only (an FX1 slot holds 3,072 words), but a part saved under
+another remix can put its id on an FX1 slot, and the loader would then load
+it. On a base below Y:$4000 the instance passes the audio through and writes
+nothing.
 
 `cycle_count.py`: 599 cycles a sample per instance, pricing a grain start on
 every sample and the worst feedback mode; four on a core 2,396 of the 3,120
@@ -121,12 +126,14 @@ space of DELAY, SPRING REV, PLATE REV and DARK REV):
   code in T8's slot; a span on the slot's last word; a span in core B's T4
   slot) passes the input through sample for sample and writes no Y word; a
   span from +$3DA3 or ending at the base, and every other slot, render
-  bit-identically to the dump without it. `dsp_host` keeps P and Y apart, so
-  this proves the decision, not the chip's overwrite.
+  bit-identically to the dump without it; on an FX1 base the instance is dry
+  and writes nothing. `dsp_host` keeps P and Y apart, so this proves the
+  decision, not the chip's overwrite. Not covered: an instance going from dry
+  back to wet when a span is withdrawn mid-render.
 
 On `remixes/test/atomizer` the demand loader's own gates pass with AtoMizer
 as the loaded effect: `verify_dlstub` (unbound dry, bound equal to the direct
-render, 1,558 words at `P:0x35000`, a bad sum or a missing doorbell stays dry)
+render on FX2's first slot, 1,564 words at `P:0x35000`, a bad sum or a missing doorbell stays dry)
 and `verify_dlwrap` (the three reverbs on every slot and payload).
 
 What none of them can see: the unit itself (memory-contention stalls, the
