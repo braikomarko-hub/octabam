@@ -70,6 +70,7 @@ from the card (section 5).
 
 | module | author | what it does | proof |
 |---|---|---|---|
+| [**ATOMIZER**](modules/atomizer/README.md) | [Marko Brajković](https://github.com/braikomarko-hub) | Granular delay after the Red Panda Particle V1: 8 modes, freeze, recycle/post/ping/repeat feedback; FX2. | local render: its own render gates (dsp_host, bit-exact against atomizer_ref.py); not on hardware |
 | [**BBD**](modules/bbd/README.md) | [JamCones](https://github.com/JamCones) | Clocked BBD delay: compander, clock/3 filters, bucket noise, freeze, governor; FX2. | on hardware: JamCones' MKII, BBDOB4 (remixes/test/bbd, BUILD 4), 17 Oct 2026 |
 | [**CHARACTER**](modules/character/README.md) | [sambanks](https://github.com/sambanks) | FX1 station: fold, saturation, tilt, compressor, width. | on hardware: Sam's MKII |
 | [**CHARACTER TXTR**](modules/character-txtr/README.md) | [sambanks](https://github.com/sambanks) | Character plus TXTR (Airwindows Pockey2): fold, texture, saturation, tilt, compressor, width. | on hardware: cursory testing on Sam's MKII (owner report, 16 Oct 2026) |
