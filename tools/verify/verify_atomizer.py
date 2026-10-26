@@ -26,6 +26,12 @@ Gates:
   garbage     from an instance block pre-filled with garbage (verify_dirty_state.py's fills),
               a render is identical to one from a zeroed block (init zeroes $00..$5f, the clear
               zeroes the Y slot before the first wet sample)
+  demand      with a loaded window effect's entry written into the dump (BOUND and its span at
+              x:$33da3, as DLCOPY publishes it; verify_dlwrap's method): the instance whose slot
+              covers the span passes the input through sample for sample and writes nothing to Y;
+              a span one word past either end of the slot's +$0000..$3DA2, and every other slot,
+              render bit-identically to the dump without it. dsp_host keeps P and Y apart, so this
+              proves the decision, not that the chip's code would have been overwritten.
 """
 import array
 import contextlib
@@ -37,6 +43,7 @@ import pathlib
 import random
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -359,7 +366,7 @@ def gate_idle(g, host, work):
     sig = signal(1.6, stop=0.6)
     blocks = len(sig) // FR
     inp = write_raw(work / 'idle_in.raw', sig)
-    quiet = int(0.6 * SR) + 15870 + 2 * 8128 + 4096        # the ring, two grains and the post line pass
+    quiet = int(0.6 * SR) + 15779 + 2 * 8128 + 4096        # the ring, two grains and the post line pass
     for f in range(8):
         k = knobs(FBMD=f, FDBK=0, MIX=127, CHOP=127, TIME=127, MODE=0)
         _, (out,) = host.run([dict(core=0, pos=0, knobs=k)], blocks, [inp])
@@ -423,6 +430,67 @@ def gate_garbage(g, host, work):
             f'{same} of {len(FILLS) * len(sets)} renders identical')
 
 
+MAGIC = 0xB0A5ED                            # DLCOPY's BOUND word (modules/dlcopy/dlcopy.asm)
+EXTENT = 0x3DA3                             # AtoMizer writes its slot's +$0000..$3DA2
+
+
+def published(mem, name, lo, hi, k=0):
+    """A copy of the dump with effect k's entry as DLCOPY publishes it: BOUND, the span [lo, hi)."""
+    blob = pathlib.Path(mem).read_bytes()
+    end = blob.rindex(b'\xff')
+    e = 0x33DA3 + 8 * k
+    rec = b''.join(struct.pack('<BII', 1, a, 1) + struct.pack('<I', w)
+                   for a, w in ((e + 3, lo), (e + 4, hi), (e, MAGIC)))
+    path = pathlib.Path(mem).with_name(f'{name}.mem')
+    path.write_bytes(blob[:end] + rec + blob[end:])
+    return path
+
+
+def gate_demand(g, host, work):
+    blocks = 600
+    inp = write_raw(work / 'dm_in.raw', signal(blocks * FR / SR, seed=5))
+    want = read_raw(inp)
+    kn = knobs(MODE=0, CHOP=60, TIME=70, FDBK=100, MIX=127, FBMD=1, SPRD=60)
+    bases = {0: (0x4000, 0x8000, 0x30000, 0x34000), 1: (0x4000, 0x8000, 0x38000, 0x3C000)}
+
+    def render(core, pos, mems, tag):
+        ydump = work / f'dm_{tag}.y'
+        _, (o,) = host.run([dict(core=core, pos=pos, knobs=kn)], blocks, [inp],
+                           ('-dumpy', f'4000,40000,{ydump}', '-dumpcore', str(core)), mems=mems)
+        y = array.array('I')
+        y.frombytes(ydump.read_bytes())
+        ydump.unlink()
+        return o, y
+
+    def wrote(y, base):
+        return sum(1 for a in range(base, base + EXTENT) if y[a - 0x4000])
+
+    clean = {(c, p): render(c, p, None, f'c{c}{p}') for c in (0, 1) for p in range(4)}
+    for c, p in clean:
+        g.check(f'demand: core {c} slot Y:0x{bases[c][p]:05x}, nothing loaded: the instance wrote its slot',
+                wrote(clean[c, p][1], bases[c][p]) > 0)
+    # AtoMizer's own block in remixes/test/atomizer: P:0x35000, +$1000 of T8's FX2 slot (core A, 0x34000)
+    code = (0x35000, 0x35000 + 1516)
+    for label, (lo, hi), hit in (('its own code at +$1000 of the T8 slot', code, (0, 3)),
+                                 ('a span on the slot\'s last word, +$3DA2', (0x34000 + EXTENT - 1, 0x34000 + EXTENT), (0, 3)),
+                                 ('a span from +$3DA3 (the loader\'s gap)', (0x34000 + EXTENT, 0x34000 + EXTENT + 32), None),
+                                 ('a span ending at the slot\'s base', (0x33F00, 0x34000), None),
+                                 ('a span at +$1000 of core B\'s T4 slot', (0x3D000, 0x3D000 + 1516), (1, 3))):
+        mems = {c: published(host.mems[c], f'dm{c}_{lo:x}', lo, hi) for c in (0, 1)}
+        for (c, p), (o0, y0) in clean.items():
+            o, y = render(c, p, mems, f'p{c}{p}')
+            if (c, p) == hit:
+                n, at = differ(o, want)
+                g.check(f'demand: {label}: the covered slot passes the input through', n == 0,
+                        f'{n} of {len(want)} words differ{at}')
+                g.check(f'demand: {label}: the covered slot writes nothing to Y', wrote(y, bases[c][p]) == 0,
+                        f'{wrote(y, bases[c][p])} words written')
+            else:
+                n, at = differ(o, o0)
+                g.check(f'demand: {label}: core {c} slot Y:0x{bases[c][p]:05x} renders as without it',
+                        n == 0 and y == y0, f'{n} words differ{at}, Y {"same" if y == y0 else "differs"}')
+
+
 def main():
     import send_probe
     g = Gates()
@@ -439,7 +507,8 @@ def main():
         gate_placement(g, log)
         host = Host(mems, work)
         only = sys.argv[1:]
-        for gate in (gate_dry, gate_reference, gate_automation, gate_idle, gate_isolation, gate_garbage):
+        for gate in (gate_dry, gate_reference, gate_automation, gate_idle, gate_isolation, gate_garbage,
+                     gate_demand):
             if not only or gate.__name__[5:] in only:
                 gate(g, host, work)
     print(f"== atomizer: {'all gates pass' if not g.failed else str(len(g.failed)) + ' failed: ' + ', '.join(g.failed)}")
