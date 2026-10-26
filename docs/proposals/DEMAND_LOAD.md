@@ -93,6 +93,7 @@ Layout (words are `X:` or `P:` as in the window, which aliases):
 | `P:0x33dc3..0x33e55` | DLCOPY; the stub follows at `window_loader` (`0x33e56`), then the guard's trampolines for payload A and B with their two shared loaders, the reverbs' records (stock init, stock proc, extent; three words a reverb and payload), then its body (to `0x33fb6` in octabam, 28 Oct 2026) |
 | `P:0x37da3..0x37eff` | LOAD METER's DSP half (A and B) |
 | top of each slot | the effects, not uploaded: SPECTRUM `0x33820` (slot of T7), CHARACTER `0x37820` (T8), MODULATION `0x3b820` (T3), TRANSIENT `0x3fe00` (T4). The loader and LOAD METER sit above `0x33da3` and `0x37da3` in the first two slots, so those hold at most 1,411 words from `0x3820` (SPECTRUM, the larger of the two placed there, is 1,399); the third and fourth hold 2,016 |
+| `test/atomizer` | ATOMIZER at `0x35000` (T8's FX2 slot). Its own buffer reaches +$3DA2 of a slot, so it guards itself as DLWRAP guards the reverbs (it reads the entries every call and is dry while its range covers a loaded span): dry on T8's FX2, wet on the other FX2 slots (`modules/atomizer/README.md`) |
 
 The clear gaps are `0x33da3..0x33fff` (605 words) and `0x37da3..0x37eff` (349 words); resident code above `0x37f00` is wiped at
 boot. octabam uses 531 and 340 (build report, 28 Oct 2026: the guard's trampolines were 156 words of immediates until then, 88 with their records now).

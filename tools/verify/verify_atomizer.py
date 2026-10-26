@@ -30,8 +30,12 @@ Gates:
               x:$33da3, as DLCOPY publishes it; verify_dlwrap's method): the instance whose slot
               covers the span passes the input through sample for sample and writes nothing to Y;
               a span one word past either end of the slot's +$0000..$3DA2, and every other slot,
-              render bit-identically to the dump without it. dsp_host keeps P and Y apart, so this
-              proves the decision, not that the chip's code would have been overwritten.
+              render bit-identically to the dump without it; the entry is tried as effect 0 and 3.
+              On an FX1 base (dsp_host -alloc 0, Y:0x1000) the instance is dry and writes nothing.
+              dsp_host keeps P and Y apart, so this proves the decision, not that the chip's code
+              would have been overwritten. Not covered: the stub's path (verify_dlstub) and an
+              instance going from dry back to wet when a span is withdrawn mid-render (dsp_host
+              cannot change the dump between blocks; DEMAND_LOAD.md "Open").
 """
 import array
 import contextlib
@@ -168,7 +172,8 @@ class Host:
     def __init__(self, mems, work):
         import send_probe
         self.mems, self.work, self.n = mems, work, 0
-        self.ep = {c: send_probe.entry_points(mems[c], MOD.menu.fx2_id) for c in (0, 1)}
+        fxid = registry.bound(remix_for(DONORS))['ATOMIZER'].menu.fx2_id   # the remix's id (trap-module-id)
+        self.ep = {c: send_probe.entry_points(mems[c], fxid) for c in (0, 1)}
 
     def run(self, insts, blocks, inputs, extra=(), mems=None):
         """insts: dicts with core, pos, and knobs or paramfile; inputs: one raw per instance.
@@ -180,7 +185,7 @@ class Host:
                '-init', ','.join('%x' % self.ep[i['core']][0] for i in insts),
                '-proc', ','.join('%x' % self.ep[i['core']][1] for i in insts),
                '-inst', str(len(insts)), '-core', ','.join(str(i['core']) for i in insts),
-               '-alloc', ','.join(str(1 + 2 * i['pos']) for i in insts),
+               '-alloc', ','.join(str(i.get('alloc', 1 + 2 * i['pos'])) for i in insts),
                '-r7', ','.join(str(2 + 3 * i['pos']) for i in insts),
                '-audioidx', ','.join(str(k) for k in range(len(insts))), '-audio', '9000',
                '-in', ','.join(str(p) for p in inputs), '-stereo',
@@ -272,6 +277,8 @@ def gate_placement(g, log):
             g.check(f'placement: payload {tag}', False, 'no ATOMIZER or run line in the build log')
             continue
         lo, hi = int(m[1], 16), int(m[2], 16)
+        global CODE_WORDS
+        CODE_WORDS = int(m[3])
         ok = any(a <= lo and hi <= b for a, b in runs)
         g.check(f'placement: payload {tag}', ok, f'ATOMIZER P:0x{lo:05x}..0x{hi:05x} ({m[3]} words) inside a harvested run')
 
@@ -430,6 +437,7 @@ def gate_garbage(g, host, work):
             f'{same} of {len(FILLS) * len(sets)} renders identical')
 
 
+CODE_WORDS = 1516                           # the build's figure, set by gate_placement from the log
 MAGIC = 0xB0A5ED                            # DLCOPY's BOUND word (modules/dlcopy/dlcopy.asm)
 EXTENT = 0x3DA3                             # AtoMizer writes its slot's +$0000..$3DA2
 
@@ -453,9 +461,12 @@ def gate_demand(g, host, work):
     kn = knobs(MODE=0, CHOP=60, TIME=70, FDBK=100, MIX=127, FBMD=1, SPRD=60)
     bases = {0: (0x4000, 0x8000, 0x30000, 0x34000), 1: (0x4000, 0x8000, 0x38000, 0x3C000)}
 
-    def render(core, pos, mems, tag):
+    def render(core, pos, mems, tag, alloc=None):
         ydump = work / f'dm_{tag}.y'
-        _, (o,) = host.run([dict(core=core, pos=pos, knobs=kn)], blocks, [inp],
+        inst = dict(core=core, pos=pos, knobs=kn)
+        if alloc is not None:
+            inst['alloc'] = alloc
+        _, (o,) = host.run([inst], blocks, [inp],
                            ('-dumpy', f'4000,40000,{ydump}', '-dumpcore', str(core)), mems=mems)
         y = array.array('I')
         y.frombytes(ydump.read_bytes())
@@ -465,18 +476,27 @@ def gate_demand(g, host, work):
     def wrote(y, base):
         return sum(1 for a in range(base, base + EXTENT) if y[a - 0x4000])
 
+    for c in (0, 1):                        # an FX1 base: AtoMizer is FX2 only (atomizer.asm, the header)
+        o, y = render(c, 0, None, f'fx1{c}', alloc=0)
+        n, at = differ(o, want)
+        g.check(f'demand: core {c}, an FX1 slot (Y:0x01000): the input passes through', n == 0,
+                f'{n} of {len(want)} words differ{at}')
+        g.check(f'demand: core {c}, an FX1 slot: nothing written to Y', not any(y[:0x3E00]),
+                f'{sum(1 for v in y[:0x3E00] if v)} words written at Y:0x4000..')
     clean = {(c, p): render(c, p, None, f'c{c}{p}') for c in (0, 1) for p in range(4)}
     for c, p in clean:
         g.check(f'demand: core {c} slot Y:0x{bases[c][p]:05x}, nothing loaded: the instance wrote its slot',
                 wrote(clean[c, p][1], bases[c][p]) > 0)
     # AtoMizer's own block in remixes/test/atomizer: P:0x35000, +$1000 of T8's FX2 slot (core A, 0x34000)
-    code = (0x35000, 0x35000 + 1516)
-    for label, (lo, hi), hit in (('its own code at +$1000 of the T8 slot', code, (0, 3)),
-                                 ('a span on the slot\'s last word, +$3DA2', (0x34000 + EXTENT - 1, 0x34000 + EXTENT), (0, 3)),
-                                 ('a span from +$3DA3 (the loader\'s gap)', (0x34000 + EXTENT, 0x34000 + EXTENT + 32), None),
-                                 ('a span ending at the slot\'s base', (0x33F00, 0x34000), None),
-                                 ('a span at +$1000 of core B\'s T4 slot', (0x3D000, 0x3D000 + 1516), (1, 3))):
-        mems = {c: published(host.mems[c], f'dm{c}_{lo:x}', lo, hi) for c in (0, 1)}
+    code = (0x35000, 0x35000 + CODE_WORDS)
+    for label, (lo, hi), hit, k in (('its own code at +$1000 of the T8 slot', code, (0, 3), 0),
+                                    ('its own code, published as effect 3', code, (0, 3), 3),
+                                    ('a span ending one word past the slot\'s base', (0x33F00, 0x34001), (0, 3), 0),
+                                    ('a span on the slot\'s last word, +$3DA2', (0x34000 + EXTENT - 1, 0x34000 + EXTENT), (0, 3), 0),
+                                    ('a span from +$3DA3 (the loader\'s gap)', (0x34000 + EXTENT, 0x34000 + EXTENT + 32), None, 0),
+                                    ('a span ending at the slot\'s base', (0x33F00, 0x34000), None, 0),
+                                    ('a span at +$1000 of core B\'s T4 slot', (0x3D000, 0x3D000 + CODE_WORDS), (1, 3), 0)):
+        mems = {c: published(host.mems[c], f'dm{c}_{lo:x}_{k}', lo, hi, k) for c in (0, 1)}
         for (c, p), (o0, y0) in clean.items():
             o, y = render(c, p, mems, f'p{c}{p}')
             if (c, p) == hit:

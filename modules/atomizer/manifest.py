@@ -16,7 +16,7 @@ in r7 + $00..$5f. atomizer_ref.py is the bit-exact model the DSP is proven again
 (tools/verify/verify_atomizer.py).
 
 0x1e is the PREFERRED id: registry.assign_ids gives the remix's own (docs/contributing/
-MODULES.md), so AtoMizer replaces nothing and the stock DELAY stays. Its 1,520 words fit
+MODULES.md), so AtoMizer replaces nothing and the stock DELAY stays. Its 1,564 words fit
 a donor run or, loaded on demand (Remix.window_demand, docs/proposals/DEMAND_LOAD.md), a
 window slot at +$1000: remixes/test/atomizer is built that way, with every stock effect.
 On the track whose FX2 slot holds the loaded code the instance stays dry (atomizer.asm).

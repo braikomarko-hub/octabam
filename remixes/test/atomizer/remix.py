@@ -4,7 +4,7 @@ AtoMizer's code sits at P:0x35000 (offset 0x1000 of T8's FX2 slot on core A) and
 there by DLPUMP and DLCOPY while a track uses it (docs/proposals/DEMAND_LOAD.md); the stock
 reverbs are wrapped so they never run over it, and AtoMizer on T8's FX2 passes the audio
 through for the same reason (atomizer.asm). LOAD METER carries the pump and measures the cost."""
-from remix.schema import Proof, Remix
+from remix.schema import Pin, Proof, Remix
 STOCK14 = ("FILTER", "EQUALIZER", "DJ EQ", "PHASER", "FLANGER", "CHORUS", "SPATIALIZER",
            "COMB FILTER", "COMPRESSOR", "LO-FI", "DELAY", "SPRING REV", "PLATE REV", "DARK REV")
 REMIX = Remix(family="effects", proof=Proof.CHECK, proof_note="",
@@ -19,6 +19,7 @@ REMIX = Remix(family="effects", proof=Proof.CHECK, proof_note="",
               window_guard=("PLATE REV", "DARK REV", "SPRING REV"),
               window_loader=0x33E56,
               fallback="NONE",
-              settings={("octabam.usb", "TRACKS"): "PRE", ("octabam.usb", "MAIN"): 0,
+              settings={("octabam.dlpump", "GRACE"): Pin("2 S"),   # verify_dlload's withdraw scenario, as test/dlspike
+                        ("octabam.usb", "TRACKS"): "PRE", ("octabam.usb", "MAIN"): 0,
                         ("octabam.usb", "CUE"): 0, ("octabam.usb", "MASTER"): 0,
                         ("octabam.usb", "IN"): "OFF"})

@@ -16,6 +16,10 @@
 ; 7,587 words (PING: two lines of 3,793). Every index wraps by compare, not mask.
 ; A layout change passes dry while the slot clears, 256 words a call.
 ;
+; FX1: AtoMizer is FX2 only, but a part saved under another remix can put its id on an FX1
+; slot (and the demand loader then loads it). An FX1 slot (base below Y:$4000) is 3,072
+; words: the instance passes the audio through and writes nothing.
+;
 ; Demand loading: when the slot's range covers the code of a loaded window effect
 ; (AtoMizer's own included: it sits at +$1000 of one slot), the instance passes the
 ; audio through and writes nothing, checked every call as DLWRAP checks the stock
@@ -58,7 +62,7 @@ amzero:
         nop
         move    x:(r4),a
         move    a,x:(r7+$00)
-        move    #>$3e,a                 ; clear 62 x 256 words: +$0000..$3dff
+        move    #>$3e,a                 ; clear 61 x 256 + $a3 words: +$0000..$3da2
         move    a,x:(r7+$01)
         move    #>$5a5a5b,a
         move    a,x:(r7+$03)
@@ -70,11 +74,16 @@ proc:
         move    #>$ffffff,m3
         move    #>$ffffff,m4
         move    #>$ffffff,m5
-; ---- demand loading: never write over loaded window code (the header) ------
+; ---- an FX1 slot, or loaded window code under the slot: dry (the header) --
         move    x:(r7+$00),x1           ; the slot's base
+        move    x1,a
+        move    #>$4000,x0
+        cmp     x0,a
+        blt     amgfx1                  ; an FX1 slot (base below Y:$4000): 3,072 words, too small
         bsr     amgchk
         tst     a
         beq     amgclr
+amgfx1:
         move    #>$3e,a
         move    a,x:(r7+$01)            ; the slot clears once the range is free again
         rts                             ; dry: the block passes untouched
@@ -574,7 +583,7 @@ ammix:
         cmp     x0,a
         tgt     x0,a
         move    a1,x0
-        move    x0,x:(r7+$56)           ; the slot: L, at most 7,616
+        move    x0,x:(r7+$56)           ; the slot: L, at most 7,552
         move    x0,a
         asr     #$2,a,a
         move    #>128,x0

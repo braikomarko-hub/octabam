@@ -102,7 +102,7 @@ class AtoMizer:
         if s[0x01]:
             s[0x01] -= 1
             c = s[0x01]
-            n = 0xFE if c == 0x3D else 0x100
+            n = 0xA3 if c == 0x3D else 0x100
             for i in range(n):
                 y[(c << 8) + i] = 0
             if c == 0:
