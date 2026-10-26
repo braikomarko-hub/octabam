@@ -925,17 +925,17 @@
   "morph": {
     "window": {
       "image": "morph/window.png",
-      "caption": "T1 + UP: the MORPH window, T1 armed; STEPS, x and MODE on A, B and C.",
+      "caption": "T1 + UP: the MORPH window, T1 armed; STEPS, x and MODE on A, B and C; the scenes the morph runs between, bottom right.",
       "remix": "morph",
       "source": "emulator panel UART",
-      "firmware_sha256": "20a95c603255f608e4b4ff06e8811d4c985d6b95bd22982ae0a426ff5611f508"
+      "firmware_sha256": "c6d845a586bb0ba3095333977515800492bbbb04f72f344bac604ab352f1197b"
     },
     "settings": {
       "image": "morph/settings.png",
       "caption": "STEPS 8 and x 2: a cycle of 16 steps.",
       "remix": "morph",
       "source": "emulator panel UART",
-      "firmware_sha256": "20a95c603255f608e4b4ff06e8811d4c985d6b95bd22982ae0a426ff5611f508"
+      "firmware_sha256": "c6d845a586bb0ba3095333977515800492bbbb04f72f344bac604ab352f1197b"
     }
   },
   "devilish": {
