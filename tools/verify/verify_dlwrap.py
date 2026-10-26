@@ -79,7 +79,7 @@ def wrote(y, lo, hi):
 
 # the code is published inside the slot at 0x34000 (payload A) or 0x38000 (payload B): the allocator's fifth and
 # seventh entries are those slots' bases on the payload that has them
-for key, sid, tag, bases, (lo, hi) in [(k, i, t, b, w) for k, i in (("PLATE REV", 0x14), ("SPRING REV", 0x15), ("DARK REV", 0x16))
+for key, sid, tag, bases, (lo, hi) in [(k, i, t, b, w) for k, i in (("PLATE REV", 0x14), ("SPRING REV", 0x15), ("DARK REV", 0x16)) if k in R.window_guard
                                        for t, b, w in (("A", (0x4000, 0x8000, 0x30000, 0x34000), (0x35000, 0x35619)),
                                                        ("B", (0x4000, 0x8000, 0x38000, 0x3C000), (0x39000, 0x39619)))]:
     print(f"{key}, payload {tag}:")
