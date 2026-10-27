@@ -94,6 +94,10 @@ MODULE = Module(
         ybase=YBase.NEVER,
         r7_latch_slot=None,
         gate_label=None,
+        # One instance per core (the owner's choice, 27 Oct 2026): four on one core beside
+        # four DISTORX on FX1 priced 3,552 cycles against the 3,120 usable (cycle_count).
+        # The unit does not enforce it; the remix README states it.
+        max_per_core=1,
     ),
     claims=Claims(stock_instance_buffer=True, buffer_words=15779),
     harness=Harness(layout_char=None, is_server=False),
