@@ -39,7 +39,7 @@ overtakes the write head.
 | main, C | PARA | 0–127 (64) | The MODE's parameter (table above). |
 | main, D | FDBK | 0–127 (0) | RCYC: the wet back into the ring (to 0.95). POST and PING: the post line's feedback. REP, R1/2, R1/4: the repeats, 0..8. RPCT: the probability of a repeat. |
 | main, E | FREZ | 0–127 (0) | 0 off -- always releases, whatever came before. 1..126: the ring stops taking input while the track is quiet (a slow envelope under (FREZ/128)²/4). 127: frozen; the grains, the LFO and the scan go on over what the ring holds. |
-| main, F | MIX | 0–127 (64) | 0 is exactly dry, and **at rest**: the ring keeps recording, nothing else runs, so AtoMizer costs almost nothing. To 64 the wet rises to unity over the whole dry; from 64 to 127 the dry fades out (the Particle 2.0.1 BLEND law). Leaving 0 starts a fresh grain. |
+| main, F | MIX | 0–127 (0) | 0 is exactly dry, and **at rest**: picked, AtoMizer starts there, so it never comes in abruptly; the ring keeps recording, nothing else runs, so AtoMizer costs almost nothing. To 64 the wet rises to unity over the whole dry; from 64 to 127 the dry fades out (the Particle 2.0.1 BLEND law). Leaving 0 starts a fresh grain. |
 | SETUP, A | MODE | the eight above (DDEN) | Changing it moves no knob (the Particle 2.2 expert mode). |
 | SETUP, B | TONE | 0–127 (127) | A one-pole low-pass in the feedback (RCYC, POST, PING): 0 dark, 127 open. |
 | SETUP, C | FBMD | AUTO, RCYC, POST, PING, REP, R1/2, R1/4, RPCT (AUTO) | The feedback mode (below). Moving between RCYC and the others clears the slot: 62 calls of dry, about 22 ms. |
@@ -74,6 +74,26 @@ T8 slots, sit the demand loader's entries, DLCOPY and LOAD METER's DSP half
 (`docs/proposals/DEMAND_LOAD.md`). State in r7 + $00..$5f, all zeroed at init;
 the slot is cleared (256 words a call, dry meanwhile) before the first wet
 sample and on every layout change.
+
+## STOP
+
+`stop.s` (a detour at `0x40004d04`, the stop kill's mask test in the frame's DSP-record pass) makes the
+transport reach AtoMizer, which the DSP cannot see by itself:
+
+- **STOP** (the transport word `0x800065b8` is not 1): FREZ reads 0 in the record. The ring takes the
+  input again, which is silence once the tracks stop, so the grains die away like a delay's tail
+  (within the ring's 358 ms; longer with FDBK, as a delay's feedback rings). Before, a frozen ring (FREZ
+  127, or 1..126 with the input quiet) played on after STOP until FREZ or MIX was turned down.
+- **STOP, STOP** (the stop kill, as it silences the stock reverbs): MIX reads 0 too, and AtoMizer rests
+  at once: dry, the ring recording silence.
+- **PLAY**: the record is rebuilt from the Part every frame (0x4000cb4a), so FREZ comes back at PLAY
+  and, after STOP, STOP, MIX at the track's next trig (the kill mask clears a track's bit when it
+  triggers, as for the stock reverbs: a track with no trigs stays dry). The knobs never move.
+- While stopped the ring still records whatever audio keeps flowing (thru inputs, other effects' tails),
+  so the tail dies away once that input is quiet.
+
+Live input through a stopped sequencer cannot be frozen: FREZ reads 0 while stopped.
+`tools/verify/verify_atomizer_stop.py` checks the records under the port.
 
 ## Placement and id
 

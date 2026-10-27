@@ -22,8 +22,8 @@ window slot at +$1000: remixes/test/atomizer is built that way, with every stock
 On the track whose FX2 slot holds the loaded code the instance stays dry (atomizer.asm).
 """
 
-from remix.schema import (BusRole, Category, Claims, DspSection, Formatter, Gate, Harness, Kind,
-                          MenuEntry, ModeView, Module, Param, Proof, YBase)
+from remix.schema import (BusRole, Category, Claims, Detour, DspSection, Formatter, Gate, Harness, Kind,
+                          Linked, MenuEntry, ModeView, Module, Param, Proof, YBase)
 
 MODES = ("DDEN", "DLFO", "DREV", "DPCH", "DRND", "PDTN", "PLFO", "PDEN")
 FBMDS = ("AUTO", "RCYC", "POST", "PING", "REP", "R1/2", "R1/4", "RPCT")
@@ -33,6 +33,11 @@ EXP = tuple(round(512 * 2 ** (i / 12)) for i in range(-12, 14))   # Q9 increment
 PTABLE = CHOP_HT + TIME_HT + EXP
 
 _P = Formatter.PLAIN
+
+
+def id_inc(modules, remix):
+    """AtoMizer's id in this remix (`registry.assign_ids`), for stop.s."""
+    return f"        .set    ATM_ID, {modules['ATOMIZER'].menu.fx2_id}\n"
 
 # TIME and PARA mean something different in each MODE (the Particle's DELAY/PITCH
 # and PARAM knobs): the names follow MODE, the values never jump (the Particle 2.2
@@ -69,8 +74,8 @@ MODULE = Module(
               doc="feedback; in the REP modes the repeats (0..8) or, in RPCT, their probability"),
         Param(b"FREZ", 0, 128, active=True, formatter=_P,
               doc="0 off; 1..126 freeze while the input is under the threshold; 127 frozen"),
-        Param(b"MIX", 64, 128, active=True, formatter=_P,
-              doc="0 dry and at rest (only the ring records); to 64 the wet rises; 64-127 fades the dry"),
+        Param(b"MIX", 0, 128, active=True, formatter=_P,
+              doc="0 dry, at rest (the default); to 64 the wet rises; 64-127 fades the dry"),
         Param(b"MODE", 0, 8, active=True, formatter=Formatter.WIDE_STEPPED, labels=MODES,
               doc="DELAY + DENS/LFO/REV/PITCH/RND, PITCH + DTUNE/LFO/DENS (the Particle's eight)"),
         Param(b"TONE", 127, 128, active=True, formatter=_P,
@@ -100,6 +105,12 @@ MODULE = Module(
         max_per_core=1,
     ),
     claims=Claims(stock_instance_buffer=True, buffer_words=15779),
+    # STOP reaches AtoMizer (stop.s): stopped, FREZ reads 0 (the tail dies away); STOP + STOP, MIX
+    # reads 0 too (rest at once), as the stop kill silences the stock reverbs.
+    linked=(Linked("atm_stop", "modules/atomizer/stop.s", include=id_inc),),
+    detours=(Detour(0x40004d04, bytes.fromhex("242f003209026722"), "atm_stop", "atm_stop",
+                    "the stop kill's mask test: AtoMizer's FREZ while stopped, its MIX on STOP + STOP",
+                    pad_to=8),),
     harness=Harness(layout_char=None, is_server=False),
     gates=(Gate("tools/verify/verify_atomizer.py", remix_arg=False),),
     dear={"CHOP": 127, "TIME": 127, "PARA": 0, "FDBK": 127, "FREZ": 0, "MIX": 64,
