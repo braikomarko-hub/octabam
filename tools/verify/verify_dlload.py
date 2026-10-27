@@ -10,7 +10,8 @@ Remix.window_demand (k):
 
   used       T1.. use effects 0.. on FX1 from the start -> each bound, its entry and code in the window
                                                           word for word, seen from both cores
-  withdrawn  the same, T1's FX1 back to FILTER at 2 s  -> effect 0 unbound after the 2 s grace, its span empty, the rest bound
+  withdrawn  the same, T1's FX1 back to FILTER at 2 s  -> effect 0 unbound after the remix's grace (DLPUMP's GRACE:
+             2 S or 10 S; the run lasts until 1.5 s after it), its span empty, the rest bound
   grace      effect 0 unused at 2 s and used again at 3 s -> still bound, loaded once
   reverb-takes  effect 0 unused at 2 s, a reverb on its block at 2.5 s -> unbound by 3.4 s, well inside the grace
   pick-reverb-unused  effect 0 loaded and unused: the FX2 chooser accepts a reverb on its block, no toast, effect withdrawn
@@ -34,7 +35,7 @@ OUT = ROOT / "out/dlload"
 STAGE = 0x2900
 FX1_LIVE, FX2_LIVE = 0x80000EC4, 0x80000ECC
 FX1_PART, FX2_PART = 0x402A75E0, 0x402A75E8      # Part 1's FX ids of track 1 (bank + 0x8ed80 / 0x8ed88)
-FILTER, PLATE = 0x01, 0x14
+FILTER, PLATE = 0x01, 0x14       # PLATE: the stock reverb the scenarios place -- the first the remix wraps (main())
 KEYS = dict(no=0x32, fx1=0x25, fx2=0x26, down=0x20, yes=0x31, t2=0x11, t8=0x17)
 TOAST = 0x4005A2B8          # the firmware's message popup: every decision the loader makes on a chooser ends here
 FAILS = []
@@ -78,6 +79,14 @@ def main():
     recs = list(json.loads((ROOT / "out/dsp/demand_records.json").read_text()).items())
     from remix import registry
     order = list(registry.remix(a.remix).window_demand)
+    # The reverb the scenarios place is one the remix wraps (Remix.window_guard): a remix that leaves
+    # PLATE REV out (acidtrack keeps DARK REV alone) has no PLATE row on its FX2 chooser.
+    global PLATE
+    _guard = registry.remix(a.remix).window_guard
+    PLATE = next((i for k, i in (("PLATE REV", 0x14), ("SPRING REV", 0x15), ("DARK REV", 0x16)) if k in _guard), PLATE)
+    # DLPUMP's GRACE as the remix sets it (modules/dlpump/manifest.py): the withdraw scenario runs past it.
+    _g = registry.remix(a.remix).settings.get(("octabam.dlpump", "GRACE"), "10 S")
+    grace_ms = {"2 S": 2000, "10 S": 10000}[getattr(_g, "value", _g)]
     recs = [dict(next(r for key, r in recs if key == k), key=k) for k in order]
     rec = recs[0]
     mod_id = rec["id"]
@@ -143,7 +152,7 @@ def main():
                 t += 40 + gap
         if tag in ("used", "blocked", "reverb-late"):               # a page key after the decision: where a deferred toast shows
             lines += [f"{a.ms - 800} key {KEYS['fx1']:#x} down", f"{a.ms - 760} key {KEYS['fx1']:#x} up"]
-        lines.append(f"{3400 if tag == 'reverb-takes' else a.ms} quit")
+        lines.append(f"{3400 if tag == 'reverb-takes' else max(a.ms, 2000 + grace_ms + 1500) if tag == 'withdrawn' else a.ms} quit")
         (OUT / f"{tag}.script").write_text("\n".join(lines) + "\n")
         dump = OUT / f"{tag}_ids.bin"
         peeks = ";".join(f"{c}:X:{STAGE:x},1;{c}:X:{0x33DA3 + 8 * k:x},8;{c}:P:{r['addr']:x},{len(r['words'])}"
