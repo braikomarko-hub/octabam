@@ -16,7 +16,7 @@ in r7 + $00..$5f. atomizer_ref.py is the bit-exact model the DSP is proven again
 (tools/verify/verify_atomizer.py).
 
 0x1e is the PREFERRED id: registry.assign_ids gives the remix's own (docs/contributing/
-MODULES.md), so AtoMizer replaces nothing and the stock DELAY stays. Its 1,564 words fit
+MODULES.md), so AtoMizer replaces nothing and the stock DELAY stays. Its 1,635 words fit
 a donor run or, loaded on demand (Remix.window_demand, docs/proposals/DEMAND_LOAD.md), a
 window slot at +$1000: remixes/test/atomizer is built that way, with every stock effect.
 On the track whose FX2 slot holds the loaded code the instance stays dry (atomizer.asm).
@@ -70,7 +70,7 @@ MODULE = Module(
         Param(b"FREZ", 0, 128, active=True, formatter=_P,
               doc="0 off; 1..126 freeze while the input is under the threshold; 127 frozen"),
         Param(b"MIX", 64, 128, active=True, formatter=_P,
-              doc="0-64 adds the wet up to unity over the whole dry; 64-127 fades the dry out"),
+              doc="0 dry and at rest (only the ring records); to 64 the wet rises; 64-127 fades the dry"),
         Param(b"MODE", 0, 8, active=True, formatter=Formatter.WIDE_STEPPED, labels=MODES,
               doc="DELAY + DENS/LFO/REV/PITCH/RND, PITCH + DTUNE/LFO/DENS (the Particle's eight)"),
         Param(b"TONE", 127, 128, active=True, formatter=_P,

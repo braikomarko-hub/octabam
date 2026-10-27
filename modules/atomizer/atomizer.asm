@@ -33,16 +33,26 @@
 ;   $20 $21 record A: Dsafe inc   $22 du  $23 gl  $24 gr  $25 IOI  $26 Kf  $27 shift
 ;   $2c FDBK   $2d TONE coefficient   $2e tone state
 ;   $31 mix g   $32 mix k   $33 FREZ: 0 off, 1 threshold, 2 held   $34 FBMD (resolved)
+;   $35 the envelopes run (SYNC, or FREZ 1..126)
 ;   $38 MODE   $39 ring length N   $3a N << 9   $3c samples/tick Q4
 ;   $3d L   $3e D   $3f semitones Q8   $40..$42 wet L, R, mono (per sample)
-;   $43 SYNC   $44 r1   $45 the mono input   $46 the P table's address   $47 r2
-;   $48 $49 record B: Dsafe inc (voice 1 in PDTN)   $4a r3   $4b PARA   $4c LFO triangle
-;   $4e frozen (per sample)   $4f $5f scratch
+;   $43 SYNC   $44 draw 1   $45 the mono input   $46 the P table's address   $47 draw 2
+;   $48 $49 record B: Dsafe inc (voice 1 in PDTN)   $4a draw 3   $4b PARA   $4c LFO triangle
+;   $4e frozen (a block's for FREZ 0 / 127, a sample's for 1..126)   $4f $5f scratch
 ;   $50 aux write index   $51 post time   $52 aux length   $53 slot sample
 ;   $54 slot plays the capture   $55 repeats left   $56 slot length   $57 2^23 / fade
 ;   $58 slot captures   $59 fast env   $5a slow env   $5b onset hold-off
 ;   $5c freeze threshold   $5d REP's repeats   $5e RPCT's probability
 ; The P table: CHOP's half-ticks (+0), TIME's (+8), 512 2^(s/12) for s = -12..+13 (+16).
+;
+; Lighter (27 Oct 2026), what is not heard is not computed:
+;   - a finished grain (u = 1: a zero window) skips its voice; the next start rewrites the record
+;   - the per-sample slots $40..$5f are read through r2 = r7 + $40 (one-word displacements)
+;   - FREZ 0 / 127 are decided once a block; the envelopes run only for SYNC or FREZ 1..126
+;   - MIX 0 rests: the block is left dry (as MIX 0 always was), only the ring records
+; Same sound with the knobs still: the old model and this one agree on every MODE x FBMD x
+; FREZ x SYNC (384 cases); they differ only right after SYNC / FREZ 1..126 come on (the
+; envelopes start from where they stopped) and on leaving MIX 0 (a fresh grain).
 ; dsp_asm traps met here: `bls` is written with an absolute target, and a negative
 ; short displacement is refused -- every branch is a forward blt/bgt/beq/bne/bge/bra.
 ; Multiplies use only the canonical operand pairs (dsp_asm encodes the
@@ -157,6 +167,103 @@ amdry:
         rts
 
 amrun:
+; ---- MIX 0: at rest. MIX 0 is the dry input exactly, so the block is left as it came; the ring
+;      keeps recording (FREZ 127 keeps what it holds) and nothing else runs: no grains, no
+;      feedback, no envelopes, no LFO. Both voices go silent and a grain starts on the first wet
+;      sample (a fresh Dsafe: no click from a voice the write head ran past); REP's slot
+;      restarts live; layout 1's aux runs out (zeros at its write index), so no stale echo.
+        move    x:(r6+5),a
+        and     #>$7f0000,a
+        tst     a
+        bne     amwork
+        move    #>$7fffff,x0
+        move    x0,x:(r7+$12)           ; voice 0: u = 1
+        move    x0,x:(r7+$1a)           ; voice 1
+        move    #>$1,x0
+        move    x0,x:(r7+$05)           ; a grain at once
+        clr     a
+        move    a,x:(r7+$53)            ; the slot restarts
+        move    a,x:(r7+$55)            ; live, and captured
+        move    x:(r6+4),a
+        and     #>$7f0000,a
+        move    #>$7f0000,x0
+        cmp     x0,a
+        beq     amrsdone                ; FREZ 127: the ring keeps what it holds
+        move    #>15779,a
+        move    x:(r7+$02),b
+        tst     b
+        move    #>8192,x0
+        tne     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$39)           ; the ring's length N
+        move    #>7587,a
+        move    x:(r7+$34),b
+        move    #>$020000,x0
+        cmp     x0,b
+        move    #>3793,x0
+        teq     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$52)           ; the aux's length
+        move    x:(r7+$50),a
+        cmp     x0,a
+        move    #0,x1
+        tge     x1,a
+        move    a1,x1
+        move    x1,x:(r7+$50)
+        move    x:(r7+$00),y0           ; the slot's base
+        move    #>3793,n5
+        do      n7,>amrsend
+        move    x:(r0)+,a
+        move    x:(r0)+,x0
+        add     x0,a
+        asr     a
+        move    a,y1                    ; the mono input
+        move    x:(r7+$02),a            ; layout 1: a zero into the aux, PING's right line too
+        tst     a
+        beq     amrsnx
+        move    x:(r7+$50),a
+        add     y0,a
+        add     #>$2000,a
+        move    a1,r5
+        nop
+        nop
+        clr     a
+        move    a,y:(r5)
+        move    x:(r7+$34),b
+        move    #>$020000,x0
+        cmp     x0,b
+        bne     amrsadv
+        move    a,y:(r5+n5)
+amrsadv:
+        move    x:(r7+$50),a
+        add     #>$1,a
+        move    x:(r7+$52),x0
+        cmp     x0,a
+        move    #0,x0
+        tge     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$50)
+amrsnx:
+        move    x:(r7+$04),a            ; the ring: the input in, the write index on
+        add     y0,a
+        move    a1,r4
+        nop
+        nop
+        move    y1,y:(r4)
+        move    x:(r7+$04),a
+        add     #>$1,a
+        move    x:(r7+$39),x0
+        cmp     x0,a
+        move    #0,x0
+        tge     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$04)
+amrsend:
+        nop
+amrsdone:
+        rts
+
+amwork:
         move    #>$fab1e0,x0            ; the P table (the build's one literal)
         move    x0,x:(r7+$46)
 ; ---- samples per MIDI tick, Q4, from stock's tempo24 (BusDelay's idiom) ---
@@ -277,13 +384,13 @@ amdhalf:
 amdset:
         move    b1,x0
         move    x0,x:(r7+$3e)           ; D
-; ---- three draws: r1 the choice, r2 the amount, r3 the pan ---------------------
+; ---- three draws: 1 the choice, 2 the amount, 3 the pan ---------------------
         bsr     amrand
-        move    x0,x:(r7+$44)           ; r1
+        move    x0,x:(r7+$44)           ; draw 1
         bsr     amrand
-        move    x0,x:(r7+$47)           ; r2
+        move    x0,x:(r7+$47)           ; draw 2
         bsr     amrand
-        move    x0,x:(r7+$4a)           ; r3
+        move    x0,x:(r7+$4a)           ; draw 3
         move    x0,y1
         move    x:(r7+$3d),x0
         bsr     amdivl                  ; a0 = 2^23 / L
@@ -552,6 +659,22 @@ ammix:
         teq     x0,b                    ; 127: frozen
         move    b1,x0
         move    x0,x:(r7+$33)
+        move    x0,b                    ; 0, 1, 2
+        clr     a
+        move    #>$1,y0
+        move    #>$2,x1
+        cmp     x1,b
+        teq     y0,a                    ; 127: frozen the whole block
+        move    a1,x1
+        move    x1,x:(r7+$4e)           ; 0 for 1..126: each sample rewrites it
+        clr     a
+        cmp     y0,b
+        teq     y0,a                    ; 1..126 reads the slow envelope,
+        move    x:(r7+$43),b
+        tst     b
+        tne     y0,a                    ; SYNC both
+        move    a1,x1
+        move    x1,x:(r7+$35)           ; the envelopes run
         move    #>7587,a                ; the aux: 7,587 words, PING two of 3,793
         move    x:(r7+$34),b
         move    #>$020000,x0
@@ -560,6 +683,12 @@ ammix:
         teq     x0,a
         move    a1,x0
         move    x0,x:(r7+$52)
+        move    x:(r7+$50),a            ; POST -> PING shortens the aux: the write index
+        cmp     x0,a                    ; restarts, so no write lands past the slot
+        move    #0,x1
+        tge     x1,a
+        move    a1,x1
+        move    x1,x:(r7+$50)
         move    x:(r7+$3d),b
         asl     b
         move    b1,x0                   ; 2L
@@ -605,6 +734,11 @@ ammix:
         move    a0,x0
         move    x0,x:(r7+$5d)           ; REP's repeats: 0..8
 ; ---- the sample loop ---------------------------------------------------------
+; r2 = r7 + $40: the per-sample slots $40..$5f in a one-word short displacement (x:(r7+$4x)
+; and x:(r7+$5x) are two-word moves: $40 is past the 7-bit range). Comments keep the r7 names.
+        move    r7,a
+        add     #>$40,a
+        move    a1,r2
         move    #>$1,n0
         do      n7,>amend
 ; mono in
@@ -613,46 +747,50 @@ ammix:
         add     x0,a
         asr     a
         move    a,x0
-        move    x0,x:(r7+$45)
+        move    x0,x:(r2+$05)
         clr     a
-        move    a,x:(r7+$40)
-        move    a,x:(r7+$41)
-        move    a,x:(r7+$42)
-; envelopes: fast 1/32, slow 1/1024 a sample
-        move    x:(r7+$45),a
+        move    a,x:(r2+$00)
+        move    a,x:(r2+$01)
+        move    a,x:(r2+$02)
+; envelopes: fast 1/32, slow 1/1024 a sample -- only while something reads them (SYNC, or
+; FREZ 1..126: the block's $35). Off, they and the SYNC hold-off stand still.
+        move    x:(r7+$35),a
+        tst     a
+        beq     amonend
+        move    x0,a                    ; the mono input
         abs     a
         move    a,x0                    ; |x|
-        move    x:(r7+$59),b
+        move    x:(r2+$19),b
         move    x0,a
         sub     b,a
         move    a,x1
         move    #>$040000,y0
         mac     x1,y0,b
-        move    b,x:(r7+$59)
-        move    x:(r7+$5a),b
+        move    b,x:(r2+$19)
+        move    x:(r2+$1a),b
         move    x0,a
         sub     b,a
         move    a,x1
         move    #>$002000,y0
         mac     x1,y0,b
-        move    b,x:(r7+$5a)
+        move    b,x:(r2+$1a)
 ; SYNC: an attack (fast > 2 slow + 1/64) restarts the grain and the slot
         clr     b
-        move    x:(r7+$5b),a            ; the hold-off
-        move    x:(r7+$43),x0
+        move    x:(r2+$1b),a            ; the hold-off
+        move    x:(r2+$03),x0
         tst     a
         teq     x0,b                    ; armed: SYNC and no hold-off
         sub     #>$1,a
         move    #0,x0
         tlt     x0,a
         move    a1,x0
-        move    x0,x:(r7+$5b)
+        move    x0,x:(r2+$1b)
         tst     b
         beq     amonend
-        move    x:(r7+$5a),b
+        move    x:(r2+$1a),b
         asl     b
         add     #>$020000,b
-        move    x:(r7+$59),a
+        move    x:(r2+$19),a
         sub     b,a
         tst     a
         blt     amonend
@@ -660,27 +798,24 @@ ammix:
         move    #>$1,x0
         move    x0,x:(r7+$05)
         clr     a
-        move    a,x:(r7+$53)
+        move    a,x:(r2+$13)
         move    x:(r7+$3d),x0
-        move    x0,x:(r7+$5b)           ; no new attack inside this grain
+        move    x0,x:(r2+$1b)           ; no new attack inside this grain
 amonend:
-; frozen?
-        clr     b
+; frozen? FREZ 0 and 127 are decided once a block ($4e); only 1..126 looks at the slow envelope
         move    x:(r7+$33),a
-        move    #>$2,x0
-        cmp     x0,a
-        move    #>$1,y0
-        teq     y0,b
         move    #>$1,x0
         cmp     x0,a
         bne     amfzset
-        move    x:(r7+$5a),a
-        move    x:(r7+$5c),x0
+        clr     b
+        move    #>$1,y0
+        move    x:(r2+$1a),a
+        move    x:(r2+$1c),x0
         cmp     x0,a
         tlt     y0,b
-amfzset:
         move    b1,x0
-        move    x0,x:(r7+$4e)
+        move    x0,x:(r2+$0e)
+amfzset:
 ; a grain starts?
         move    x:(r7+$05),a
         sub     #>$1,a
@@ -689,14 +824,26 @@ amfzset:
         bgt     amnostart
         bsr     amstart
 amnostart:
+; the voices: a finished grain (u = 1) has a zero window -- it adds nothing, and the next
+; start rewrites its record -- so it is skipped (culling: what is not heard is not computed)
+        move    #>$7fffff,x1
+        move    x:(r7+$12),a            ; voice 0's u
+        cmp     x1,a
+        beq     amv0off
         lua     (r7+$10),r4
         nop
         nop
         bsr     amvoice
+amv0off:
+        move    #>$7fffff,x1
+        move    x:(r7+$1a),a            ; voice 1's u
+        cmp     x1,a
+        beq     amv1off
         lua     (r7+$18),r4
         nop
         nop
         bsr     amvoice
+amv1off:
 ; the feedback modes: one runs per sample (cycle_count prices dispatch + the worst)
 ; MODEFORK_BEGIN
         move    x:(r7+$34),a
@@ -714,10 +861,10 @@ amfrc:                                  ; RCYC: the ring takes the input plus FD
         lua     (r7+$2e),r4
         nop
         nop
-        move    x:(r7+$42),x0
+        move    x:(r2+$02),x0
         bsr     amtone
         move    x:(r7+$2c),y0
-        move    x:(r7+$45),a
+        move    x:(r2+$05),a
         mac     y0,x0,a
         move    a,x0
         bra     amfbend
@@ -725,20 +872,20 @@ amfrc:                                  ; RCYC: the ring takes the input plus FD
 amfpo:                                  ; POST: the grains into a delay line, FDBK x tone back
         bsr     amaux
         move    y:(r4),x0               ; p
-        move    x0,x:(r7+$4f)
+        move    x0,x:(r2+$0f)
         lua     (r7+$2e),r4
         nop
         nop
         bsr     amtone
         move    x:(r7+$2c),y0
-        move    x:(r7+$42),a
+        move    x:(r2+$02),a
         mac     y0,x0,a
         move    a,y:(r5)
         bsr     amadv
-        move    x:(r7+$4f),x0
+        move    x:(r2+$0f),x0
         move    x0,x1
         bsr     amaddw
-        move    x:(r7+$45),x0
+        move    x:(r2+$05),x0
         bra     amfbend
 ; MODEFORK_MID
 amfpi:                                  ; PING: in on the left; left feeds right, right (toned) left
@@ -746,36 +893,36 @@ amfpi:                                  ; PING: in on the left; left feeds right
         move    #>3793,n4
         move    #>3793,n5
         move    y:(r4),x0               ; pl
-        move    x0,x:(r7+$4f)
+        move    x0,x:(r2+$0f)
         move    y:(r4+n4),x1            ; pr
-        move    x1,x:(r7+$5f)
+        move    x1,x:(r2+$1f)
         lua     (r7+$2e),r4
         nop
         nop
         move    x1,x0
         bsr     amtone
         move    x:(r7+$2c),y0
-        move    x:(r7+$42),a
+        move    x:(r2+$02),a
         mac     y0,x0,a
         move    a,y:(r5)                ; the left line
-        move    x:(r7+$4f),x0
+        move    x:(r2+$0f),x0
         mpy     y0,x0,a
         move    a,y:(r5+n5)             ; the right line: FDBK x pl
         bsr     amadv
-        move    x:(r7+$4f),x0
-        move    x:(r7+$5f),x1
+        move    x:(r2+$0f),x0
+        move    x:(r2+$1f),x1
         bsr     amaddw
-        move    x:(r7+$45),x0
+        move    x:(r2+$05),x0
         bra     amfbend
 ; MODEFORK_MID
 amfre:                                  ; REP .. RPCT: slots of L, live or the captured one
-        move    x:(r7+$53),a
-        move    x:(r7+$56),x0
+        move    x:(r2+$13),a
+        move    x:(r2+$16),x0
         cmp     x0,a
         move    #0,x1
         tge     x1,a
         move    a1,x0
-        move    x0,x:(r7+$53)
+        move    x0,x:(r2+$13)
         tst     a
         bne     amrpgo
         move    x:(r7+$34),a            ; a slot starts
@@ -785,20 +932,20 @@ amfre:                                  ; REP .. RPCT: slots of L, live or the c
         move    #>$030000,x0
         cmp     x0,a
         bne     amslpr
-        move    x:(r7+$55),a            ; REP: live, then N repeats
+        move    x:(r2+$15),a            ; REP: live, then N repeats
         tst     a
         beq     amsllive
         sub     #>$1,a
         move    a1,x0
-        move    x0,x:(r7+$55)
+        move    x0,x:(r2+$15)
         bra     amslrep
 amslpr:
-        move    x:(r7+$55),a            ; R1/2, R1/4: a fresh capture every N + 1, else a coin
+        move    x:(r2+$15),a            ; R1/2, R1/4: a fresh capture every N + 1, else a coin
         tst     a
         beq     amsllive
         sub     #>$1,a
         move    a1,x0
-        move    x0,x:(r7+$55)
+        move    x0,x:(r2+$15)
         bsr     amrand
         move    x0,a
         and     #>$7fffff,a
@@ -816,9 +963,9 @@ amslpr:
         move    #>$1,x0
         tlt     x0,b
         move    b1,x0
-        move    x0,x:(r7+$54)
+        move    x0,x:(r2+$14)
         clr     a
-        move    a,x:(r7+$58)
+        move    a,x:(r2+$18)
         bra     amrpgo
 amslpct:
         bsr     amrand                  ; RPCT: repeat with probability FDBK
@@ -826,49 +973,49 @@ amslpct:
         and     #>$7fffff,a
         move    a1,x0
         move    x0,a
-        move    x:(r7+$5e),x0
+        move    x:(r2+$1e),x0
         cmp     x0,a
         blt     amslrep
         bra     amslcap
 amsllive:
-        move    x:(r7+$5d),x0
-        move    x0,x:(r7+$55)
+        move    x:(r2+$1d),x0
+        move    x0,x:(r2+$15)
 amslcap:
         clr     a
-        move    a,x:(r7+$54)
+        move    a,x:(r2+$14)
         move    #>$1,x0
-        move    x0,x:(r7+$58)
+        move    x0,x:(r2+$18)
         bra     amrpgo
 amslrep:
         move    #>$1,x0
-        move    x0,x:(r7+$54)
+        move    x0,x:(r2+$14)
         clr     a
-        move    a,x:(r7+$58)
+        move    a,x:(r2+$18)
 amrpgo:
-        move    x:(r7+$53),a
-        move    x:(r7+$56),b
+        move    x:(r2+$13),a
+        move    x:(r2+$16),b
         sub     #>$1,b
         sub     a,b
         move    b1,x0                   ; slot - 1 - t
         cmp     x0,a
         tgt     x0,a
         move    a1,x0                   ; m = min(t, slot - 1 - t)
-        move    x:(r7+$57),y0
+        move    x:(r2+$17),y0
         mpy     y0,x0,a
         asl     #$17,a,a
         move    a,y1                    ; w = min(1, m / fade)
-        move    x:(r7+$53),a
+        move    x:(r2+$13),a
         move    x:(r7+$00),x0
         add     x0,a
         add     #>$2000,a
         move    a1,r4
         nop
         nop
-        move    x:(r7+$54),a
+        move    x:(r2+$14),a
         tst     a
         beq     amrpcap
         move    y:(r4),a
-        move    x:(r7+$42),x0
+        move    x:(r2+$02),x0
         sub     x0,a
         move    a,x0
         mpy     x0,y1,a
@@ -876,20 +1023,20 @@ amrpgo:
         move    x0,x1
         bsr     amaddw
 amrpcap:
-        move    x:(r7+$58),a
+        move    x:(r2+$18),a
         tst     a
         beq     amrpnx
-        move    x:(r7+$42),x0
+        move    x:(r2+$02),x0
         move    x0,y:(r4)               ; capture
 amrpnx:
-        move    x:(r7+$53),a
+        move    x:(r2+$13),a
         add     #>$1,a
         move    a1,x0
-        move    x0,x:(r7+$53)
-        move    x:(r7+$45),x0
+        move    x0,x:(r2+$13)
+        move    x:(r2+$05),x0
 ; MODEFORK_END
 amfbend:
-        move    x:(r7+$4e),a
+        move    x:(r2+$0e),a
         tst     a
         bne     amrsk                   ; frozen: the ring keeps what it has
         move    x:(r7+$04),a
@@ -914,13 +1061,13 @@ amrsk:
         move    x:(r0),x0
         move    x0,a
         mac     -x0,y1,a
-        move    x:(r7+$40),x1
+        move    x:(r2+$00),x1
         mac     x1,y0,a
         move    a,x:(r0)+
         move    x:(r0),x0
         move    x0,a
         mac     -x0,y1,a
-        move    x:(r7+$41),x1
+        move    x:(r2+$01),x1
         mac     x1,y0,a
         move    a,x:(r0)+
 amend:
@@ -1018,17 +1165,17 @@ amvoice:
         move    b,x0
         mpy     x1,x0,a                 ; s = v w
         move    a,x0
-        move    x:(r7+$42),a
+        move    x:(r2+$02),a
         add     x0,a
-        move    a,x:(r7+$42)            ; wet mono
+        move    a,x:(r2+$02)            ; wet mono
         move    x:(r4+4),y0
-        move    x:(r7+$40),a
+        move    x:(r2+$00),a
         mac     y0,x0,a
-        move    a,x:(r7+$40)            ; wet L
+        move    a,x:(r2+$00)            ; wet L
         move    x:(r4+5),y0
-        move    x:(r7+$41),a
+        move    x:(r2+$01),a
         mac     y0,x0,a
-        move    a,x:(r7+$41)            ; wet R
+        move    a,x:(r2+$01)            ; wet R
         move    x:(r4),a
         move    x:(r4+1),x0
         add     x0,a                    ; pos + inc: -(N<<9) .. 2(N<<9)
@@ -1054,32 +1201,32 @@ amvoice:
 ; ---- the feedback modes' helpers (per sample) ------------------------------------
 ; wet L += x0, wet R += x1
 amaddw:
-        move    x:(r7+$40),a
+        move    x:(r2+$00),a
         add     x0,a
-        move    a,x:(r7+$40)
-        move    x:(r7+$41),a
+        move    a,x:(r2+$00)
+        move    x:(r2+$01),a
         add     x1,a
-        move    a,x:(r7+$41)
+        move    a,x:(r2+$01)
         rts
 
 ; wp2 += 1, wrapped at the aux length
 amadv:
-        move    x:(r7+$50),a
+        move    x:(r2+$10),a
         add     #>$1,a
-        move    x:(r7+$52),x0
+        move    x:(r2+$12),x0
         cmp     x0,a
         move    #0,x0
         tge     x0,a
         move    a1,x0
-        move    x0,x:(r7+$50)
+        move    x0,x:(r2+$10)
         rts
 
 ; r4 = the aux at the read index (wp2 - post time, wrapped), r5 = at wp2
 amaux:
-        move    x:(r7+$50),a
-        move    x:(r7+$51),x0
+        move    x:(r2+$10),a
+        move    x:(r2+$11),x0
         sub     x0,a
-        move    x:(r7+$52),x0
+        move    x:(r2+$12),x0
         move    a,b
         add     x0,b
         move    b1,x0
@@ -1089,7 +1236,7 @@ amaux:
         add     x0,a
         add     #>$2000,a
         move    a1,r4
-        move    x:(r7+$50),a
+        move    x:(r2+$10),a
         move    x:(r7+$00),x0
         add     x0,a
         add     #>$2000,a

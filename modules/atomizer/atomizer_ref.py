@@ -109,6 +109,9 @@ class AtoMizer:
                 for i in range(0x04, 0x60):
                     s[i] = 0
             return [tuple(f) for f in frames]
+        if k[5] == 0:                          # MIX 0: at rest (the block passes as it came)
+            self.rest(k, lay, fbm, frames)
+            return [tuple(f) for f in frames]
         q4 = q4_of(tempo24 & 0xFFFF)
         s[0x3C] = q4
         sync = (k[10] & 1) << 16
@@ -213,8 +216,12 @@ class AtoMizer:
         F = k[4]
         s[0x5C] = a1(mpy(F << 16, F << 16)) >> 2
         s[0x33] = 2 if F == 127 else (1 if F else 0)
+        s[0x4E] = 1 if s[0x33] == 2 else 0                 # 127 a block; 1..126: each sample rewrites it
+        env = s[0x33] == 1 or sync != 0                     # the envelopes run
         fbm = fbm >> 16
         s[0x52] = PING if fbm == 2 else AUX
+        if s[0x50] - s[0x52] >= 0:            # POST -> PING: the write index restarts
+            s[0x50] = 0
         Tp = s[0x3E] if (mode >> 16) < 5 else 2 * L
         Tp = min(max(Tp, 64), s[0x52] - 2)
         s[0x51] = Tp
@@ -229,22 +236,24 @@ class AtoMizer:
             xm = lim((ld(l) + ld(r)) >> 1)
             s[0x45] = xm
             s[0x40] = s[0x41] = s[0x42] = 0
-            # envelopes: fast 1/32, slow 1/1024 a sample
-            ax = lim(abs(ld(xm)))
-            f = s[0x59]
-            s[0x59] = lim(mac(ld(f), 0x040000, lim(ld(ax) - ld(f))))
-            f = s[0x5A]
-            s[0x5A] = lim(mac(ld(f), 0x002000, lim(ld(ax) - ld(f))))
-            # SYNC: an attack (fast > 2 slow + 1/64) restarts the grain and the slot
-            if s[0x5B] > 0:
-                s[0x5B] -= 1
-            elif sync:
-                b = (ld(s[0x5A]) << 1) + ld(0x020000)
-                if ld(s[0x59]) - b > 0:
-                    s[0x05] = 1
-                    s[0x53] = 0
-                    s[0x5B] = s[0x3D]
-            frz = s[0x33] == 2 or (s[0x33] == 1 and s[0x5A] - s[0x5C] < 0)
+            if env:                           # envelopes: fast 1/32, slow 1/1024 a sample
+                ax = lim(abs(ld(xm)))
+                f = s[0x59]
+                s[0x59] = lim(mac(ld(f), 0x040000, lim(ld(ax) - ld(f))))
+                f = s[0x5A]
+                s[0x5A] = lim(mac(ld(f), 0x002000, lim(ld(ax) - ld(f))))
+                # SYNC: an attack (fast > 2 slow + 1/64) restarts the grain and the slot
+                if s[0x5B] > 0:
+                    s[0x5B] -= 1
+                elif sync:
+                    b = (ld(s[0x5A]) << 1) + ld(0x020000)
+                    if ld(s[0x59]) - b > 0:
+                        s[0x05] = 1
+                        s[0x53] = 0
+                        s[0x5B] = s[0x3D]
+            if s[0x33] == 1:
+                s[0x4E] = 1 if s[0x5A] - s[0x5C] < 0 else 0
+            frz = s[0x4E]
             s[0x05] = s[0x05] - 1
             if s[0x05] <= 0:
                 self.start()
@@ -274,6 +283,30 @@ class AtoMizer:
             out.append(tuple(o))
         return out
 
+    def rest(self, k, lay, fbm, frames):
+        """MIX 0: the ring records (not under FREZ 127), layout 1's aux runs out; grains stop."""
+        s, y = self.s, self.y
+        s[0x12] = s[0x1A] = FS            # both voices silent
+        s[0x05] = 1                       # a grain on the first wet sample
+        s[0x53] = s[0x55] = 0             # the slot restarts live
+        if k[4] == 127:
+            return
+        N = N1 if lay else N0
+        s[0x39] = N
+        s[0x52] = PING if (fbm >> 16) == 2 else AUX
+        if s[0x50] - s[0x52] >= 0:
+            s[0x50] = 0
+        for (l, r) in frames:
+            xm = lim((ld(l) + ld(r)) >> 1)
+            if lay:
+                y[AUXB + s[0x50]] = 0
+                if (fbm >> 16) == 2:
+                    y[AUXB + PING + s[0x50]] = 0
+                self.adv()
+            y[s[0x04]] = xm
+            w = s[0x04] + 1
+            s[0x04] = 0 if w >= N else w
+
     def start(self):
         s = self.s
         s[0x05] = s[0x25]
@@ -295,6 +328,8 @@ class AtoMizer:
     def voice(self, v):
         s, y = self.s, self.y
         u = s[v + 2]
+        if u == FS:                        # the grain is over: a zero window, nothing to add
+            return
         a = FS - u
         if a >= u:
             a = u

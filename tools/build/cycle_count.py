@@ -282,6 +282,10 @@ def _measure_loop(name, src, lines, i):
         fork["mid"] = mids[0]
     if fork and set(fork) != {"begin", "mid", "end"}:
         sys.exit(f"{name}: incomplete MODEFORK markers ({sorted(fork)})")
+    if fork and not (i < fork["begin"] and fork["end"] < end_line):
+        if i < fork["end"] and fork["begin"] < end_line:
+            sys.exit(f"{name}: a MODEFORK straddles the `do n7` loop at line {i + 1}")
+        fork = {}                       # another loop's fork (a module with several `do n7` loops)
     fork_lines = set(range(fork["begin"], fork["end"] + 1)) if fork else set()
     # MODEARM_BEGIN <arm> .. MODEARM_END: a stretch of the body that only some
     # modes run. Arms are MUTUALLY EXCLUSIVE (a mode runs at most one), and

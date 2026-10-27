@@ -4,7 +4,7 @@ A granular delay for FX2, by Marko Brajković, after the **Red Panda Particle**
 (V1 on the Spin FV-1, 2011; Particle 2, 2019). Particle is Red Panda's name and
 pedal: AtoMizer re-derives its behaviour for the Octatrack from the Particle 2
 owner's manual (firmware 2.2, July 2023) and Red Panda's public changelog. No
-Red Panda code or firmware was read or used. 1,522 DSP words and a 42-word
+Red Panda code or firmware was read or used. 1,593 DSP words and a 42-word
 P table; `atomizer.asm` is proven BIT-IDENTICAL against an integer model of
 the same arithmetic, `atomizer_ref.py`.
 
@@ -39,7 +39,7 @@ overtakes the write head.
 | main, C | PARA | 0–127 (64) | The MODE's parameter (table above). |
 | main, D | FDBK | 0–127 (0) | RCYC: the wet back into the ring (to 0.95). POST and PING: the post line's feedback. REP, R1/2, R1/4: the repeats, 0..8. RPCT: the probability of a repeat. |
 | main, E | FREZ | 0–127 (0) | 0 off -- always releases, whatever came before. 1..126: the ring stops taking input while the track is quiet (a slow envelope under (FREZ/128)²/4). 127: frozen; the grains, the LFO and the scan go on over what the ring holds. |
-| main, F | MIX | 0–127 (64) | 0 is exactly dry. To 64 the wet rises to unity over the whole dry; from 64 to 127 the dry fades out (the Particle 2.0.1 BLEND law). |
+| main, F | MIX | 0–127 (64) | 0 is exactly dry, and **at rest**: the ring keeps recording, nothing else runs, so AtoMizer costs almost nothing. To 64 the wet rises to unity over the whole dry; from 64 to 127 the dry fades out (the Particle 2.0.1 BLEND law). Leaving 0 starts a fresh grain. |
 | SETUP, A | MODE | the eight above (DDEN) | Changing it moves no knob (the Particle 2.2 expert mode). |
 | SETUP, B | TONE | 0–127 (127) | A one-pole low-pass in the feedback (RCYC, POST, PING): 0 dark, 127 open. |
 | SETUP, C | FBMD | AUTO, RCYC, POST, PING, REP, R1/2, R1/4, RPCT (AUTO) | The feedback mode (below). Moving between RCYC and the others clears the slot: 62 calls of dry, about 22 ms. |
@@ -79,7 +79,7 @@ sample and on every layout change.
 
 0x1e is the id AtoMizer prefers; `registry.assign_ids` gives it the remix's
 own, so it replaces no stock effect. Its code goes either into a harvested
-donor run (1,564 words with the table, which takes SPRING REV, PLATE REV and
+donor run (1,635 words with the table, which takes SPRING REV, PLATE REV and
 DARK REV) or into the shared window, loaded on demand while a track uses it
 (`Remix.window_demand`). `remixes/test/atomizer` does the latter: the code at
 `P:0x35000`, offset +$1000 of T8's FX2 slot on core A, beside all 14 stock
@@ -100,12 +100,35 @@ another remix can put its id on an FX1 slot, and the loader would then load
 it. On a base below Y:$4000 the instance passes the audio through and writes
 nothing.
 
-`cycle_count.py`: 599 cycles a sample per instance, pricing a grain start on
-every sample and the worst feedback mode; four on a core 2,396 of the 3,120
-usable. The manifest declares `max_per_core = 1` (one instance per core: in
-acidtrack four AtoMizer beside four DISTORX on FX1 priced 3,552); the unit
-does not enforce it, so a remix README states it. `dsp_host` measured 283–346 executed instructions a sample per
-instance in steady state (the dispatcher included), 359 in the worst block.
+`cycle_count.py`: 547 cycles a sample per instance (599 before 27 Oct 2026),
+pricing a grain start on every sample, both voices sounding and the worst
+feedback mode; MIX 0's loop is 53. The manifest declares `max_per_core = 1`
+(one instance per core: in acidtrack four AtoMizer beside four DISTORX on FX1
+priced 3,552 at 599); the unit does not enforce it, so a remix README states it.
+
+What is not heard is not computed (27 Oct 2026): a finished grain (its window
+at 0) skips its voice until the next start; FREZ 0 and 127 are decided once a
+block; the envelopes run only for SYNC or FREZ 1..126; MIX 0 rests. With the
+knobs still, the sound is the same as before, bit for bit (the old and new
+models agree on all 384 MODE x FBMD x FREZ x SYNC cases). Measured in
+`dsp_host`, executed instructions per 32-frame block on core 0 with one
+instance (the stock dispatcher included), before -> after:
+
+| Setting | Mean | Worst block |
+| --- | --- | --- |
+| DDEN, the defaults | 5,429 -> 3,285 | 5,502 -> 5,131 |
+| DDEN, PARA 0 (grains far apart) | 5,429 -> 3,094 | 5,502 -> 5,131 |
+| DDEN, PARA 127 (dense) | 5,430 -> 5,061 | 5,502 -> 5,131 |
+| DREV | 4,671 -> 3,310 | 4,740 -> 4,369 |
+| PDTN (the voices always overlap) | 4,747 -> 4,378 | 4,816 -> 4,445 |
+| RCYC, FDBK 90 | 4,680 -> 2,536 | 4,750 -> 4,379 |
+| PING | 5,604 -> 3,460 | 5,678 -> 5,307 |
+| the `dear` knobs | 5,403 -> 5,034 | 5,518 -> 5,147 |
+| MIX 0 | 5,429 -> 779 | 5,502 -> 781 |
+
+The worst block (both voices sounding) drops ~7 %; the mean drops up to 45 %
+where the grains leave gaps. The pitch modes overlap their voices, so they
+gain least.
 
 ## Measured
 
@@ -135,7 +158,7 @@ space of DELAY, SPRING REV, PLATE REV and DARK REV):
 
 On `remixes/test/atomizer` the demand loader's own gates pass with AtoMizer
 as the loaded effect: `verify_dlstub` (unbound dry, bound equal to the direct
-render on FX2's first slot, 1,564 words at `P:0x35000`, a bad sum or a missing doorbell stays dry)
+render on FX2's first slot, 1,635 words at `P:0x35000`, a bad sum or a missing doorbell stays dry)
 and `verify_dlwrap` (the three reverbs on every slot and payload).
 
 What none of them can see: the unit itself (memory-contention stalls, the
