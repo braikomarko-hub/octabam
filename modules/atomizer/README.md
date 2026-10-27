@@ -102,7 +102,9 @@ nothing.
 
 `cycle_count.py`: 599 cycles a sample per instance, pricing a grain start on
 every sample and the worst feedback mode; four on a core 2,396 of the 3,120
-usable. `dsp_host` measured 283–346 executed instructions a sample per
+usable. The manifest declares `max_per_core = 1` (one instance per core: in
+acidtrack four AtoMizer beside four DISTORX on FX1 priced 3,552); the unit
+does not enforce it, so a remix README states it. `dsp_host` measured 283–346 executed instructions a sample per
 instance in steady state (the dispatcher included), 359 in the worst block.
 
 ## Measured

@@ -14,6 +14,10 @@ AtoMizer's code is not in the image's P memory: DLPUMP and DLCOPY copy it into t
 any FX1 slot, passes the audio through. DARK REV is wrapped by DLWRAP so it never runs over the code
 (on T8's FX2 it stays dry while AtoMizer is loaded).
 
+**At most one AtoMizer per core: one on T1–T4 and one on T5–T8** (`DspSection.max_per_core = 1`).
+The unit does not enforce it. Four on one core beside four DISTORX on FX1 price 3,552 cycles a sample
+against the 3,120 usable (`tools/build/cycle_count.py`, 27 Oct 2026), and the DSP wall is a cliff.
+
 ## Where it has run
 
 - ACIDV77 (24 Oct 2026, with TAPE ECHO and MORPH v1, on an older tree): on the author's MKI, "works perfectly".
