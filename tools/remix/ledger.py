@@ -311,7 +311,7 @@ def check(selected) -> list[str]:
                       f"0x{o.site:08x} -- it bridges {o.module}, which this remix "
                       f"does not carry")
             elif o.site not in claimed_sites(keys[o.module]):
-                clash("override", m.name, o.module,
+                clash("override", m.name, keys[o.module].name,
                       f"0x{o.site:08x} -- {o.module} claims no detour, symbol ref, "
                       f"poke or table ref there")
             overridden_detours.add((o.site, o.module))
