@@ -164,6 +164,16 @@ def main():
     # Exercise the installed boot call, including resident activation builds.
     boot=bytes(u.mem_read(0x40000512,6));assert boot[:2]==bytes.fromhex('4eb9')
     m.sym['mp_boot_activate']=int.from_bytes(boot[2:],'big')
+    hk=re.search(r'^([0-9a-f]+) [Tt] hk_boot$',subprocess.check_output(
+        ['m68k-elf-nm',str(ROOT/'out/platform/runtime/runtime.elf')],text=True),re.M)
+    if hk and int(hk.group(1),16)==m.sym['mp_boot_activate']:
+        # HOOKS's boot bridge (modules/hooks, boot): BOOT TRACE's note, then a jmp to the
+        # resident activation (verify_hooks checks the chain); exercise the activation itself.
+        res=re.search(r'^([0-9a-f]+) [Tt] mp_resident_activate$',subprocess.check_output(
+            ['m68k-elf-nm',str(ROOT/'out/linked/midi-part-state/midipartentry/u.elf')],text=True),re.M)
+        act=int(res.group(1),16)
+        assert bytes.fromhex('4ef9')+act.to_bytes(4,'big') in bytes(u.mem_read(int(hk.group(1),16),64))
+        m.sym['mp_boot_activate']=act
     m.call('mp_boot_activate',stop=0x4000f938)
     for target,entry in (('mp_copy_target','mp_native_copy'),('mp_init_target','mp_native_init')):
         assert int.from_bytes(u.mem_read(m.sym[target],4),'big')==m.sym[entry]

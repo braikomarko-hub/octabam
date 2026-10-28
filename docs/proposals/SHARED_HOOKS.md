@@ -9,8 +9,12 @@ adds each pair's requires; the bridges are a platform module of their own,
 [HOOKS](../../modules/hooks/README.md), not EVENTS families -- the registry
 appends it when a remix carries two modules one of its bridges joins, and a
 module alone keeps its bytes (track_key, status_icon, frame_tail,
-frame_entry, boot); [PARTS](../../modules/parts/README.md) carries MIDI PART
-STATE's API and retires it. Two departures from sections 4.3 and 7: the
+frame_entry, boot). Phase 4 is not here: radiohagen's MIDI Follow PR
+(sambanks/octabam#824) already gives STORE the native Part access section 5
+describes and retires MIDI PART STATE, and this design adopts it (a PARTS
+module built here first was withdrawn, 28 Oct 2026). HOOKS's boot bridge
+joins BOOT TRACE with MIDI PART STATE today and moves to STORE's activation
+when #824 lands. Two departures from sections 4.3 and 7: the
 in-tree participants were not rewritten as clients -- each keeps its
 proven standalone bytes and, where its detour never returns, builds a
 returning form under a HOOKS flag -- and the machine table (phase 6) has
@@ -164,6 +168,12 @@ author's repository splitting the stub into a callable body; Zac Kyoti's and
 radiohagen's repositories already carry octabam module trees.
 
 ## 5. PARTS
+
+**Superseded (28 Oct 2026):** radiohagen's sambanks/octabam#824 puts this
+service in STORE (`modules/store/parts.py`: edited, audio-playing and
+MIDI-playing contexts, registered windows, busy writes refused, epochs and
+build-time callbacks), and this design adopts it. The text below is the
+design as first written.
 
 Proposed by radiohagen (28 Oct 2026) as either an extension of STORE or a
 dedicated module, to retire MIDI PART STATE: edited and playing Part access,

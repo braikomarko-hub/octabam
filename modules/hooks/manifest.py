@@ -51,11 +51,11 @@ docs/proposals/SHARED_HOOKS.md is the design. Bridges:
     `rts`; HOOKS replays the prologue once, calls BOOT TRACE's note, then
     LOAD METER's stamp last, so the duration it measures excludes the note.
   * boot -- 0x40000512, the boot's `jsr 0x4000f938` after the DSP upload.
-    BOOT TRACE (tr_dsp_done, a jmp) sends note 3 and replays the call; PARTS
-    (pt_resident_activate, a jsr; MIDI PART STATE's before it) publishes its
-    copy targets and tail-jumps to 0x4000f938. Bridged (HK_BOOT), BOOT TRACE's
-    routine sends the note and returns; HOOKS calls it, then jmps to
-    pt_resident_activate, which returns to the boot.
+    BOOT TRACE (tr_dsp_done, a jmp) sends note 3 and replays the call; MIDI
+    PART STATE (mp_resident_activate, a jsr; radiohagen's submodule, not
+    edited) sets its copy targets and tail-jumps to 0x4000f938. Bridged
+    (HK_BOOT), BOOT TRACE's routine sends the note and returns; HOOKS calls
+    it, then jmps to mp_resident_activate, which returns to the boot.
   * chrom_pitch -- the CHROMATIC key handler's key -> pitch at 0x4004fc58
     (`lea (4,%a2,%a2.l*4),%a2 ; mvz.b 0x100b14cf,%d0`): OCTA303 (o3_chrom: on
     a 303 track the key is semitones) and SCALE QUANTIZER (qz_chrom: a synth
@@ -152,7 +152,7 @@ FRAME_ENTRY = (
 )
 BOOT = (
     ("BOOT TRACE", "tr_dsp_done"),
-    ("PARTS", "pt_resident_activate"),   # last: it tail-jumps to the stock call
+    ("MIDI PART STATE", "mp_resident_activate"),   # last: it tail-jumps to the stock call
 )
 
 # ---- chrom_pitch, chromatic -------------------------------------------------
@@ -213,20 +213,7 @@ FLAGS = {"frame_tail": "HK_FRAME_TAIL", "frame_entry": "HK_FRAME_ENTRY", "boot":
 CODELESS = {"chrom_pitch"}
 
 
-def _parts_clients():
-    """PARTS's client keys (modules/parts CLIENTS): PARTS installs nothing
-    without one, so it is no participant then."""
-    import ast
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "parts", "manifest.py")).read()
-    node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
-                and any(getattr(t, "id", None) == "CLIENTS" for t in n.targets))
-    return {e.elts[0].value for e in node.value.elts}
-
-
 def _present(participants, modules):
-    modules = set(modules)
-    if "PARTS" in modules and not modules & _parts_clients():
-        modules.discard("PARTS")
     return tuple(p for p in participants if p[0] in modules)
 
 
@@ -305,7 +292,7 @@ UNIT = Linked("hooks", os.path.join(_HERE, "bridge.s"), dram=True, include=hooks
 # runtime's link reaches them through the unit's defsyms, which the build
 # resolves from the ROM units' exports (build_bus._defs_for). verify_hooks
 # checks this list against each participant's Linked.dram.
-ROM_ROUTINES = {"tr_frame", "tr_frame_end", "tr_dsp_done", "pt_resident_activate"}
+ROM_ROUTINES = {"tr_frame", "tr_frame_end", "tr_dsp_done", "mp_resident_activate"}
 
 
 def _unit(modules):
