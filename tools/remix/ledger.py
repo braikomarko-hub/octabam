@@ -26,8 +26,9 @@ Checked, and how it knows:
   grown tables       declared (TableGrow). Two modules relocating one stock
                      array would each carry a copy, and the refs disagree.
   overrides          a bridge's claim stands in for the overridden module's
-                     at that site; a bridge naming a module the remix does
-                     not carry is refused.
+                     at that site (its detour, symbol ref, poke or table
+                     ref); a bridge naming a module the remix does not
+                     carry, or a site that module does not claim, is refused.
   DSP hook sites     declared (DspSection.hooks), per payload (DspHook.site
                      may differ per payload). Two hooks whose two-word jsr
                      spans share a stock P word on one payload: the second
@@ -123,6 +124,15 @@ def curve_bank_claims(selected) -> tuple[list[str], list[str]]:
 
 def _overlap(a_start, a_len, b_start, b_len) -> bool:
     return a_start < b_start + b_len and b_start < a_start + a_len
+
+
+def claimed_sites(m) -> set[int]:
+    """The addresses an Override may name for module `m`: its detour sites,
+    symbol refs, pokes and table refs (schema.Override)."""
+    return ({d.site for d in getattr(m, "detours", ())}
+            | {r.addr for r in getattr(m, "symbol_refs", ())}
+            | {p.addr for p in getattr(m, "pokes", ())}
+            | {a for t in getattr(m, "tables", ()) for a, _old in t.refs})
 
 
 def check(selected) -> list[str]:
@@ -273,10 +283,12 @@ def check(selected) -> list[str]:
     # is skipped like a floating cave. Detour sites are hook sites. Table
     # refs and Pokes are fixed rewrites, checked as pokes below.
     # ---- overrides (schema.Override): a bridge's claim stands in ---------
-    # The overridden module's detour or recipe write at that site is not a
-    # claim any more; the bridge's own detour is. A bridge naming a module
-    # the remix does not carry is refused: there is nothing to bridge.
-    keys = {m.key for m in selected}
+    # The overridden module's detour, symbol ref, poke or table ref at that
+    # site is not a claim any more; the bridge's own write is. A bridge
+    # naming a module the remix does not carry is refused: there is nothing
+    # to bridge. So is one naming a site that module does not claim: the
+    # override would skip nothing and the bridge's write would collide.
+    keys = {m.key: m for m in selected}
     overridden_detours: set[tuple[int, str]] = set()      # (site, module key)
     for m in selected:
         for o in getattr(m, "overrides", ()):
@@ -284,6 +296,10 @@ def check(selected) -> list[str]:
                 clash("override", m.name, f"(no {o.module})",
                       f"0x{o.site:08x} -- it bridges {o.module}, which this remix "
                       f"does not carry")
+            elif o.site not in claimed_sites(keys[o.module]):
+                clash("override", m.name, o.module,
+                      f"0x{o.site:08x} -- {o.module} claims no detour, symbol ref, "
+                      f"poke or table ref there")
             overridden_detours.add((o.site, o.module))
 
     for m in selected:
@@ -307,12 +323,15 @@ def check(selected) -> list[str]:
     for m in selected:
         for t in getattr(m, "tables", ()):
             for addr, _old in t.refs:
-                pokes.append((addr, 4, m.name, f"table ref ({t.label})"))
+                if (addr, m.key) not in overridden_detours:
+                    pokes.append((addr, 4, m.name, f"table ref ({t.label})"))
         for r in getattr(m, "symbol_refs", ()):
-            pokes.append((r.addr, 4, m.name,
-                          f"symbol ref {r.unit}:{r.symbol} ({r.note or hex(r.addr)})"))
+            if (r.addr, m.key) not in overridden_detours:
+                pokes.append((r.addr, 4, m.name,
+                              f"symbol ref {r.unit}:{r.symbol} ({r.note or hex(r.addr)})"))
         for p in getattr(m, "pokes", ()):
-            pokes.append((p.addr, len(p.expect), m.name, f"poke {p.note or hex(p.addr)}"))
+            if (p.addr, m.key) not in overridden_detours:
+                pokes.append((p.addr, len(p.expect), m.name, f"poke {p.note or hex(p.addr)}"))
     # A FLOATING emit cave's poke ADDRESSES do not depend on where the cave
     # lands -- only the values written do -- so it is evaluated at a probe
     # address purely to learn its sites.
@@ -375,7 +394,7 @@ def check(selected) -> list[str]:
     spans: list[tuple[str, int, int, str, str]] = []          # (kind, start, length, owner, label)
     for m in selected:
         for kind, start, length, label in m.write_spans():
-            if kind == "detour" and (start, m.key) in overridden_detours:
+            if kind != "cave" and kind != "hook" and (start, m.key) in overridden_detours:
                 continue
             spans.append((kind, start, length, m.name, label))
         for u in getattr(m, "linked", ()):
@@ -437,6 +456,8 @@ def check(selected) -> list[str]:
     grown: list[tuple[int, int, str, str]] = []
     for m in selected:
         for t in getattr(m, "tables", ()):
+            if t.refs and all((a, m.key) in overridden_detours for a, _old in t.refs):
+                continue                 # every ref bridged: the table is never placed
             for start, length, owner, label in grown:
                 if owner != m.name and _overlap(start, length, t.old, 4 * t.count):
                     clash("grown table", f"{owner}'s {label}", f"{m.name}'s {t.label}",

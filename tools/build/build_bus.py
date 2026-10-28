@@ -1133,7 +1133,8 @@ def main():
                       and c.registers_formatter.module in BLANKED)]
     _plan = [(_c, _c.pinned) for _c in _caves]
     # ---- overrides (schema.Override): a bridge stands in at a shared site --
-    # Collected before anything is written: which detours to skip.
+    # Collected before anything is written: which detours, symbol refs, pokes
+    # and table refs to skip.
     _ovr_detours: set[tuple[int, str]] = set()          # (site, module key)
     for _k in REMIX.modules:
         for _o in getattr(remix_modules()[_k], "overrides", ()):
@@ -1719,6 +1720,10 @@ def main():
 
     for _m, _t in [(remix_modules()[_k], _t) for _k in REMIX.modules
                    for _t in getattr(remix_modules()[_k], "tables", ())]:
+        if _t.refs and all((_ra, _m.key) in _ovr_detours for _ra, _old in _t.refs):
+            print(f"  {_m.key}: table {_t.label} bridged -- another module stands in for "
+                  f"every ref; not placed")
+            continue
         _ents = _t.entries([rd32(_t.old + i * 4) for i in range(_t.count)],
                            [_sym[u][s] for u, s in _t.symbols])
         _blob = b"".join(v.to_bytes(4, "big") for v in _ents)
@@ -1738,6 +1743,9 @@ def main():
         else:
             _ovf_top = (_at + len(_blob) + 3) & ~3
         for _ra, _old in _t.refs:
+            if (_ra, _m.key) in _ovr_detours:
+                print(f"    ref 0x{_ra:08x}: bridged -- another module stands in for it")
+                continue
             if rd32(_ra) != _old:
                 sys.exit(f"{_m.key} table {_t.label}: ref 0x{_ra:08x} holds "
                          f"0x{rd32(_ra):08x}, not 0x{_old:08x}; refusing")
@@ -1773,6 +1781,10 @@ def main():
 
     for _m, _r in [(remix_modules()[_k], _r) for _k in REMIX.modules
                    for _r in getattr(remix_modules()[_k], "symbol_refs", ())]:
+        if (_r.addr, _m.key) in _ovr_detours:
+            print(f"    ref 0x{_r.addr:08x}: {_m.key}:{_r.symbol} bridged -- another "
+                  f"module stands in for it")
+            continue
         _got = rd32(_r.addr)
         if _got != _r.expect:
             sys.exit(f"{_m.key} symbol ref {_r.note or _r.symbol} at "
@@ -1788,6 +1800,10 @@ def main():
 
     for _m, _p in [(remix_modules()[_k], _p) for _k in REMIX.modules
                    for _p in getattr(remix_modules()[_k], "pokes", ())]:
+        if (_p.addr, _m.key) in _ovr_detours:
+            print(f"    poke 0x{_p.addr:08x}: {_m.key} bridged -- another module stands "
+                  f"in for it")
+            continue
         _got = bytes(img[_p.addr - BASE:_p.addr - BASE + len(_p.expect)])
         if _got != _p.expect:
             sys.exit(f"{_m.key} poke {_p.note} at 0x{_p.addr:08x} finds {_got.hex()}, "

@@ -42,6 +42,22 @@ def matrix(mods):
     # marked ✓* -- refused alone, clean with the bridge.
     parties = {m.key: [mods[o.module] for o in (m.overrides or ())
                        if o.module in mods] for m in cf}
+    # Each cell carries the pair's `requires` closure (and MEMORY, which the
+    # registry appends to any remix with a DRAM unit): without it a pair whose
+    # module needs STORE or EVENTS reports that need and hides the real clash.
+    by_key = {m.key: m for m in mods.values()}
+
+    def closure(ms):
+        out = {m.key: m for m in ms}
+        if "MEMORY" in by_key:
+            out.setdefault("MEMORY", by_key["MEMORY"])
+        todo = list(out.values())
+        while todo:
+            for need in getattr(todo.pop(), "requires", ()):
+                if need in by_key and need not in out:
+                    out[need] = by_key[need]
+                    todo.append(by_key[need])
+        return list(out.values())
     bridges = [m for m in cf if parties[m.key]]
     print("COMPATIBILITY  (the ledger, pairwise: which ColdFire-side modules "
           "can share an image)\n")
@@ -55,7 +71,7 @@ def matrix(mods):
             if a is b:
                 row.append("  ·")
                 continue
-            sel = {m.key: m for m in [a, b] + parties[a.key] + parties[b.key]}
+            sel = {m.key: m for m in closure([a, b] + parties[a.key] + parties[b.key])}
             probs = ledger.check(list(sel.values()))
             key = tuple(sorted((a.name, b.name)))
             if probs:

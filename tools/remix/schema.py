@@ -1465,12 +1465,13 @@ class DramRegion:
 @dataclass(frozen=True)
 class Override:
     """This module's own claim at `site` stands in for another module's
-    Detour there -- the way two mods that hook one stock instruction get to
-    share it. A BRIDGE module carries a stub that does what both hooks did,
-    in an order that respects each one's protocol, and declares an
-    Override per detour it replaces: `module` is the other module's key.
-    The build skips the overridden detour; the ledger treats the site as
-    the bridge's; the overridden module must be in the remix, or the
+    Detour, SymbolRef, Poke or TableGrow ref there -- the way two mods that
+    hook one stock instruction, or repoint one stock word, get to share it.
+    A BRIDGE module carries a stub (or a table) that does what both did, in
+    an order that respects each one's protocol, and declares an Override per
+    write it replaces: `module` is the other module's key. The build skips
+    the overridden write; the ledger treats the site as the bridge's; the
+    overridden module must be in the remix and must claim `site`, or the
     override is refused.
     """
 

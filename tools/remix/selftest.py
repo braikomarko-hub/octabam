@@ -22,7 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 from remix import ledger, registry, schema, state, stock  # noqa: E402
 from remix.schema import (BusRole, CavePatch, Claims, Detour, DramRegion, DspHook,  # noqa: E402
                           DspRange, DspSection, Formatter, Keep, Kind, Linked, MenuEntry,
-                          Module, Param, Poke, Proof, Remix, SymbolRef, TableGrow, YBase)
+                          Module, Override, Param, Poke, Proof, Remix, SymbolRef, TableGrow, YBase)
 
 
 _PRIORITY = iter(range(100, 1000))      # distinct unless a case sets one
@@ -194,6 +194,10 @@ CASES = [
     ("a detour's pad_to span over another's site",
      [_cf("alpha", detours=(Detour(0x40079816, b"\x00" * 8, "u", "a", pad_to=8),)),
       _cf("beta", detours=(Detour(0x4007981c, b"\x00" * 6, "u", "b"),))], "hook site"),
+    ("an override naming a site the overridden module does not claim",
+     [_cf("alpha", pokes=(_poke(0x40100000),)),
+      _cf("beta", pokes=(_poke(0x40100010),), overrides=(Override(0x40100020, "ALPHA"),))],
+     "override"),
     # ---- kept bytes ------------------------------------------------------
     ("a poke on bytes another module keeps",
      [_cf("alpha", keeps=(Keep(0x4001f322, bytes.fromhex("48780064"), "pea 0x64"),)),
@@ -279,6 +283,18 @@ CLEAN_CLAIMS = [_cf("alpha", pokes=(_poke(0x4001f322, 4),),
                 _ranged("delta", DspRange("y", 0x0800, 0x100, "buf", half_relative=True),
                         DspRange("x", 0x6000, 0x10, "table"), payloads=frozenset({"B"}))]
 
+# A bridge standing in for another module's symbol ref, poke and table ref
+# (schema.Override): each pair below collides without the overrides.
+CLEAN_OVERRIDES = [
+    _cf("alpha", symbol_refs=(SymbolRef(0x400d6438, 0x40004008, "u", "a"),),
+        pokes=(_poke(0x40100000, 4),),
+        tables=(TableGrow("t", 0x40100100, 4, (("u", "s"),), ((0x40065bd8, 0x40100100),)),)),
+    _cf("beta", symbol_refs=(SymbolRef(0x400d6438, 0x40004008, "u", "b"),),
+        pokes=(_poke(0x40100000, 4),),
+        tables=(TableGrow("t2", 0x40100100, 4, (("u", "s"),), ((0x40065bd8, 0x40100100),)),),
+        overrides=(Override(0x400d6438, "ALPHA"), Override(0x40100000, "ALPHA"),
+                   Override(0x40065bd8, "ALPHA")))]
+
 
 def _submodule_preflight() -> int:
     """Refuse early, with the fix, if a module's upstream submodule is not checked out.
@@ -359,7 +375,9 @@ def main():
                         ("two DSP sections hooking one site on different payloads",
                          CLEAN_HOOK_PAIR),
                         ("adjacent pokes, agreeing keepers, ranges on different payloads",
-                         CLEAN_CLAIMS)):
+                         CLEAN_CLAIMS),
+                        ("a bridge's symbol ref, poke and table ref overriding another's",
+                         CLEAN_OVERRIDES)):
         found = ledger.check(mods)
         if found:
             bad += 1
