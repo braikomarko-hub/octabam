@@ -164,9 +164,13 @@ m_tail:
         move.w  #REF,(%a0)+
         move.w  m_kw,(%a0)                      | +0x3c/+0x3d = k
 3:      clr.b   m_inisr
+        .if     HK_FRAME_TAIL
+        rts                                     | HOOKS replays the epilogue
+        .else
         movem.l (%sp),%d0-%d7/%a0-%a6           | displaced: moveml %sp@,%d0-%fp
         lea     252(%sp),%sp                    | displaced
         rte                                     | displaced
+        .endif
 
 | d1 = segment length. Interrupts are masked (level 5).
 m_close:

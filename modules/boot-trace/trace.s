@@ -50,6 +50,7 @@
 
         .set    UART0_USR, 0xfc060004
         .set    UART0_UTB, 0xfc06000c
+        .include "remix.inc"            | HK_BOOT, HK_FRAME_ENTRY, HK_FRAME_TAIL (modules/hooks)
 
         .text
 
@@ -99,8 +100,12 @@ tr_dsp:
 tr_dsp_done:
         moveq   #3,%d0
         bsr.w   trace
+        .if     HK_BOOT
+        rts                             | HOOKS goes on to the call
+        .else
         jsr     (0x4000f938).l
         jmp     (0x40000518).l
+        .endif
 
         .global tr_panel
 tr_panel:
@@ -136,15 +141,21 @@ tr_ui:
 | polls with no timeout -- shows as 7 without 8). Once each: a flag byte.
         .global tr_frame
 tr_frame:
+        .if     HK_FRAME_ENTRY == 0     | bridged by HOOKS: it replays the prologue
         lea     (-252,%sp),%sp
         movem.l %d0-%d7/%a0-%a6,(%sp)
+        .endif
         tst.b   seen7
         bne.s   1f
         moveq   #1,%d0
         move.b  %d0,seen7
         moveq   #7,%d0
         bsr.w   trace
+        .if     HK_FRAME_ENTRY
+1:      rts                             | HOOKS goes on to the body
+        .else
 1:      jmp     (0x4000aad8).l
+        .endif
 
         .global tr_frame_end
 tr_frame_end:
@@ -154,9 +165,13 @@ tr_frame_end:
         move.b  %d0,seen8
         moveq   #8,%d0
         bsr.w   trace
+        .if     HK_FRAME_TAIL
+1:      rts                             | HOOKS replays the epilogue
+        .else
 1:      movem.l (%sp),%d0-%d7/%a0-%a6
         lea     (252,%sp),%sp
         rte
+        .endif
 
 seen7:  .byte   0
 seen8:  .byte   0

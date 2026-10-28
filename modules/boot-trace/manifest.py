@@ -13,6 +13,14 @@ from remix.schema import Category, Detour, Gate, Kind, Linked, Module, Proof
 
 H = bytes.fromhex
 
+
+def _hooks_inc(modules, remix):
+    """HOOKS's flags (modules/hooks): beside another module on one of its
+    frame interrupt or boot sites, the routine returns and HOOKS replays the
+    stock instructions once; alone, its own bytes."""
+    from remix import hooks_flags
+    return hooks_flags.inc("BOOT TRACE", modules)
+
 MODULE = Module(
     name="boot-trace",
     key="BOOT TRACE",
@@ -21,7 +29,7 @@ MODULE = Module(
     proof=Proof.HARDWARE, proof_note="an MKII, 29 Sep 2026 (OCTABAM4-14); `verify_boot_trace`",
     doc="Probe: a MIDI note on MIDI OUT at each boot stage, the DSP upload's record "
         "echoes and any stall, for finding where a boot hangs.",
-    linked=(Linked("boot_trace", "modules/boot-trace/trace.s", cpu="5475"),),
+    linked=(Linked("boot_trace", "modules/boot-trace/trace.s", cpu="5475", include=_hooks_inc),),
     detours=(
         Detour(0x40001E50, H("420013c0fc0a400c"), "boot_trace", "tr_dsp",
                "the DSP upload's entry: note 2", pad_to=8),

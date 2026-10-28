@@ -36,6 +36,26 @@ docs/proposals/SHARED_HOOKS.md is the design. Bridges:
     Bridged: one jsr calls rtm_glyph, then blink_gate -- the fold first, so
     the blink bit survives it (in the other order rtm_glyph's `and #1`
     would clear 0x10).
+  * frame_tail -- the frame interrupt's epilogue 0x4000d9a6 (`movem.l
+    (%sp),%d0-%d7/%a0-%a6 ; lea 252(%sp),%sp ; rte`, every exit path).
+    LOAD METER (lm_out), CF METER (m_tail) and BOOT TRACE (tr_frame_end)
+    each replay it themselves, so none returns. Bridged, each is built with
+    HK_FRAME_TAIL set and ends in `rts` instead (its remix.inc, flags_inc);
+    HOOKS jmps here, calls each, then replays the epilogue once. None of the
+    three touches the stack frame before its replay, and every register is
+    restored by the replay, so each may clobber all of them.
+  * frame_entry -- the frame interrupt's entry 0x4000aad0 (`lea
+    -252(%sp),%sp ; movem.l %d0-%d7/%a0-%a6,(%sp)`). BOOT TRACE (tr_frame)
+    and LOAD METER (lm_in) each replay the prologue and jmp to 0x4000aad8.
+    Bridged (HK_FRAME_ENTRY), each enters after its replay and ends in
+    `rts`; HOOKS replays the prologue once, calls BOOT TRACE's note, then
+    LOAD METER's stamp last, so the duration it measures excludes the note.
+  * boot -- 0x40000512, the boot's `jsr 0x4000f938` after the DSP upload.
+    BOOT TRACE (tr_dsp_done, a jmp) sends note 3 and replays the call; MIDI
+    PART STATE (mp_resident_activate, a jsr; radiohagen's submodule, not
+    edited) sets its copy targets and tail-jumps to 0x4000f938. Bridged
+    (HK_BOOT), BOOT TRACE's routine sends the note and returns; HOOKS calls
+    it, then jmps to mp_resident_activate, which returns to the boot.
 """
 
 import os
@@ -77,6 +97,35 @@ STATUS_ICON = (
 )
 
 
+# ---- frame_tail, frame_entry, boot -----------------------------------------
+TAIL_SITE = 0x4000D9A6
+TAIL_STOCK = H("4cd77fff4fef00fc4e73")  # movem.l (%sp),%d0-%d7/%a0-%a6 ; lea 252(%sp),%sp ; rte
+ENTRY_SITE = 0x4000AAD0
+ENTRY_STOCK = H("4fefff0448d77fff")     # lea -252(%sp),%sp ; movem.l %d0-%d7/%a0-%a6,(%sp)
+BOOT_SITE = 0x40000512
+BOOT_STOCK = H("4eb94000f938")          # jsr 0x4000f938
+# (module key, its routine), in call order. A routine built with its flag
+# set (flags_inc) returns instead of replaying the stock instructions.
+FRAME_TAIL = (
+    ("LOAD METER", "lm_out"),
+    ("CF METER", "m_tail"),
+    ("BOOT TRACE", "tr_frame_end"),
+)
+FRAME_ENTRY = (
+    ("BOOT TRACE", "tr_frame"),
+    ("LOAD METER", "lm_in"),
+)
+BOOT = (
+    ("BOOT TRACE", "tr_dsp_done"),
+    ("MIDI PART STATE", "mp_resident_activate"),   # last: it tail-jumps to the stock call
+)
+
+BRIDGES = {"track_key": TRACK_KEY, "status_icon": STATUS_ICON, "frame_tail": FRAME_TAIL,
+           "frame_entry": FRAME_ENTRY, "boot": BOOT}
+# The flag each bridge sets in its participants' remix.inc (flags_inc).
+FLAGS = {"frame_tail": "HK_FRAME_TAIL", "frame_entry": "HK_FRAME_ENTRY", "boot": "HK_BOOT"}
+
+
 def _present(participants, modules):
     return tuple(p for p in participants if p[0] in modules)
 
@@ -84,12 +133,15 @@ def _present(participants, modules):
 def bridged(modules) -> tuple[str, ...]:
     """The bridges a selection of module keys needs: those with two or more
     participants in it."""
-    out = []
-    if len(_present(TRACK_KEY, modules)) >= 2:
-        out.append("track_key")
-    if len(_present(STATUS_ICON, modules)) >= 2:
-        out.append("status_icon")
-    return tuple(out)
+    return tuple(b for b, parts in BRIDGES.items() if len(_present(parts, modules)) >= 2)
+
+
+def flags_inc(key, modules) -> str:
+    """The lines a participant's remix.inc carries: each flag 1 when that
+    bridge is on and `key` is in it, else 0 (its own bytes, unchanged)."""
+    on = bridged(modules)
+    return "".join(f".set {flag}, {int(b in on and any(p[0] == key for p in BRIDGES[b]))}\n"
+                   for b, flag in FLAGS.items())
 
 
 def track_key_records(modules):
@@ -125,9 +177,7 @@ def _handler(v):
 def hooks_inc(modules, remix=None):
     """remix.inc for bridge.s: which bridges are on and their tables."""
     on = bridged(modules)
-    out = [f".set hk_track_key, {int('track_key' in on)}",
-           f".set hk_status_icon, {int('status_icon' in on)}",
-           ".macro hk_track_key_records"]
+    out = [f".set hk_{b}, {int(b in on)}" for b in BRIDGES] + [".macro hk_track_key_records"]
     if "track_key" in on:
         out += [f"    HKREC 0x{c:02x}, {_handler(p)}, {_handler(r)}"
                 for c, p, r in track_key_records(modules)]
@@ -135,10 +185,33 @@ def hooks_inc(modules, remix=None):
     if "status_icon" in on:
         out += [f"    jsr {sym}" for _key, sym in _present(STATUS_ICON, modules)]
     out += [".endm"]
+    for b in ("frame_tail", "frame_entry", "boot"):
+        out += [f".macro hk_{b}_chain"]
+        if b in on:
+            parts = _present(BRIDGES[b], modules)
+            out += [f"    jsr {sym}" for _key, sym in parts[:-1]]
+            last = parts[-1][1]
+            # boot's last participant tail-jumps to the stock call and returns
+            # to the boot itself; the others' last is called like the rest
+            out += [f"    jmp {last}" if b == "boot" else f"    jsr {last}"]
+        out += [".endm"]
     return "\n".join(out) + "\n"
 
 
 UNIT = Linked("hooks", os.path.join(_HERE, "bridge.s"), dram=True, include=hooks_inc)
+
+# Participants' routines placed in ROM caves, not the platform runtime: the
+# runtime's link reaches them through the unit's defsyms, which the build
+# resolves from the ROM units' exports (build_bus._defs_for). verify_hooks
+# checks this list against each participant's Linked.dram.
+ROM_ROUTINES = {"tr_frame", "tr_frame_end", "tr_dsp_done", "mp_resident_activate"}
+
+
+def _unit(modules):
+    """HOOKS's unit for a selection, naming each ROM-placed routine it calls."""
+    used = {sym for b in bridged(modules) if b in FLAGS for _k, sym in _present(BRIDGES[b], modules)}
+    defs = tuple((s, 0) for s in sorted(used & ROM_ROUTINES))
+    return Linked("hooks", UNIT.source, dram=True, include=hooks_inc, defsyms=defs)
 
 
 def select(modules):
@@ -157,14 +230,24 @@ def select(modules):
                               "track status icons: each participant's state fold, in order",
                               kind="jsr"))
         overrides += [Override(ICON_SITE, key) for key, _sym in _present(STATUS_ICON, modules)]
-    return {"linked": (UNIT,) if on else (), "detours": tuple(detours),
+    for b, site, stock, sym, kind, pad, note in (
+            ("frame_tail", TAIL_SITE, TAIL_STOCK, "hk_frame_tail", "jmp", 10,
+             "the frame interrupt's epilogue: each participant, then the epilogue once"),
+            ("frame_entry", ENTRY_SITE, ENTRY_STOCK, "hk_frame_entry", "jmp", 8,
+             "the frame interrupt's entry: the prologue once, then each participant"),
+            ("boot", BOOT_SITE, BOOT_STOCK, "hk_boot", "jsr", None,
+             "the boot after the DSP upload: each participant, the last into the stock call")):
+        if b in on:
+            detours.append(Detour(site, stock, "hooks", sym, note, kind=kind, pad_to=pad))
+            overrides += [Override(site, key) for key, _sym in _present(BRIDGES[b], modules)]
+    return {"linked": (_unit(modules),) if on else (), "detours": tuple(detours),
             "symbol_refs": tuple(refs), "overrides": tuple(overrides)}
 
 
 # The unbound declaration carries every bridge, so the matrix and the
 # remixer see HOOKS as the bridge that joins each pair (index.py, app.py);
 # ledger.check and registry.bound apply select() to any real selection.
-_ALL = select({p[0] for p in TRACK_KEY} | {p[0] for p in STATUS_ICON})
+_ALL = select({p[0] for parts in BRIDGES.values() for p in parts})
 
 MODULE = Module(
     name="hooks",

@@ -30,3 +30,38 @@ hk_track_keys:
         .byte   0xff, 0
         .space  24
         .endif
+
+        .if     hk_frame_tail
+| frame interrupt epilogue 0x4000d9a6, jmp'd to on every exit path: each
+| participant (built with HK_FRAME_TAIL: it returns), then the epilogue.
+| d0-a6 are saved at (sp) by the prologue, so every register is free.
+        .global hk_frame_tail
+hk_frame_tail:
+        hk_frame_tail_chain
+        movem.l (%sp),%d0-%d7/%a0-%a6   | the stock epilogue, once
+        lea     252(%sp),%sp
+        .global hk_frame_tail_rte       | (a label only: verify_hooks stops here)
+hk_frame_tail_rte:
+        rte
+        .endif
+
+        .if     hk_frame_entry
+| frame interrupt entry 0x4000aad0: the stock prologue once, then each
+| participant (built with HK_FRAME_ENTRY: entered after its replay, it
+| returns), then the interrupt's body.
+        .global hk_frame_entry
+hk_frame_entry:
+        lea     -252(%sp),%sp           | the stock prologue, once
+        movem.l %d0-%d7/%a0-%a6,(%sp)
+        hk_frame_entry_chain
+        jmp     (0x4000aad8).l
+        .endif
+
+        .if     hk_boot
+| 0x40000512: `jsr hk_boot` replaces `jsr 0x4000f938`. Each participant but
+| the last is called (built with HK_BOOT: it returns); the last tail-jumps
+| to 0x4000f938, which returns to the boot.
+        .global hk_boot
+hk_boot:
+        hk_boot_chain
+        .endif

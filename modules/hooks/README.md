@@ -16,9 +16,18 @@ The design, and the conflicts it is meant to remove next:
 |---|---|---|---|
 | track_key | the [TRACK]-held key layer's keys field `0x400d164e` (stock `0x400d1594`, six 26-byte records) | REC_TRIG_MUTE (replaces YES/NO), MORPH (adds UP/DOWN) | points the field at one table: stock's records with each participant's replacements, then each participant's added keys |
 | status_icon | the track status icon renderer's state-cache load `0x4004bee2` | REC_TRIG_MUTE (`rtm_glyph`), REC THRESHOLD (`blink_gate`) | one `jsr` calls `rtm_glyph`, then `blink_gate`: the mute fold first, so the blink bit survives it |
+| frame_tail | the frame interrupt's epilogue `0x4000d9a6` | LOAD METER (`lm_out`), CF METER (`m_tail`), BOOT TRACE (`tr_frame_end`) | calls each, built to return (`HK_FRAME_TAIL`), then replays the epilogue once |
+| frame_entry | the frame interrupt's entry `0x4000aad0` | BOOT TRACE (`tr_frame`), LOAD METER (`lm_in`) | replays the prologue once, then calls each, built to enter after it (`HK_FRAME_ENTRY`): LOAD METER's stamp last, so its duration excludes the note |
+| boot | the boot's `jsr 0x4000f938` at `0x40000512` | BOOT TRACE (`tr_dsp_done`), MIDI PART STATE (`mp_resident_activate`) | calls BOOT TRACE's note 3 (`HK_BOOT`: it returns), then jumps to MIDI PART STATE's routine, which tail-jumps to the stock call |
 
 A bridge takes each participant's claim at the site by `schema.Override`
 (`ledger.py` and `build_bus.py` skip the overridden detour or symbol ref).
+A participant whose own detour replays stock instructions and never returns
+(the frame interrupt and boot bridges) reads a flag from its `remix.inc`
+(`tools/remix/hooks_flags.py`): 1 only when its bridge is on, and then it
+returns instead; alone, the flag is 0 and its bytes are the ones proven.
+MIDI PART STATE's routine already ends in the stock call, so it is called
+last and needs no flag: its submodule source is not edited.
 REC_TRIG_MUTE's own refs into stock's [TRACK] table are still written when
 track_key is bridged; nothing reads that table once the field is repointed.
 
@@ -32,9 +41,20 @@ rule the pair would build and REC_TRIG_MUTE's keys would silently stop.
   three participants' own sources linked with `bridge.s`, `hk_status_icon`
   over 128 states (track, state, mute, arm, TRIG, blink phase) against the
   model and against the two routines called in turn, the opposite order
-  losing the blink; the [TRACK]-layer table decoded. With a built image of
-  [`test/hooks`](../../remixes/test/hooks/README.md): stock's six records are
-  the ones HOOKS copies, and both sites hold HOOKS's writes.
+  losing the blink; the [TRACK]-layer table decoded; the frame interrupt's
+  entry and epilogue chains (one prologue, one epilogue, each participant's
+  work done, registers and stack as found) and the boot chain (the stock
+  call made once, MIDI PART STATE's targets set). With a built image of
+  [`test/hooks`](../../remixes/test/hooks/README.md) or
+  [`test/hooks-core`](../../remixes/test/hooks-core/README.md): stock's six
+  records are the ones HOOKS copies, every bridged site holds HOOKS's write,
+  and each chain calls its participants at their linked addresses.
+- Each participant alone, and `octabam`, `stock-meter-a`, `cfmeter`,
+  `remix-switch-trace`, `morph`, `rec-threshold`: image byte-identical to
+  the branch's base (28 Oct 2026).
+- The boot bridge has run under Unicorn only: no remix here carries BOOT TRACE
+  with MIDI PART STATE (MIDI LOOPBACK, which brings it, conflicts with MIDI
+  SCENES).
 - Not flashed. Not run under the ColdFire port with a project.
 
 ## Adding a bridge

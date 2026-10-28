@@ -11,11 +11,16 @@
    the two routines in HOOKS's order, and with the two routines called one
    after the other; the opposite order is shown to lose the blink. The
    [TRACK]-layer table is decoded and compared with track_key_records.
+   The frame interrupt's entry and epilogue chains and the boot chain are
+   run with LOAD METER, CF METER, BOOT TRACE and MIDI PART STATE built with
+   HOOKS's flags: one prologue and one epilogue, every participant's work
+   done, the registers and stack as the interrupt found them.
 3. Installed (stage image, when the built image is the remix's and carries
    HOOKS): stock's six [TRACK]-layer records at 0x400d1594 are the ones
    HOOKS copies; each bridged site holds HOOKS's write, and the
    participants' overridden writes are not there.
 """
+import hashlib
 from pathlib import Path
 import runpy
 import subprocess
@@ -64,6 +69,10 @@ def selection():
         bad = ledger.check(m(*sel))
         check(any(p.startswith("hooks:") for p in bad), f"{' + '.join(sel)} without HOOKS is refused")
         check(ledger.check(m(*sel, "HOOKS")) == [], f"{' + '.join(sel)} with HOOKS is clean")
+    rom = {sym for parts in DECL["BRIDGES"].values() for key, *rest in parts
+           for sym in (rest[0],) if isinstance(rest[0], str)
+           and any(sym in (ROOT / u.source).read_text() and not u.dram for u in known[key].linked)}
+    check(rom == DECL["ROM_ROUTINES"], f"ROM_ROUTINES names the ROM-placed routines ({', '.join(sorted(rom))})")
     tk = DECL["TRACK_KEY"]
     for bad, why in (((("A", ((0x31, "a", None),), (), False), ("B", ((0x31, "b", None),), (), False)),
                       "two participants replacing one key"),
@@ -192,6 +201,112 @@ def behaviour():
           "each record's padding is zero and stock's terminator follows")
 
 
+def _link_units(work, keys, units, defs=()):
+    """Assemble (key, Linked) units with each one's remix.inc and link them
+    as one image at 0x41000000, as the platform links DRAM units. `defs` are
+    extra (name, value) link-time symbols. Returns (bytes, base, symbols)."""
+    known = registry.modules()
+    objs = []
+    for i, (_k, u) in enumerate(units):
+        d = work / f"inc{i}"
+        d.mkdir()
+        (d / "remix.inc").write_text(u.include(keys, None) if u.include else "")
+        obj = work / f"{i}_{u.label}.o"
+        uds = [a for n, v in u.defsyms if n not in dict(defs) for a in ("--defsym", f"{n}={v}")]
+        subprocess.run(["m68k-elf-as", "-mcpu=54455", "-I", str(d), "-I", str(ROOT), *uds,
+                        "-o", str(obj), str(ROOT / u.source)], check=True, capture_output=True)
+        objs.append(str(obj))
+    base = 0x41000000
+    subprocess.run(["m68k-elf-ld", f"-Ttext=0x{base:x}", "--unresolved-symbols=ignore-all",
+                    *[f"--defsym={n}=0x{v:x}" for n, v in defs],
+                    "-o", str(work / "rt.elf"), *objs], check=True, capture_output=True)
+    subprocess.run(["m68k-elf-objcopy", "-O", "binary", str(work / "rt.elf"), str(work / "rt.bin")],
+                   check=True)
+    nm = subprocess.check_output(["m68k-elf-nm", str(work / "rt.elf")], text=True)
+    sym = {f[2]: int(f[0], 16) for line in nm.splitlines() if len(f := line.split()) == 3}
+    del known
+    return (work / "rt.bin").read_bytes(), base, sym
+
+
+def frames():
+    """frame_tail, frame_entry and boot: the participants built with their
+    flags (hooks_flags) and HOOKS's chains, run under Unicorn."""
+    from unicorn import Uc, UC_ARCH_M68K, UC_MODE_BIG_ENDIAN
+    from unicorn.m68k_const import (UC_CPU_M68K_CFV4E, UC_M68K_REG_A7, UC_M68K_REG_PC,
+                                    UC_M68K_REG_D0, UC_M68K_REG_A6)
+    from unicorn import m68k_const as mc
+    keys = {"LOAD METER", "CF METER", "BOOT TRACE", "MIDI PART STATE", "HOOKS"}
+    known = registry.modules()
+    units = [(k, u) for k in ("LOAD METER", "CF METER", "BOOT TRACE") for u in known[k].linked]
+    units += [("MIDI PART STATE", u) for u in known["MIDI PART STATE"].linked if u.label == "midipartentry"]
+    units += [("HOOKS", DECL["UNIT"])]
+    with tempfile.TemporaryDirectory(prefix="octabam-hooks-frames-") as td:
+        rt, base, sym = _link_units(Path(td), keys, units)
+    regs = [getattr(mc, f"UC_M68K_REG_D{i}") for i in range(8)] + \
+           [getattr(mc, f"UC_M68K_REG_A{i}") for i in range(7)]
+    u = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
+    u.ctl_set_cpu_model(UC_CPU_M68K_CFV4E)
+    for a, n in ((0x10000000, 0x200000), (0x20000000, 0x10000), (0x40000000, 0x08000000),
+                 (0x80000000, 0x100000), (0xFC000000, 0x100000)):
+        u.mem_map(a, n)
+    u.mem_write(base, rt)
+    u.mem_write(0xFC060004, b"\x04")                     # UART0 USR (a byte): TXRDY, so a note never waits
+    u.mem_write(0x4000F938, b"\x4e\x75")                 # the boot's callee: rts
+    rd = lambda a: int.from_bytes(u.mem_read(a, 4), "big")   # noqa: E731
+    STACK = 0x47008000
+
+    # ---- frame_entry: prologue once, BOOT TRACE's note, LOAD METER's stamp
+    u.mem_write(0x4000AAD8, b"\x4e\x71")
+    vals = [0x1000 + i for i in range(15)]
+    for r, v in zip(regs, vals):
+        u.reg_write(r, v)
+    u.reg_write(UC_M68K_REG_A7, STACK)
+    u.mem_write(0xFC07C00C, (0x12345678).to_bytes(4, "big"))  # DTCN3
+    u.emu_start(sym["hk_frame_entry"], 0x4000AAD8, count=20000)
+    sp = u.reg_read(UC_M68K_REG_A7)
+    saved = [rd(sp + 4 * i) for i in range(15)]
+    check(u.reg_read(UC_M68K_REG_PC) == 0x4000AAD8 and sp == STACK - 252 and saved == vals,
+          "frame_entry: reaches the body with the prologue's frame, once (sp - 252, d0-a6 saved)")
+    check(u.mem_read(sym["seen7"], 1)[0] == 1 and rd(sym["lm_t0"]) == 0x12345678,
+          "frame_entry: BOOT TRACE's note 7 sent, LOAD METER's entry stamp taken")
+
+    # ---- frame_tail: each participant, then the epilogue once
+    for r in regs:
+        u.reg_write(r, 0xDEAD0000)
+    u.mem_write(0xFC07C00C, (0x12345678 + 500).to_bytes(4, "big"))
+    seq0 = rd(sym["lm_stats"])
+    u.emu_start(sym["hk_frame_tail"], sym["hk_frame_tail_rte"], count=200000)
+    check(u.reg_read(UC_M68K_REG_PC) == sym["hk_frame_tail_rte"] and u.reg_read(UC_M68K_REG_A7) == STACK
+          and [u.reg_read(r) for r in regs] == vals,
+          "frame_tail: reaches rte once, with sp and d0-a6 as the interrupt found them")
+    # Both meters' windows are past due (their window starts at 0), so each
+    # publishes this interrupt and starts a new window at `now`.
+    now = 0x12345678 + 500
+    check(rd(sym["lm_stats"]) == seq0 + 1 and rd(sym["lm_stats"] + 8) == 500
+          and rd(sym["lm_stats"] + 12) == 1 and rd(sym["lm_w0"]) == now,
+          "frame_tail: LOAD METER publishes this interrupt (one, 500 counts) and starts its window")
+    check(rd(sym["m_seg0"]) == now and rd(sym["m_icnt"]) == 0 and u.mem_read(sym["seen8"], 1)[0] == 1,
+          "frame_tail: CF METER closes its segment at the same instant; BOOT TRACE's note 8")
+
+    # ---- boot: BOOT TRACE's note 3, then MIDI PART STATE into the stock call
+    DONE = 0x4700FFF0
+    u.mem_write(DONE, b"\x4e\x71")
+    u.reg_write(UC_M68K_REG_A7, STACK - 4)
+    u.mem_write(STACK - 4, DONE.to_bytes(4, "big"))
+    trace = []
+    from unicorn import UC_HOOK_CODE
+    h = u.hook_add(UC_HOOK_CODE, lambda uc, pc, size, _d: trace.append(pc), begin=0x4000F938, end=0x4000F938)
+    u.emu_start(sym["hk_boot"], DONE, count=200000)
+    u.hook_del(h)
+    check(u.reg_read(UC_M68K_REG_PC) == DONE and u.reg_read(UC_M68K_REG_A7) == STACK
+          and trace == [0x4000F938],
+          "boot: the stock call made once, and the boot resumes after it")
+    check(rd(sym["mp_copy_target"]) == sym["mp_native_copy"]
+          and rd(sym["mp_init_target"]) == sym["mp_native_init"],
+          "boot: MIDI PART STATE's copy and init targets set (its source unedited)")
+    del UC_M68K_REG_D0, UC_M68K_REG_A6
+
+
 def installed(name):
     img_path = ROOT / "out/mainos_bus.bin"
     raw = ROOT / "out/raw/section_3_MAIN_OS.bin"
@@ -211,14 +326,54 @@ def installed(name):
         print(f"  [SKIP] installed: remix {name} carries no HOOKS or is not built")
         return
     img = img_path.read_bytes()
+    # The image on disk is whatever built last (TRAPS.md, "The boot verifier
+    # booted the wrong image"): build_bus's sidecar names the remix and hash.
+    side = img_path.with_suffix(".remix")
+    parts = side.read_text().split() if side.exists() else []
+    if parts != [name, hashlib.sha256(img).hexdigest()]:
+        print(f"  [SKIP] installed: out/mainos_bus.bin is not remix {name}'s build "
+              f"({parts[0] if parts else 'no sidecar'}); make bus REMIX={name} first")
+        return
     nm = subprocess.check_output(["m68k-elf-nm", str(ROOT / "out/platform/runtime/runtime.elf")], text=True)
     sym = {f[2]: int(f[0], 16) for line in nm.splitlines() if len(f := line.split()) == 3}
     h = sel["HOOKS"]
     for d in h.detours:
-        check(img[d.site - BASE_IMG:d.site - BASE_IMG + 6] == b"\x4e\xb9" + sym[d.symbol].to_bytes(4, "big"),
-              f"0x{d.site:08x}: jsr {d.symbol} (no participant's detour)")
+        op = {"jmp": b"\x4e\xf9", "jsr": b"\x4e\xb9"}[d.kind]
+        check(img[d.site - BASE_IMG:d.site - BASE_IMG + 6] == op + sym[d.symbol].to_bytes(4, "big"),
+              f"0x{d.site:08x}: {d.kind} {d.symbol} (no participant's detour)")
     for r in h.symbol_refs:
         check(rd(img, r.addr) == sym[r.symbol], f"0x{r.addr:08x}: -> {r.symbol} (not MORPH's copy)")
+    # Each chain's calls, decoded from the linked runtime: every participant
+    # in order, at its real address (a ROM-placed one from its unit's ELF),
+    # none at 0 (an unresolved defsym).
+    elf = ROOT / "out/platform/runtime/runtime.elf"
+    hdr = subprocess.check_output(["m68k-elf-objdump", "-h", str(elf)], text=True)
+    base = min(int(f[3], 16) for line in hdr.splitlines() if len(f := line.split()) > 6
+               and f[1] == ".text")
+    rt = (ROOT / "out/platform/runtime/runtime.bin").read_bytes()
+    rom = {}
+    for key in ("BOOT TRACE", "MIDI PART STATE"):
+        if key in sel:
+            for u in sel[key].linked:
+                ue = ROOT / "out/linked" / sel[key].name / u.label / "u.elf"
+                if not u.dram and ue.exists():
+                    out = subprocess.check_output(["m68k-elf-nm", str(ue)], text=True)
+                    rom.update({f[2]: int(f[0], 16) for line in out.splitlines() if len(f := line.split()) == 3})
+    stubs = {"status_icon": ("hk_status_icon", 0), "frame_tail": ("hk_frame_tail", 0),
+             "frame_entry": ("hk_frame_entry", 8), "boot": ("hk_boot", 0)}
+    on = DECL["bridged"](set(sel))
+    for b, (stub, skip) in stubs.items():
+        if b not in on:
+            continue
+        at = sym[stub] - base + skip
+        calls = []
+        ops = (b"\x4e\xb9", b"\x4e\xf9") if b == "boot" else (b"\x4e\xb9",)   # boot's last is a jmp
+        while rt[at:at + 2] in ops:
+            calls.append(int.from_bytes(rt[at + 2:at + 6], "big"))
+            at += 6
+        want = [sym.get(s, rom.get(s)) for k, s in DECL["BRIDGES"][b] if k in sel]
+        check(calls == want and all(want),
+              f"{stub}: calls {', '.join(s for k, s in DECL['BRIDGES'][b] if k in sel)} at their addresses")
 
 
 def main():
@@ -227,6 +382,8 @@ def main():
     selection()
     print("verify_hooks: behaviour under Unicorn")
     behaviour()
+    print("verify_hooks: frame interrupt and boot chains under Unicorn")
+    frames()
     print(f"verify_hooks: installed ({name})")
     installed(name)
     print(f"verify_hooks: {'all passed' if not fails else f'{fails} failed'}")
