@@ -90,6 +90,12 @@ def main():
                     "--tree", str(OUT / "tree"), "--out", str(card)], check=True, cwd=ROOT)
     image = OUT / "image.bin"
     shutil.copy2(os.environ.get("O3_IMAGE", ROOT / "out/mainos_bus.bin"), image)
+    # Beside ANALOG BD (modules/hooks machine_rows) OCTA-303 is row 6 of seven, UI type 6: the
+    # machine list's row count, poked at 0x40079248, says which image this is. SELECT's six DOWNs
+    # land on the last row either way.
+    global PB_TABLE5
+    o3_row = image.read_bytes()[0x40079248 - 0x40000400 + 3] - 1
+    PB_TABLE5 = 0x400D5F38 + 4 * o3_row
     sym = symbols()
     rec = sym["o3_desc"] + 0x194          # the machine's record (o3_desc's second, O3_DLEN apart)
 
@@ -110,9 +116,9 @@ def main():
         assert list(p[0x1E0:0x1E6]) == want_su, (nm, "SETUP", list(p[0x1E0:0x1E6]))
     assert list(lane[0:6]) == want_pb and list(lane[0x20:0x26]) == [0, 0, 74, 0, 0, 44], \
         ("live lane", list(lane[0:6]), list(lane[0x20:0x26]))
-    assert int.from_bytes(rd("page.bin"), "big") == rec, ("UI type 5's record", rd("page.bin").hex(), hex(rec))
+    assert int.from_bytes(rd("page.bin"), "big") == rec, (f"UI type {o3_row}'s record", rd("page.bin").hex(), hex(rec))
     print("PASS select: FLEX signed T B 1, defaults then FINE 74 / ACCV 44 in the Part, its shadow and the "
-          "live lane; UI type 5 = OCTA303's record")
+          f"live lane; UI type {o3_row} = OCTA303's record")
 
     # 2. select, then another machine
     rd, log, _ = run("unsign", card, image, SELECT + key(0x32) + FUNC_SRC +

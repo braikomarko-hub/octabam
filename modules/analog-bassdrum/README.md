@@ -69,7 +69,11 @@ checked on both cores. The optimized kick engines are also held to exact
 pre-optimization internal-state hashes. Both models' audio is checked against
 the original with exact fixed-point output scaling and limiting.
 MACHINEDRUM, SYNTH MACHINE and POLY still conflict with the registration
-seams and require a shared registry before composition.
+seams and require a shared registry before composition. OCTA303 shares an
+image through [HOOKS](../hooks/README.md) (`machine_rows`, 28 Oct 2026):
+ANALOG BD keeps row 5 and every hook, and, built with `HK_MACHINE_ROWS`,
+hands each row not its own to OCTA303's routine; OCTA-303 is row 6 of a
+seven-row list that scrolls. Its own bytes alone are unchanged.
 
 Current load evidence and remaining hardware qualification are in [CPU.md](CPU.md).
 Generic DSP pressure acceptance is explicitly blocked until the pricer supports

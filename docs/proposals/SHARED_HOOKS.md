@@ -13,7 +13,8 @@ frame_entry, boot); [PARTS](../../modules/parts/README.md) carries MIDI PART
 STATE's API and retires it. Two departures from sections 4.3 and 7: the
 in-tree participants were not rewritten as clients -- each keeps its
 proven standalone bytes and, where its detour never returns, builds a
-returning form under a HOOKS flag -- and the machine table (phase 6) is not started.
+returning form under a HOOKS flag -- and the machine table (phase 6) has
+its first pair, in HOOKS rather than PARTS (below).
 
 **Phase 5 (28 Oct 2026).** The four sites SCALE QUANTIZER shares are the
 CHROMATIC keyboard, not MIDI note-in: `0x4004fc58` with OCTA303, and
@@ -23,6 +24,22 @@ bridges both pairs (chrom_pitch, chromatic). The MIDI note-on site
 SYNTH MACHINE) and goes with phase 6; SCALE QUANTIZER gave it to SYNTH
 MACHINE on 30 Sep 2026, so section 2's row for it was wrong about SCALE
 QUANTIZER.
+
+**Phase 6, first pair (28 Oct 2026).** ANALOG BD and OCTA303 share an image
+through HOOKS's `machine_rows` bridge, not a PARTS machine registry: the two
+are in-tree, and chaining one's not-mine paths into the other's routines
+(built under `HK_MACHINE_ROWS`) needed no registry. ANALOG BD keeps row 5 and
+every shared hook; OCTA-303 moves to row 6; HOOKS pokes the lists to seven
+rows and takes the machine list's drawer so it scrolls. ✅ under Unicorn
+(`verify_hooks`) and under the port (both machines' UI gates on the one
+image, the list scrolling, each row's commit), not flashed; each alone
+byte-identical. One measured surprise: the list's five key handlers clamp
+the cursor to 0..5 after moving -- one past stock's last row, which is why a
+single added machine never met it ([TRAPS.md](../contributing/TRAPS.md#trap-machine-clamp)).
+Still open: CX OSC, SYNTH MACHINE and BLACKPYRAMIDS_303 (the last can never
+sit beside ANALOG BD: both put a DSP voice in SPRING REV's words), and the
+MIDI note-on site `0x4000e746`. Whether a registry earns its code depends on
+those three: a third machine on the list makes chaining by pairs grow.
 
 Confidence markers: ✅ measured, 🟡 inferred with a falsifier stated,
 ⬜ not looked at.

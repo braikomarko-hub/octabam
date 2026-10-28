@@ -24,6 +24,11 @@ def main():
     # T1 -> SRC SETUP -> bottom row -> YES; the former MODEL encoder is inert.
     script=key(0x10)+[(.6,'key 0x2d down'),(.3,'key 0x22 down'),(.3,'key 0x22 up'),(.3,'key 0x2d up')]
     for _ in range(6):script+=key(0x20,.25,.25)
+    # Beside OCTA303 (modules/hooks machine_rows) the list has a seventh row, OCTA-303's,
+    # below ours: the machine list's row count, poked at 0x40079248, says which image this is.
+    # A short press: a 0.25 s hold auto-repeats (the DOWNs above rely on it only to reach the end).
+    rows=image.read_bytes()[0x40079248-0x40000400+3]
+    for _ in range(rows-6):script+=key(0x33,.25,.06)
     script+=key(0x31)
     script+=[(.8,'enc 0 16'),(.8,'enc 2 -4')]
     # Close setup, then double-tap T1 with a 210 ms down-to-down gap.
@@ -37,9 +42,10 @@ def main():
     left_script += key(0x32)+[(.6,'key 0x10 down'),(.06,'key 0x10 up'),(.15,'key 0x10 down'),(.06,'key 0x10 up')]+key(0x34)+[(.8,'quit')]
     script+=key(0x34)
     # Visit FLEX's real sample column, then return to Analog BD's engine column.
-    for _ in range(4): script+=key(0x33,.25,.25)
+    # Short presses: one row each (a 0.25 s hold repeats, and below ANALOG BD can be OCTA-303).
+    for _ in range(4): script+=key(0x33,.25,.06)
     script+=key(0x21)+key(0x34)
-    for _ in range(4): script+=key(0x20,.25,.25)
+    for _ in range(4): script+=key(0x20,.25,.06)
     script+=key(0x21)
     # Select 909 through the pool, then return and select 808.
     script+=key(0x20)+key(0x31)

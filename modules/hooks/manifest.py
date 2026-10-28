@@ -77,11 +77,25 @@ docs/proposals/SHARED_HOOKS.md is the design. Bridges:
     stock's toggle) where BLACKPYRAMIDS alone lands on 0. The picture's
     detour spans SCALE QUANTIZER's 8 bytes, so stock's `bne` at 0x40044970,
     which SCALE QUANTIZER's handler returns to, stays in place.
+  * machine_rows -- the track's machine list, SRC SETUP and the machine
+    hooks behind them: ANALOG BD and OCTA303 are each a sixth row (row 5)
+    of a five-row list that never scrolls, each signing a FLEX track in the
+    same three Part bytes ('A' 'B' 1 / 'T' 'B' 1) and each taking the FLEX
+    kind entry's renderer. Bridged, ANALOG BD keeps row 5 and every one of
+    its hooks; built with HK_MACHINE_ROWS, each of its not-ours paths hands
+    the hook to OCTA303's routine for it (name, commit, SRC SETUP commit,
+    validator, row type), and OCTA303, built with its row as 6, publishes
+    its record as UI type 6's from ANALOG BD's tick and chains its renderer
+    into ab_render. OCTA303's own copies of those hooks are overridden; its
+    page, retrig, CHROMATIC, LFO-name and trig hooks are its alone and
+    stay. The lists have seven rows: HOOKS pokes the counts and bounds and
+    takes the chooser drawer's two row tests (0x40078678, 0x400786c8) so it
+    scrolls, drawing row top + d2 where stock draws row d2.
 """
 
 import os
 
-from remix.schema import Category, Detour, Gate, Kind, Linked, Module, Override, Proof, SymbolRef
+from remix.schema import Category, Detour, Gate, Kind, Linked, Module, Override, Poke, Proof, SymbolRef
 
 H = bytes.fromhex
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
@@ -157,17 +171,62 @@ CHROMATIC = (
     ("SCALE QUANTIZER", "qz_octkey"),
 )
 
+# ---- machine_rows -----------------------------------------------------------
+# (module key, its row-type routine), the head first: ANALOG BD's hooks take
+# every site and hand every row but 5 on to OCTA303's (HK_MACHINE_ROWS).
+MACHINE_ROWS = (
+    ("ANALOG BD", "ab_row_type"),
+    ("OCTA303", "o3_type"),
+)
+# OCTA303's detours that ANALOG BD's, built flagged, chain into.
+MC_OCTA_DETOURS = (0x400334D8, 0x4003C928, 0x4003D718, 0x4004C36A, 0x4003C980, 0x400786C8,
+                   0x400585DC, 0x4005221E, 0x40078886, 0x4007981C, 0x4005A616, 0x4005A850,
+                   0x4003A52E, 0x4003CD98, 0x40002318)
+MC_KIND_FLEX = 0x400D6438               # OCTA303's sy_render stays; it chains to ab_render
+# Both modules' six-row pokes; HOOKS's seven-row ones replace four, the drawer
+# stubs the other two.
+MC_POKE_SITES = (0x40079248, 0x400585FA, 0x4003C950, 0x40078678, 0x400786CE, 0x40079904)
+MC_CLAMPS = (0x40078C22, 0x40078CB0, 0x40078D2E, 0x40078DEE, 0x40078E7C)
+MC_POKES = (
+    Poke(0x40079248, H("48780005"), H("48780007"), "the machine list has seven rows"),
+    Poke(0x400585FA, H("48780005"), H("48780007"), "SRC SETUP's selector has seven rows"),
+    Poke(0x4003C950, H("7204"), H("7206"), "SRC SETUP's name lookup admits rows 5 and 6"),
+    Poke(0x40079904, H("7604"), H("7606"), "the machine list's commit persists rows 5 and 6"),
+) + tuple(
+    # the list's five key handlers (UP, DOWN, their FUNC pages, the encoder) clamp the cursor
+    # to 0..5 after moving (`moveq #5,%d1 ; cmp.l %d0,%d1 ; bge.s ; moveq #5,%d0`): one past
+    # stock's last row, which is why one added machine fitted without them
+    Poke(at + off, H(f"{op}05"), H(f"{op}06"), "the machine list's cursor reaches row 6")
+    for at in MC_CLAMPS for off, op in ((0, "72"), (6, "70")))
+MC_DRAW = (                             # (site, stock bytes, HOOKS's routine, pad)
+    (0x40078678, H("7004b0826d24"), "hk_mc_name", 6),               # moveq #4,%d0 ; cmp.l %d2,%d0 ; blt.s
+    (0x400786C8, H("7110b480662e7004b0826d28"), "hk_mc_box", 12),   # the stored machine's box test
+)
+
 BRIDGES = {"track_key": TRACK_KEY, "status_icon": STATUS_ICON, "frame_tail": FRAME_TAIL,
            "frame_entry": FRAME_ENTRY, "boot": BOOT, "chrom_pitch": CHROM_PITCH,
-           "chromatic": CHROMATIC}
+           "chromatic": CHROMATIC, "machine_rows": MACHINE_ROWS}
 # The flag each bridge sets in its participants' remix.inc (flags_inc).
 FLAGS = {"frame_tail": "HK_FRAME_TAIL", "frame_entry": "HK_FRAME_ENTRY", "boot": "HK_BOOT",
-         "chrom_pitch": "HK_CHROM_PITCH"}
+         "chrom_pitch": "HK_CHROM_PITCH", "machine_rows": "HK_MACHINE_ROWS"}
 # Bridges that need no code of HOOKS's own: a participant's flagged build does it.
 CODELESS = {"chrom_pitch"}
 
 
+def _parts_clients():
+    """PARTS's client keys (modules/parts CLIENTS): PARTS installs nothing
+    without one, so it is no participant then."""
+    import ast
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "parts", "manifest.py")).read()
+    node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", None) == "CLIENTS" for t in n.targets))
+    return {e.elts[0].value for e in node.value.elts}
+
+
 def _present(participants, modules):
+    modules = set(modules)
+    if "PARTS" in modules and not modules & _parts_clients():
+        modules.discard("PARTS")
     return tuple(p for p in participants if p[0] in modules)
 
 
@@ -261,7 +320,7 @@ def select(modules):
     """Only the bridges this selection needs enter the bound module: its
     unit, its claims and its overrides of the participants' claims."""
     on = bridged(modules)
-    detours, refs, overrides = [], [], []
+    detours, refs, overrides, pokes = [], [], [], []
     if "track_key" in on:
         refs.append(SymbolRef(KEYS_FIELD, KEYS_STOCK, "hooks", "hk_track_keys",
                               "[TRACK]-held key layer: stock's records with each "
@@ -291,9 +350,17 @@ def select(modules):
                                   "CHROMATIC: a BLACKPYRAMIDS track its own, another SCALE QUANTIZER's",
                                   kind="jmp", pad_to=8))
             overrides += [Override(site, key) for key, _s in _present(CHROMATIC, modules)]
+    if "machine_rows" in on:
+        for site, stock, sym, pad in MC_DRAW:
+            detours.append(Detour(site, stock, "hooks", sym,
+                                  "the machine list scrolls: row top + d2 on screen row d2",
+                                  kind="jmp", pad_to=pad))
+        pokes += MC_POKES
+        overrides += [Override(site, "OCTA303") for site in MC_OCTA_DETOURS + MC_POKE_SITES]
+        overrides += [Override(site, "ANALOG BD") for site in (0x400786C8, MC_KIND_FLEX) + MC_POKE_SITES]
     coded = [b for b in on if b not in CODELESS]
     return {"linked": (_unit(modules),) if coded else (), "detours": tuple(detours),
-            "symbol_refs": tuple(refs), "overrides": tuple(overrides)}
+            "symbol_refs": tuple(refs), "overrides": tuple(overrides), "pokes": tuple(pokes)}
 
 
 # The unbound declaration carries every bridge, so the matrix and the
@@ -309,7 +376,7 @@ MODULE = Module(
     proof=Proof.PORT, proof_note="verify_hooks: the bridged tables and chains under Unicorn, and each bridged image's sites",
     doc="Platform: owns a stock site two selected modules both claim, and calls each one's routine there.",
     linked=_ALL["linked"], detours=_ALL["detours"], symbol_refs=_ALL["symbol_refs"],
-    overrides=_ALL["overrides"],
+    overrides=_ALL["overrides"], pokes=_ALL["pokes"],
     select=select,
     gates=(Gate("tools/verify/verify_hooks.py", once=True, venv=True),),
 )

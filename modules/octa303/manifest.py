@@ -144,7 +144,6 @@ MODULE = Module(
     conflicts=(
         ("SYNTH MACHINE", "both own the FLEX renderer entry 0x400d6438, the PLAYBACK resolver "
                           "load 0x40031ece and the command-byte copy 0x4000c634"),
-        ("ANALOG BD", "both own the FLEX renderer entry 0x400d6438 and machine row 5 (v7.0)"),
         ("BLACKPYRAMIDS_303", "both are a TB-303 on machine row 5: 16 shared detour sites (the machine "
                               "chooser, SRC SETUP, the Part validator 0x40002318, the LFO PMTR names "
                               "0x4003bff0 among them) and 7 shared "

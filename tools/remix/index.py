@@ -71,7 +71,15 @@ def matrix(mods):
             if a is b:
                 row.append("  ·")
                 continue
-            sel = {m.key: m for m in closure([a, b] + parties[a.key] + parties[b.key])}
+            # A bridge's parties join one at a time, each only where the cell
+            # stays clean: two parties of different bridges may exclude each
+            # other (ANALOG BD and BLACKPYRAMIDS_303), and the cell asks whether
+            # the pair shares an image, not whether every party does.
+            base = [a, b]
+            for p in parties[a.key] + parties[b.key]:
+                if p not in base and not ledger.check(closure(base + [p])):
+                    base.append(p)
+            sel = {m.key: m for m in closure(base)}
             probs = ledger.check(list(sel.values()))
             key = tuple(sorted((a.name, b.name)))
             if probs:

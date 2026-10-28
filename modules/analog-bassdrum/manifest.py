@@ -1,6 +1,14 @@
 """Analog BD: native source synthesis, one machine with 808/909 models."""
 from remix.schema import ArenaReserve, Category, Detour, Gate, Kind, Linked, Module, Poke, Proof, SymbolRef
 H=bytes.fromhex
+
+
+def _hooks_inc(modules, remix=None):
+    """remix.inc for machine.s: modules/hooks's flags (machine_rows beside OCTA303)."""
+    from remix import hooks_flags
+    return hooks_flags.inc("ANALOG BD", modules)
+
+
 MODULE=Module(
     name="analog-bassdrum", key="ANALOG BD", kind=Kind.CF_PATCH,
     # the pre-boot DSP uploads' destinations and stages
@@ -14,7 +22,7 @@ MODULE=Module(
                      "see modules/analog-bassdrum/CPU.md and benchmark_analog_bd.py",
     dsp_source="tools/build/ab_image.py",
     linked=(
-        Linked("abmachine", "modules/analog-bassdrum/machine.s", dram=True),
+        Linked("abmachine", "modules/analog-bassdrum/machine.s", dram=True, include=_hooks_inc),
         Linked("abcontrol", "modules/analog-bassdrum/control.s", dram=True),
         Linked("abengine", "modules/analog-bassdrum/engine.s", dram=True),
     ),

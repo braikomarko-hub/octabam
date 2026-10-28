@@ -1371,3 +1371,26 @@ module's own clone from `_psyms`, the runtime link. Rule: before comparing an
 address from `_exports` with one from the runtime, ask whether the staging
 repoint has run yet. Gate: the comparison itself, now that both sides are the
 runtime's.
+
+<a name="trap-machine-clamp"></a>
+
+### The machine list's key handlers clamp the cursor to 5
+
+**A SIXTH MACHINE ROW FITS BY ACCIDENT; A SEVENTH NEEDS TEN MORE POKES.** The
+track's machine list (`0x460e7386`) has a row count (`pea 5` at
+`0x40079248`), a draw bound, a highlight bound and a commit bound, and ANALOG
+BD, OCTA303 and BLACKPYRAMIDS_303 each poke those four from 5 rows to 6. With
+seven rows (HOOKS `machine_rows`, ANALOG BD and OCTA303 together, 28 Oct
+2026) the list drew and scrolled, but the cursor stopped on row 5: each of
+the list's five key handlers (`0x40078c22`, `0x40078cb0`, `0x40078d2e`,
+`0x40078dee`, `0x40078e7c`) clamps the cursor to 0..5 after moving
+(`moveq #5,%d1 ; cmp.l %d0,%d1 ; bge.s ; moveq #5,%d0`), one past stock's
+last row, so a single added machine never met it. The search was confused
+by a second effect: a port script's key held for 0.25 s auto-repeats, so a
+single UP moved two rows and landed on PICKUP. Fix: HOOKS pokes both
+`moveq`s in each handler to 6; the gate presses UP for 0.06 s. Rule: when a
+list grows, find every constant near its old size in the code that touches
+the list (a byte search for the clamp found all five), and in a port script
+hold a key only as long as you mean it to repeat. Gate: `verify_hooks`
+(installed: the ten pokes) and `verify_analog_bassdrum_ui` on
+`hooks-machines` (row 5 reached from the bottom of seven).

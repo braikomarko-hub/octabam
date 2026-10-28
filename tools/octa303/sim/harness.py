@@ -25,14 +25,41 @@ BANK, PATNO, PSTR, TSTR = 0x41000000, 3, 0x8ed8, 0x91a
 PARTB, PART_OFF = 0x100b14cf, 0x8ed80                                        # v7.0: the machine's Part'
 DEVIL_ID = 0x10          # modules/devilish/manifest.py FX_ID (test_octa303 checks they agree)
 
+def hooks_flags():
+    """modules/hooks's flags (FLAGS), read without importing the build's schema."""
+    import ast
+    tree = ast.parse(open(os.path.join(ROOT, 'modules', 'hooks', 'manifest.py')).read())
+    return next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                and any(getattr(t, 'id', None) == 'FLAGS' for t in n.targets)).values()
+
 def remix_inc(devilish=True):
-    """What the build writes as remix.inc (modules/octa303/manifest.py remix_inc)."""
-    return '        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
+    """What the build writes as remix.inc (modules/octa303/manifest.py remix_inc): OCTA303
+    alone, so every HOOKS flag 0 (its own bytes)."""
+    return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
+            + ''.join('        .set    %s, 0\n' % f for f in hooks_flags()))
+
+def _unflag(s):
+    """The .if / .else / .endif blocks on a HOOKS flag resolved as OCTA303 alone builds them (every
+    flag 0): cfsim has no conditional assembly."""
+    flags, out, keep = set(hooks_flags()), [], [True]
+    for line in s.split('\n'):
+        tok = line.split('|')[0].split()
+        if tok[:1] == ['.if']:
+            if tok[1:] and tok[1] not in flags:
+                raise ValueError('cfsim harness: .if on ' + ' '.join(tok[1:]) + ', not a HOOKS flag')
+            keep.append(False)
+        elif tok[:1] == ['.else']:
+            keep[-1] = not keep[-1]
+        elif tok[:1] == ['.endif']:
+            keep.pop()
+        elif all(keep):
+            out.append(line)
+    return '\n'.join(out)
 
 def source(devilish=True):
     s = open(SRC_PATH).read()
     assert s.count('.include "remix.inc"') == 1
-    return s.replace('        .include "remix.inc"', remix_inc(devilish).rstrip('\n'), 1)
+    return _unflag(s.replace('        .include "remix.inc"', remix_inc(devilish).rstrip('\n'), 1))
 
 class Rig:
     def __init__(self, src=None):

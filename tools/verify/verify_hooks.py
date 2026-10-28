@@ -14,7 +14,10 @@
    The frame interrupt's entry and epilogue chains and the boot chain are
    run with LOAD METER, CF METER, BOOT TRACE and PARTS built with
    HOOKS's flags: one prologue and one epilogue, every participant's work
-   done, the registers and stack as the interrupt found them.
+   done, the registers and stack as the interrupt found them. The machine
+   rows (ANALOG BD + OCTA303): each track's row type, the machine list's
+   two drawer stubs over every top row and screen row, the name and commit
+   chains from ANALOG BD's hooks into OCTA303's.
 3. Installed (stage image, when the built image is the remix's and carries
    HOOKS): stock's six [TRACK]-layer records at 0x400d1594 are the ones
    HOOKS copies; each bridged site holds HOOKS's write, and the
@@ -55,7 +58,10 @@ def selection():
     check(bridged({RTM, "MORPH"}) == ("track_key",), "REC_TRIG_MUTE + MORPH: track_key only")
     check(bridged({RTM, THR}) == ("status_icon",), "REC_TRIG_MUTE + REC THRESHOLD: status_icon only")
     check(bridged({RTM, THR, "MORPH"}) == ("track_key", "status_icon"), "all three: both bridges")
-    check(DECL["select"](set()) == {"linked": (), "detours": (), "symbol_refs": (), "overrides": ()},
+    check(bridged({"ANALOG BD", "OCTA303"}) == ("machine_rows",), "ANALOG BD + OCTA303: machine_rows only")
+    check(bridged({"BOOT TRACE", "PARTS"}) == () and bridged({"BOOT TRACE", "PARTS", "MIDI LOOPBACK"}) == ("boot",),
+          "PARTS is a participant only with a client (without one it installs nothing)")
+    check(DECL["select"](set()) == {"linked": (), "detours": (), "symbol_refs": (), "overrides": (), "pokes": ()},
           "an empty selection: HOOKS has no unit, claim or override")
     check(not registry.hooks_needed(known, {RTM, "MORPH"} - {"MORPH"}) and
           registry.hooks_needed(known, {RTM, "MORPH"}), "registry.hooks_needed follows the bridges")
@@ -65,7 +71,7 @@ def selection():
         except SystemExit:
             continue
         check(has == want, f"remix {name}: HOOKS {'appended' if want else 'not appended'}")
-    for sel in ((RTM, "MORPH", "STORE"), (RTM, THR)):
+    for sel in ((RTM, "MORPH", "STORE"), (RTM, THR), ("ANALOG BD", "OCTA303")):
         bad = ledger.check(m(*sel))
         check(any(p.startswith("hooks:") for p in bad), f"{' + '.join(sel)} without HOOKS is refused")
         check(ledger.check(m(*sel, "HOOKS")) == [], f"{' + '.join(sel)} with HOOKS is clean")
@@ -272,7 +278,7 @@ def frames():
     from unicorn.m68k_const import (UC_CPU_M68K_CFV4E, UC_M68K_REG_A7, UC_M68K_REG_PC,
                                     UC_M68K_REG_D0, UC_M68K_REG_A6)
     from unicorn import m68k_const as mc
-    keys = {"LOAD METER", "CF METER", "BOOT TRACE", "PARTS", "HOOKS"}
+    keys = {"LOAD METER", "CF METER", "BOOT TRACE", "PARTS", "MIDI LOOPBACK", "HOOKS"}   # PARTS with a client
     known = registry.modules()
     units = [(k, u) for k in ("LOAD METER", "CF METER", "BOOT TRACE") for u in known[k].linked]
     units += [("PARTS", u) for u in known["PARTS"].linked if u.label == "partsentry"]
@@ -473,6 +479,99 @@ def chromatic():
                     f"BLACKPYRAMIDS's sanitize then SCALE QUANTIZER's, stack and continuations as the sites expect")
 
 
+def machines():
+    """machine_rows, under Unicorn: ANALOG BD and OCTA303 built with
+    HK_MACHINE_ROWS and HOOKS's stubs, linked as the platform links them."""
+    from unicorn import UC_HOOK_CODE
+    from unicorn import m68k_const as mc
+    known = registry.modules()
+    keys = {"ANALOG BD", "OCTA303", "HOOKS"}
+    units = [(k, u) for k in ("ANALOG BD", "OCTA303") for u in known[k].linked]
+    units += [("HOOKS", hu) for hu in DECL["select"](keys)["linked"]]
+    with tempfile.TemporaryDirectory(prefix="octabam-hooks-mc-") as td:
+        segs, sym = _link_units(Path(td), keys, units)
+    u = _uc(segs)
+    u.mem_map(0x80000000, 0x100000)
+    BANK, PARTX, LIST = 0x42000000, 0x42000000 + 0x8ED80, 0x460E7386
+    STACK, DONE = 0x47008000, 0x4700FFF0
+    FMT, DRAW = 0x4700F000, 0x4700F100
+    regs = [getattr(mc, f"UC_M68K_REG_D{i}") for i in range(8)] + [getattr(mc, f"UC_M68K_REG_A{i}") for i in range(7)]
+    wr = lambda a, v: u.mem_write(a, v.to_bytes(4, "big"))                       # noqa: E731
+    rd = lambda a: int.from_bytes(u.mem_read(a, 4), "big")                      # noqa: E731
+    for stop in (DONE, 0x400786A2, 0x400786D4, 0x400786FC, 0x400334DE, 0x40079822, 0x4007989C):
+        u.mem_write(stop, b"\x4e\x71")
+    u.mem_write(FMT, bytes.fromhex("202f0004" "06800000" "1000" "4e75"))       # d0 = 4(sp) + 0x1000; rts
+    u.mem_write(DRAW, b"\x4e\x75")
+    drawn = []
+    u.hook_add(UC_HOOK_CODE, lambda uc, pc, size, _d: drawn.append(
+        [int.from_bytes(uc.mem_read(uc.reg_read(mc.UC_M68K_REG_A7) + 4 + 4 * i, 4), "big") for i in range(6)]),
+        begin=DRAW, end=DRAW)
+
+    def track(t, kind):
+        u.mem_write(PARTX, bytes(0x18B2))
+        wr(0x46C82456, BANK)
+        u.mem_write(0x100B14CF, b"\x00")
+        u.mem_write(PARTX + 0x22 + t, b"\x00" if kind == "static" else b"\x01")
+        u.mem_write(PARTX + 0x3C + 30 * t, {"ab": b"AB\x01", "tb": b"TB\x01"}.get(kind, bytes(3)))
+
+    def run(entry, stop, r=None, stack=()):
+        for x in regs:
+            u.reg_write(x, 0)
+        for i, v in (r or {}).items():
+            u.reg_write(regs[i], v)
+        u.reg_write(mc.UC_M68K_REG_SR, 0x2000)
+        sp = STACK - 4 * len(stack)
+        u.mem_write(sp, b"".join(v.to_bytes(4, "big") for v in stack))
+        u.reg_write(mc.UC_M68K_REG_A7, sp)
+        u.emu_start(entry, stop, count=200000)
+        return u.reg_read(mc.UC_M68K_REG_PC), u.reg_read(regs[0]), u.reg_read(mc.UC_M68K_REG_A7) - sp
+
+    kinds = {"static": 0, "flex": 1, "ab": 5, "tb": 6}
+    got = {}
+    for kind in kinds:
+        track(3, kind)
+        u.mem_write(PARTX + 0x22 + 3, b"\x00" if kind == "static" else b"\x01")
+        got[kind] = run(sym["ab_row_type"], DONE, {0: 0 if kind == "static" else 1, 8: PARTX + 0x22 + 3},
+                        stack=(DONE,))[1]
+    check(got == kinds, f"ab_row_type: static 0, FLEX 1, ANALOG BD 5, OCTA-303 6 ({got})")
+
+    n = bad = 0
+    for top in (0, 1):
+        for d2 in range(6):
+            wr(LIST, top)
+            wr(LIST + 16, 7)
+            drawn.clear()
+            pc, _d0, dsp = run(sym["hk_mc_name"], 0x400786A2, {2: d2, 3: FMT, 4: 0x4444, 7: DRAW, 10: 0x30})
+            row = top + d2
+            want = [[0x400BA876, 0x4444, 5, 0x31, 0xFFFFFFFF, 0x1000 + row]] if row < 7 else []
+            n += 1
+            bad += pc != 0x400786A2 or dsp != 0 or drawn != want
+            for kind, typ in kinds.items():
+                track(2, kind)
+                pc = run(sym["hk_mc_box"], 0x400786D4 if typ == row else 0x400786FC,
+                         {2: d2, 8: PARTX + 0x22 + 2})[0]
+                n += 1
+                bad += pc != (0x400786D4 if typ == row else 0x400786FC)
+    check(bad == 0, f"hk_mc_name / hk_mc_box: {n} cases -- row top + d2's name on screen row d2, none past the "
+                    f"seventh; the box on the screen row of the track's machine (static, FLEX, ANALOG BD, OCTA-303)")
+
+    out = {r: run(sym["ab_machine_name"], 0x400334DE if r < 5 else DONE, stack=(DONE, r))[:2] for r in (1, 5, 6)}
+    check(out[1][0] == 0x400334DE and out[5] == (DONE, sym["ab_name"]) and out[6] == (DONE, sym["o3_title"]),
+          "ab_machine_name: row 5 ANALOG BD, row 6 OCTA303's name (o3_machine_name), stock rows to stock")
+
+    res = {}
+    for row in (1, 5, 6):
+        for start in ("ab", "tb", "flex"):
+            track(4, start)
+            pc = run(sym["ab_main_commit"], 0x40079822, {0: 0, 1: 4, 4: row, 8: PARTX + 0x22 + 4, 9: BANK})[0]
+            res[(row, start)] = (pc, u.mem_read(PARTX + 0x22 + 4, 1)[0], bytes(u.mem_read(PARTX + 0x3C + 120, 3)),
+                                 bytes(u.mem_read(0x100A4ECE + 0x3C + 120, 3)))
+    want = {1: (1, bytes(3)), 5: (1, b"AB\x01"), 6: (1, b"TB\x01")}
+    check(all(v[0] == 0x40079822 and (v[1], v[2]) == want[r] and v[3] == want[r][1] for (r, _s), v in res.items()),
+          "ab_main_commit: row 5 signs AB, row 6 OCTA303's TB (through o3_main_commit), FLEX neither; "
+          "the Part and its shadow, from every starting machine")
+
+
 def installed(name):
     img_path = ROOT / "out/mainos_bus.bin"
     raw = ROOT / "out/raw/section_3_MAIN_OS.bin"
@@ -509,6 +608,8 @@ def installed(name):
               f"0x{d.site:08x}: {d.kind} {d.symbol} (no participant's detour)")
     for r in h.symbol_refs:
         check(rd(img, r.addr) == sym[r.symbol], f"0x{r.addr:08x}: -> {r.symbol} (not MORPH's copy)")
+    for p in h.pokes:
+        check(img[p.addr - BASE_IMG:p.addr - BASE_IMG + len(p.write)] == p.write, f"0x{p.addr:08x}: {p.write.hex()} ({p.note})")
     # Each chain's calls, decoded from the linked runtime: every participant
     # in order, at its real address (a ROM-placed one from its unit's ELF),
     # none at 0 (an unresolved defsym).
@@ -533,6 +634,23 @@ def installed(name):
         check(img[site - BASE_IMG:site - BASE_IMG + 6] == b"\x4e\xb9" + sym["o3_chrom"].to_bytes(4, "big")
               and b"\x4e\xf9" + sym["qz_chrom"].to_bytes(4, "big") in rt[o3:o3 + 0x100],
               "0x4004fc58: jsr o3_chrom, and o3_chrom hands every other track to qz_chrom")
+    if "machine_rows" in DECL["bridged"](set(sel)):
+        # ANALOG BD's hooks at every shared site; its flagged not-ours paths
+        # reach OCTA303's routines; the FLEX kind entry is OCTA303's, chaining to ab_render
+        own = {d.site: d.symbol for d in sel["ANALOG BD"].detours}
+        check(all(img[a - BASE_IMG:a - BASE_IMG + 2] in (b"\x4e\xf9", b"\x4e\xb9", b"\x41\xf9", b"\x4b\xf9")
+                  and rd(img, a + 2) == sym[own[a]] for a in DECL["MC_OCTA_DETOURS"] if a in own and a != 0x400786C8),
+              "OCTA303's machine sites hold ANALOG BD's hooks")
+        check(rd(img, DECL["MC_KIND_FLEX"]) == sym["sy_render"], "0x400d6438: OCTA303's sy_render")
+        for src, op, dst in (("ab_machine_name", b"\x4e\xf9", "o3_machine_name"),
+                             ("ab_stock_validate", b"\x4e\xf9", "o3_validate"),
+                             ("ab_tick_hook", b"\x4e\xb9", "o3_publish"),
+                             ("ab_row_type", b"\x4e\xf9", "o3_type"),
+                             ("ab_main_commit", b"\x4e\xf9", "o3_main_commit"),
+                             ("ab_src_commit", b"\x4e\xf9", "o3_src_commit2"),
+                             ("sy_render", b"\x4e\xb9", "ab_render")):
+            at = sym[src] - base
+            check(op + sym[dst].to_bytes(4, "big") in rt[at:at + 0x200], f"{src} reaches {dst}")
     stubs = {"status_icon": ("hk_status_icon", 0), "frame_tail": ("hk_frame_tail", 0),
              "frame_entry": ("hk_frame_entry", 8), "boot": ("hk_boot", 0)}
     on = DECL["bridged"](set(sel))
@@ -560,6 +678,8 @@ def main():
     frames()
     print("verify_hooks: CHROMATIC bridges under Unicorn")
     chromatic()
+    print("verify_hooks: machine rows under Unicorn")
+    machines()
     print(f"verify_hooks: installed ({name})")
     installed(name)
     print(f"verify_hooks: {'all passed' if not fails else f'{fails} failed'}")

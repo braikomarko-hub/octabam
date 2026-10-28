@@ -116,3 +116,49 @@ hk_octdraw:
         jmp     (0x40044988).l
 1:      jmp     qz_octdraw
         .endif
+
+        .if     hk_machine_rows
+| the track's machine list, seven rows (ANALOG BD's 5, OCTA303's 6) in six
+| on screen. The list at 0x460e7386: +0 the top row, +8 the cursor, +16 the
+| count. The drawer's loop (0x4007864c..0x400787b2) keeps d2 the screen row,
+| a2 its y, d3 the name formatter, d4 the surface, d7 the text drawer; stock
+| draws and boxes row d2, which is right only while the list never scrolls.
+| Its cursor bar already draws at cursor - top. d0, d1, a0, a1 are scratch
+| at both sites (reloaded by the code each returns to).
+        .set    MC_LIST, 0x460e7386
+        .global hk_mc_name, hk_mc_box
+| 0x40078678, the loop's head (`moveq #4,%d0 ; cmp.l %d2,%d0 ; blt.s`):
+| row top + d2's name, as stock's call does, then on at 0x400786a2.
+hk_mc_name:
+        move.l  (MC_LIST).l,%d0
+        add.l   %d2,%d0
+        cmp.l   (MC_LIST+16).l,%d0
+        bge.s   1f
+        move.l  %d0,-(%sp)
+        movea.l %d3,%a0
+        jsr     (%a0)
+        move.l  %d0,-(%sp)
+        moveq   #-1,%d1
+        move.l  %d1,-(%sp)
+        pea     1(%a2)
+        pea     0x5.w
+        move.l  %d4,-(%sp)
+        pea     (0x400ba876).l
+        movea.l %d7,%a1
+        jsr     (%a1)
+        lea     28(%sp),%sp
+1:      jmp     (0x400786a2).l
+| 0x400786c8, a0 the UI track's machine byte: the box on screen row d2 when
+| that track's row (ab_row_type: 5 / 6 for a signed track) is top + d2.
+hk_mc_box:
+        mvs.b   (%a0),%d0
+        jsr     ab_row_type
+        move.l  (MC_LIST).l,%d1
+        add.l   %d2,%d1
+        cmp.l   %d1,%d0
+        bne.s   1f
+        cmp.l   (MC_LIST+16).l,%d1
+        bge.s   1f
+        jmp     (0x400786d4).l
+1:      jmp     (0x400786fc).l
+        .endif

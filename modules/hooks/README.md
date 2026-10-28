@@ -5,7 +5,8 @@ claim. Nobody selects it; the registry appends it to a remix whenever one of
 its bridges has two participants in it, as it appends MEMORY. A remix with one
 participant, or none, gets nothing from HOOKS: that module's own claim stands
 and its bytes do not move, so a module proven alone on a unit stays exactly what
-was proven. The participants' sources are not edited.
+was proven. A submodule participant's source is not edited; an in-tree
+participant builds a bridged form under a flag and is byte-identical alone.
 
 The design, and the conflicts it is meant to remove next:
 [docs/proposals/SHARED_HOOKS.md](../../docs/proposals/SHARED_HOOKS.md).
@@ -20,7 +21,8 @@ The design, and the conflicts it is meant to remove next:
 | frame_entry | the frame interrupt's entry `0x4000aad0` | BOOT TRACE (`tr_frame`), LOAD METER (`lm_in`) | replays the prologue once, then calls each, built to enter after it (`HK_FRAME_ENTRY`): LOAD METER's stamp last, so its duration excludes the note |
 | chrom_pitch | the CHROMATIC key handler's key → pitch `0x4004fc58` | OCTA303 (`o3_chrom`), SCALE QUANTIZER (`qz_chrom`) | no code of its own: OCTA303's detour stays and, built with `HK_CHROM_PITCH`, hands every non-303 track to `qz_chrom`; SCALE QUANTIZER's detour is overridden |
 | chromatic | the CHROMATIC octave keys `0x40045918`, key index `0x40050254`, keyboard picture `0x40044968` | BLACKPYRAMIDS_303, SCALE QUANTIZER | asks `ot_track_is(the UI track)`: a BLACKPYRAMIDS track its own handler or full-keyboard branch; any other track `ot_chrom_sanitize`, then SCALE QUANTIZER's handler |
-| boot | the boot's `jsr 0x4000f938` at `0x40000512` | BOOT TRACE (`tr_dsp_done`), PARTS (`pt_resident_activate`) | calls BOOT TRACE's note 3 (`HK_BOOT`: it returns), then jumps to PARTS's activation, which tail-jumps to the stock call |
+| boot | the boot's `jsr 0x4000f938` at `0x40000512` | BOOT TRACE (`tr_dsp_done`), PARTS (`pt_resident_activate`; a participant only with a PARTS client, since PARTS installs nothing without one) | calls BOOT TRACE's note 3 (`HK_BOOT`: it returns), then jumps to PARTS's activation, which tail-jumps to the stock call |
+| machine_rows | the track's machine list and SRC SETUP: the name formatter `0x400334d8`, the name tables, the row highlights, the list's opens, its commits, the SETUP editor and drawer, the Part validator `0x40002318`, the tick that publishes a machine's record, the FLEX kind entry `0x400d6438`; the lists' row counts and bounds | ANALOG BD (row 5), OCTA303 (row 6) | ANALOG BD's hooks take every shared site; built with `HK_MACHINE_ROWS`, each hands a row not its own to OCTA303's routine for the same hook, and OCTA303 is built with its row as 6. HOOKS pokes the lists to seven rows (the counts, SRC SETUP's name bound, the commit's persist bound, and the cursor clamp in the list's five key handlers) and takes the drawer's two row tests, so the list scrolls |
 
 A bridge takes each participant's claim at the site by `schema.Override`
 (`ledger.py` and `build_bus.py` skip the overridden detour or symbol ref).
@@ -65,7 +67,17 @@ rule the pair would build and REC_TRIG_MUTE's keys would silently stop.
   SCALE QUANTIZER no longer claims; its wrapper drops that one conflict.
 - The boot bridge: under Unicorn, and in [`test/hooks-boot`](../../remixes/test/hooks-boot/README.md)
   (BOOT TRACE beside PARTS and MIDI LOOPBACK).
-- Not flashed. Not run under the ColdFire port with a project.
+- Machine rows: under Unicorn, each track's row type (static, FLEX, ANALOG BD,
+  OCTA-303), the drawer's two stubs over both top rows and every screen row
+  (60 cases), ANALOG BD's name and main-commit hooks reaching OCTA303's (row 6
+  signs `TB 1`, row 5 `AB 1`, any other row neither, in the Part and its shadow).
+  Under the ColdFire port, in [`test/hooks-machines`](../../remixes/test/hooks-machines/README.md)
+  with a fresh project: both machines' own UI gates pass on the one image
+  (`verify_analog_bassdrum_ui`, `verify_octa303_ui`: OCTA-303's record as UI type 6);
+  the list scrolls to OCTA-303 and back, YES on either row commits that machine,
+  and reopening on an OCTA-303 track opens scrolled with its row boxed. ANALOG BD
+  and OCTA303 alone are byte-identical to the base (28 Oct 2026).
+- Not flashed. Apart from the machine rows, not run under the ColdFire port with a project.
 
 ## Adding a bridge
 
