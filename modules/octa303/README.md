@@ -204,7 +204,9 @@ instruction differently from the chip.
 - `SYNTH MACHINE` and `octa303` cannot share an image (the FLEX renderer and the page resolver).
   `analog-bassdrum` can since 28 Oct 2026, through HOOKS (`machine_rows`: OCTA-303 on row 6 of a
   scrolling list, its renderer after ANALOG BD's): both UI gates pass on the one image under the
-  port, not flashed.
+  port, not flashed. A project saved on an image without ANALOG BD (OCTA-303 on row 5) opens as
+  OCTA-303 on row 6 in one with both: the Part stores FLEX and the `T` `B` 1 signature, never the
+  row, and `o3_type` gives the row from the signature (🟡 from the code; not run across two images).
 - The first 15–40 ms of an accented note are still ~1 dB further from the 303 than the 303 is from
   itself.
 
