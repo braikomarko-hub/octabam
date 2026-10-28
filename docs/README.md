@@ -61,6 +61,9 @@ implemented): [OTX_PROJECT_PROPOSAL.md](proposals/OTX_PROJECT_PROPOSAL.md)
 and [OTX_MODULE_GUIDELINES.md](proposals/OTX_MODULE_GUIDELINES.md), and
 [USB.md](proposals/USB.md), merging the four USB modules into one with
 run-time settings held by the brain (14 Oct 2026).
+[SHARED_HOOKS.md](proposals/SHARED_HOOKS.md): one owner per contested
+ColdFire site (STORE, EVENTS and a new PARTS), so conflicting modules can
+share an image (28 Oct 2026, not implemented).
 
 [proposals/remixes/](proposals/remixes/README.md): remix proposals, each
 taken on hardware to verified stable before it lands under `remixes/`.
