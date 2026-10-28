@@ -1479,6 +1479,20 @@ class Override:
     module: str
 
 
+SELECTABLE = frozenset({"linked", "detours", "symbol_refs", "overrides"})
+
+
+def apply_select(m, keys):
+    """`m` with its Module.select applied for a selection of module `keys`.
+    The same keys give the same module, so applying it twice is harmless."""
+    if m.select is None:
+        return m
+    over = m.select(frozenset(keys))
+    if set(over) - SELECTABLE:
+        raise ValueError(f"{m.name}: select may only set {', '.join(sorted(SELECTABLE))}")
+    return dataclasses.replace(m, **over)
+
+
 @dataclass(frozen=True)
 class DspOverride:
     """This bridge stands in for another module's DspHook at `site`: the DSP form of Override.
@@ -1607,9 +1621,12 @@ class Module:
     # chosen code without asking (modules/usb is the first).
     variant: object | None = None
     # Optional build-time subscription selection: select(frozenset(module keys))
-    # returns only linked/detours. registry.bound applies it after settings, so
-    # claims, linking, installation and image gates all see the same subset.
-    # It must be deterministic and must not modify the registry or filesystem.
+    # returns linked, detours, symbol_refs and overrides (SELECTABLE).
+    # registry.bound applies it after settings, and ledger.check applies it to
+    # any selection it is given, so claims, linking, installation, image gates,
+    # the matrix and the remixer all see the same subset. It must be
+    # deterministic, depend only on the keys, and must not modify the registry
+    # or filesystem.
     select: object | None = None
     # CODE THAT THE BUILD DROPS WHEN IT CANNOT BE NEEDED: dsp_if(fixed) ->
     # bool, given {setting name: value} of the module's settings that are

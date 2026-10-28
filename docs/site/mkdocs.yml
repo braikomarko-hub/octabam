@@ -136,6 +136,7 @@ nav:
       - USB: reference/modules/usb.md
   - Settings:
       - Brain: brain.md
+      - Hooks: reference/modules/hooks.md
       - Memory: reference/modules/memory.md
       - Persistent Buffers: reference/modules/persistent-buffers.md
       - Store: reference/modules/store.md

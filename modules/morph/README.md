@@ -130,7 +130,9 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
 - Select parameters (MODE, WAVE…) jump at the middle of the morph, as with the crossfader.
 - [TRACK] + [UP]/[DOWN] replace what UP/DOWN did while a track key is held (stock: the layer below,
   e.g. a list's cursor); [YES] inside the window does nothing.
-- Cannot share an image with REC_TRIG_MUTE (both rewrite the [TRACK]-layer table).
+- Beside REC_TRIG_MUTE (both change the [TRACK]-layer table) the registry adds
+  [HOOKS](../hooks/README.md), whose one table carries MORPH's UP/DOWN and REC_TRIG_MUTE's
+  YES/NO; MORPH's own copy is then not read. Under Unicorn only (verify_hooks); not flashed.
 - A track's own scale (×2, ½) is not followed: a step is the master 16th.
 - 🟡 A masked bank load other than a project load or the power-up (STORE names reloads) reads
   `morph.work` again, so a running morph would be armed again from A.

@@ -13,8 +13,9 @@ threshold, as on the Digitakt 2.
    track). While it waits, the track's status icon at the screen edge
    blinks.
 
-Not in an official remix; build the test remix `rec-threshold`. It cannot
-share an image with REC TRIG MUTE (they hook the same load).
+Not in an official remix; build the test remix `rec-threshold`. Beside
+REC TRIG MUTE (they hook the same load) the build adds HOOKS, which runs
+both; that pairing has not been flashed.
 
 ## Operation
 

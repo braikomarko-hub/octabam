@@ -14,7 +14,9 @@ Sites, measured from the user's 1.40C (base 0x40000400; modules/morph/README.md)
     frame, after the per-track loop and before 0x4000cc6c, where every path that reads the
     per-track weights 0x80003c60.. starts. No branch in the image lands inside the 10 bytes.
   * the [TRACK]-held key layer 0x400d164a: its keys field 0x400d164e (stock 0x400d1594) points at
-    the unit's copy of the stock table with UP (0x33) and DOWN (0x20) added.
+    the unit's copy of the stock table with UP (0x33) and DOWN (0x20) added. Beside
+    REC_TRIG_MUTE, which repoints stock's YES/NO records, HOOKS owns the field instead and its
+    table carries both (modules/hooks, track_key); MORPH's own copy is then not read.
 """
 
 import os
@@ -58,11 +60,6 @@ MODULE = Module(
                   "[TRACK]-held key layer: the stock table plus UP (MORPH ON) and DOWN (MORPH STOP)"),
     ),
     requires=("STORE",),
-    conflicts=(
-        ("REC_TRIG_MUTE", "it repoints the YES/NO records of the stock [TRACK]-layer table "
-                          "0x400d1594, which MORPH replaces with its own copy (its YES/NO would "
-                          "silently stop working)"),
-    ),
     gates=(
         Gate("tools/morph/test_morph.py", remix_arg=False),
     ),

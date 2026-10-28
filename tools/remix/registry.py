@@ -26,6 +26,14 @@ from remix.schema import NO_FALLBACK, on_the_bus  # noqa: E402
 
 REMIX_SWITCH = "REMIX SWITCH"
 MEMORY = "MEMORY"
+HOOKS = "HOOKS"
+
+
+def hooks_needed(known, keys) -> bool:
+    """Does a selection of module `keys` need HOOKS: does one of its bridges
+    have two participants among them (modules/hooks)?"""
+    h = known.get(HOOKS)
+    return h is not None and h.select is not None and bool(h.select(frozenset(keys))["linked"])
 MODULES_DIR = ROOT / "modules"
 
 _cache: dict[str, object] | None = None
@@ -285,6 +293,11 @@ def remix(name: str | None):
     # id and no region word.
     if schema.BRAIN_KEY in r.modules and REMIX_SWITCH not in r.modules and REMIX_SWITCH in known:
         r = dataclasses.replace(r, modules=r.modules + (REMIX_SWITCH,))
+    # HOOKS WITH EVERY BRIDGED PAIR: when two selected modules claim one stock
+    # site that a bridge in modules/hooks joins, HOOKS owns the site and calls
+    # both (schema.Override). Appended before MEMORY: its bridge is a DRAM unit.
+    if HOOKS not in r.modules and HOOKS in known and hooks_needed(known, r.modules):
+        r = dataclasses.replace(r, modules=r.modules + (HOOKS,))
     # MEMORY WITH EVERY DRAM UNIT: the platform's arena reserve, sized from
     # what the remix's modules claim (modules/memory). Appended last; it has
     # no code, so nothing it selects moves.
@@ -342,10 +355,7 @@ def bound(r) -> dict[str, object]:
             if not m.dsp_if(fixed.get(k, {})):
                 m = dataclasses.replace(m, dsp=None)
         if m.select is not None and k in sel:
-            over = m.select(frozenset(sel))
-            if set(over) - {'linked', 'detours'}:
-                raise ValueError(f'{m.name}: select may only set linked and detours')
-            m = dataclasses.replace(m, **over)
+            m = schema.apply_select(m, sel)
         out[k] = m
     return assign_ids(r, out)
 

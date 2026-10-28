@@ -20,8 +20,9 @@ measurements and what is open. Ten detours:
   after its store (0x4002f0b4) TRIG becoming THR sets an unset LEV to -40;
 - the track status icon renderer's state-cache load (0x4004bee2): an armed
   track's icon blinks, whatever it shows, and an armed track no longer on
-  THR loses its arm there (REC_TRIG_MUTE replaces the same load, so the two
-  conflict).
+  THR loses its arm there (REC_TRIG_MUTE replaces the same load: beside it,
+  HOOKS owns the site and calls REC_TRIG_MUTE's fold, then this; modules/hooks,
+  status_icon).
 
 Three pokes: the TRIG count 3 -> 4, which the setup editor clamps by, and
 the Part validator's hard-coded TRIG maximum 2 -> 3, which otherwise
@@ -77,6 +78,5 @@ MODULE = Module(
         Poke(VALIDATOR_CMP, H("7202"), H("7203"), "part validator: TRIG max 2 -> 3"),
         Poke(VALIDATOR_SET, H("7602"), H("7603"), "part validator: TRIG max 2 -> 3"),
     ),
-    conflicts=(("REC_TRIG_MUTE", "both replace the track status icon renderer's state-cache load at 0x4004bee2"),),
     gates=(Gate("tools/verify/verify_rec_threshold.py", remix_arg=False, venv=True, stage="image"),),
 )

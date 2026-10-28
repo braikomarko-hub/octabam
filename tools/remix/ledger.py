@@ -72,6 +72,7 @@ from __future__ import annotations
 import pathlib
 import re
 
+from remix import schema
 from remix.schema import YBase
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -138,6 +139,19 @@ def claimed_sites(m) -> set[int]:
 def check(selected) -> list[str]:
     """Return a list of collisions among these modules. Empty means clean."""
     problems: list[str] = []
+    # A module's subscription selection (schema.Module.select) decides which
+    # of its claims this selection carries: EVENTS bridges two modules' site
+    # only when both are here.
+    _keys = {m.key for m in selected}
+    selected = [schema.apply_select(m, _keys) for m in selected]
+    # Two modules that a HOOKS bridge joins, without HOOKS: their claims may
+    # not even overlap (MORPH's keys pointer, REC_TRIG_MUTE's records inside
+    # the table it replaces), so this is refused by name, not left to them.
+    from remix import registry
+    if registry.HOOKS not in _keys and any(m.key in registry.modules() for m in selected):
+        if registry.hooks_needed(registry.modules(), _keys):
+            problems.append("hooks: this selection has two modules a bridge in "
+                            "modules/hooks joins, and no HOOKS (registry.remix appends it)")
 
     def clash(what, owner_a, owner_b, detail):
         problems.append(f"{what}: {owner_a} and {owner_b} both claim {detail}")

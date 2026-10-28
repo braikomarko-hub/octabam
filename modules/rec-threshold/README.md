@@ -77,7 +77,9 @@ docstring lists them with their addresses.
   GRID RECORDING, not that code: stock's REC keys do nothing there while
   GRID RECORDING is on, `0x460d1736` with `0x460d5db4 == 3`, tested at
   `0x400836e4` and `0x40030ed0`; confirmed on the unit, 13 Oct.)
-  REC TRIG MUTE hooks the same load (`0x4004bee2`); the two conflict.
+  REC TRIG MUTE hooks the same load (`0x4004bee2`): beside it the registry adds
+  [HOOKS](../hooks/README.md), which calls REC TRIG MUTE's fold, then this
+  (under Unicorn only, verify_hooks; not flashed).
 
 ## Measured
 
