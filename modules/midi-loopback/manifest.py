@@ -17,5 +17,17 @@ MODULE = dataclasses.replace(MODULE, linked=tuple(
     *MODULE.gates,
 ))
 
+# PARTS carries MIDI PART STATE's API (mp_*) unchanged and retires it
+# (modules/parts): Loopback's units link against PARTS, and MIDI PART STATE's
+# gates, which check that API by its names, run here. The author reference
+# above still builds Loopback with the author's own Part State.
+MODULE = dataclasses.replace(MODULE, requires=tuple(
+    "PARTS" if r == "MIDI PART STATE" else r for r in MODULE.requires), gates=(
+    *MODULE.gates,
+    Gate('tools/verify/verify_midi_part.py', stage='image', venv=True),
+    Gate('tools/verify/verify_midi_part_copy.py', stage='image', venv=True),
+    Gate('tools/verify/verify_midi_part_boot.py', stage='image', venv=True),
+))
+
 # Detailed verification lives in developer notes, outside the README index.
 MODULE = dataclasses.replace(MODULE, proof_note="")

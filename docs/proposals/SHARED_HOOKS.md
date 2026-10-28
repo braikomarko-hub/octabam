@@ -1,7 +1,20 @@
 # Shared ColdFire hooks: one owner per contested site
 
-Design of 28 Oct 2026 (Sam Banks). Not implemented. Section 7 lists the
-phases; section 8 what would falsify the design.
+Design of 28 Oct 2026 (Sam Banks). Section 7 lists the phases; section 8
+what would falsify the design.
+
+**Status (28 Oct 2026).** Phases 1-4 are built, none flashed:
+`schema.Override` covers symbol refs, pokes and table refs, and the matrix
+adds each pair's requires; the bridges are a platform module of their own,
+[HOOKS](../../modules/hooks/README.md), not EVENTS families -- the registry
+appends it when a remix carries two modules one of its bridges joins, and a
+module alone keeps its bytes (track_key, status_icon, frame_tail,
+frame_entry, boot); [PARTS](../../modules/parts/README.md) carries MIDI PART
+STATE's API and retires it. Two departures from sections 4.3 and 7: the
+in-tree participants were not rewritten as clients -- each keeps its
+proven standalone bytes and, where its detour never returns, builds a
+returning form under a HOOKS flag -- and midi.note_in (phase 5) and the
+machine table (phase 6) are not started.
 
 Confidence markers: ✅ measured, 🟡 inferred with a falsifier stated,
 ⬜ not looked at.

@@ -51,11 +51,11 @@ docs/proposals/SHARED_HOOKS.md is the design. Bridges:
     `rts`; HOOKS replays the prologue once, calls BOOT TRACE's note, then
     LOAD METER's stamp last, so the duration it measures excludes the note.
   * boot -- 0x40000512, the boot's `jsr 0x4000f938` after the DSP upload.
-    BOOT TRACE (tr_dsp_done, a jmp) sends note 3 and replays the call; MIDI
-    PART STATE (mp_resident_activate, a jsr; radiohagen's submodule, not
-    edited) sets its copy targets and tail-jumps to 0x4000f938. Bridged
-    (HK_BOOT), BOOT TRACE's routine sends the note and returns; HOOKS calls
-    it, then jmps to mp_resident_activate, which returns to the boot.
+    BOOT TRACE (tr_dsp_done, a jmp) sends note 3 and replays the call; PARTS
+    (pt_resident_activate, a jsr; MIDI PART STATE's before it) publishes its
+    copy targets and tail-jumps to 0x4000f938. Bridged (HK_BOOT), BOOT TRACE's
+    routine sends the note and returns; HOOKS calls it, then jmps to
+    pt_resident_activate, which returns to the boot.
 """
 
 import os
@@ -117,7 +117,7 @@ FRAME_ENTRY = (
 )
 BOOT = (
     ("BOOT TRACE", "tr_dsp_done"),
-    ("MIDI PART STATE", "mp_resident_activate"),   # last: it tail-jumps to the stock call
+    ("PARTS", "pt_resident_activate"),   # last: it tail-jumps to the stock call
 )
 
 BRIDGES = {"track_key": TRACK_KEY, "status_icon": STATUS_ICON, "frame_tail": FRAME_TAIL,
@@ -204,7 +204,7 @@ UNIT = Linked("hooks", os.path.join(_HERE, "bridge.s"), dram=True, include=hooks
 # runtime's link reaches them through the unit's defsyms, which the build
 # resolves from the ROM units' exports (build_bus._defs_for). verify_hooks
 # checks this list against each participant's Linked.dram.
-ROM_ROUTINES = {"tr_frame", "tr_frame_end", "tr_dsp_done", "mp_resident_activate"}
+ROM_ROUTINES = {"tr_frame", "tr_frame_end", "tr_dsp_done", "pt_resident_activate"}
 
 
 def _unit(modules):

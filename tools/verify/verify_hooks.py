@@ -12,7 +12,7 @@
    after the other; the opposite order is shown to lose the blink. The
    [TRACK]-layer table is decoded and compared with track_key_records.
    The frame interrupt's entry and epilogue chains and the boot chain are
-   run with LOAD METER, CF METER, BOOT TRACE and MIDI PART STATE built with
+   run with LOAD METER, CF METER, BOOT TRACE and PARTS built with
    HOOKS's flags: one prologue and one epilogue, every participant's work
    done, the registers and stack as the interrupt found them.
 3. Installed (stage image, when the built image is the remix's and carries
@@ -235,13 +235,16 @@ def frames():
     from unicorn.m68k_const import (UC_CPU_M68K_CFV4E, UC_M68K_REG_A7, UC_M68K_REG_PC,
                                     UC_M68K_REG_D0, UC_M68K_REG_A6)
     from unicorn import m68k_const as mc
-    keys = {"LOAD METER", "CF METER", "BOOT TRACE", "MIDI PART STATE", "HOOKS"}
+    keys = {"LOAD METER", "CF METER", "BOOT TRACE", "PARTS", "HOOKS"}
     known = registry.modules()
     units = [(k, u) for k in ("LOAD METER", "CF METER", "BOOT TRACE") for u in known[k].linked]
-    units += [("MIDI PART STATE", u) for u in known["MIDI PART STATE"].linked if u.label == "midipartentry"]
+    units += [("PARTS", u) for u in known["PARTS"].linked if u.label == "partsentry"]
     units += [("HOOKS", DECL["UNIT"])]
     with tempfile.TemporaryDirectory(prefix="octabam-hooks-frames-") as td:
-        rt, base, sym = _link_units(Path(td), keys, units)
+        # PARTS's runtime wrappers, which its resident entry publishes, at
+        # stand-in addresses (the build resolves them from the runtime)
+        rt, base, sym = _link_units(Path(td), keys, units,
+                                    defs=(("pt_native_copy", 0x41234560), ("pt_native_init", 0x41234570)))
     regs = [getattr(mc, f"UC_M68K_REG_D{i}") for i in range(8)] + \
            [getattr(mc, f"UC_M68K_REG_A{i}") for i in range(7)]
     u = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
@@ -288,7 +291,7 @@ def frames():
     check(rd(sym["m_seg0"]) == now and rd(sym["m_icnt"]) == 0 and u.mem_read(sym["seen8"], 1)[0] == 1,
           "frame_tail: CF METER closes its segment at the same instant; BOOT TRACE's note 8")
 
-    # ---- boot: BOOT TRACE's note 3, then MIDI PART STATE into the stock call
+    # ---- boot: BOOT TRACE's note 3, then PARTS's activation into the stock call
     DONE = 0x4700FFF0
     u.mem_write(DONE, b"\x4e\x71")
     u.reg_write(UC_M68K_REG_A7, STACK - 4)
@@ -301,9 +304,8 @@ def frames():
     check(u.reg_read(UC_M68K_REG_PC) == DONE and u.reg_read(UC_M68K_REG_A7) == STACK
           and trace == [0x4000F938],
           "boot: the stock call made once, and the boot resumes after it")
-    check(rd(sym["mp_copy_target"]) == sym["mp_native_copy"]
-          and rd(sym["mp_init_target"]) == sym["mp_native_init"],
-          "boot: MIDI PART STATE's copy and init targets set (its source unedited)")
+    check(rd(sym["pt_copy_target"]) == 0x41234560 and rd(sym["pt_init_target"]) == 0x41234570,
+          "boot: PARTS's copy and init targets published")
     del UC_M68K_REG_D0, UC_M68K_REG_A6
 
 
@@ -352,7 +354,7 @@ def installed(name):
                and f[1] == ".text")
     rt = (ROOT / "out/platform/runtime/runtime.bin").read_bytes()
     rom = {}
-    for key in ("BOOT TRACE", "MIDI PART STATE"):
+    for key in ("BOOT TRACE", "PARTS"):
         if key in sel:
             for u in sel[key].linked:
                 ue = ROOT / "out/linked" / sel[key].name / u.label / "u.elf"

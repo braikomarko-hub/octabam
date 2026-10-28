@@ -1479,7 +1479,7 @@ class Override:
     module: str
 
 
-SELECTABLE = frozenset({"linked", "detours", "symbol_refs", "overrides"})
+SELECTABLE = frozenset({"linked", "detours", "symbol_refs", "overrides", "pokes", "claims"})
 
 
 def apply_select(m, keys):
@@ -1621,7 +1621,7 @@ class Module:
     # chosen code without asking (modules/usb is the first).
     variant: object | None = None
     # Optional build-time subscription selection: select(frozenset(module keys))
-    # returns linked, detours, symbol_refs and overrides (SELECTABLE).
+    # returns linked, detours, symbol_refs, overrides, pokes and claims (SELECTABLE).
     # registry.bound applies it after settings, and ledger.check applies it to
     # any selection it is given, so claims, linking, installation, image gates,
     # the matrix and the remixer all see the same subset. It must be
