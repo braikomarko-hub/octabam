@@ -55,3 +55,6 @@ that shape the filter sweep together.
 - The voice takes SPRING REV's place on the DSP, so SPRING REV is not in a
   remix with it. A Part that still names SPRING REV shows its page and
   passes audio through.
+- Beside SCALE QUANTIZER, a BLKPYRAMD track keeps its four chromatic octaves
+  and its keyboard picture; every other track's keys follow the quantizer.
+  That pairing has not been flashed.

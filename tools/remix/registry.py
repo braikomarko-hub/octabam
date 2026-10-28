@@ -33,7 +33,10 @@ def hooks_needed(known, keys) -> bool:
     """Does a selection of module `keys` need HOOKS: does one of its bridges
     have two participants among them (modules/hooks)?"""
     h = known.get(HOOKS)
-    return h is not None and h.select is not None and bool(h.select(frozenset(keys))["linked"])
+    if h is None or h.select is None:
+        return False
+    sel = h.select(frozenset(keys))
+    return bool(sel["linked"] or sel["overrides"])     # a codeless bridge only overrides
 MODULES_DIR = ROOT / "modules"
 
 _cache: dict[str, object] | None = None

@@ -56,6 +56,27 @@ docs/proposals/SHARED_HOOKS.md is the design. Bridges:
     copy targets and tail-jumps to 0x4000f938. Bridged (HK_BOOT), BOOT TRACE's
     routine sends the note and returns; HOOKS calls it, then jmps to
     pt_resident_activate, which returns to the boot.
+  * chrom_pitch -- the CHROMATIC key handler's key -> pitch at 0x4004fc58
+    (`lea (4,%a2,%a2.l*4),%a2 ; mvz.b 0x100b14cf,%d0`): OCTA303 (o3_chrom: on
+    a 303 track the key is semitones) and SCALE QUANTIZER (qz_chrom: a synth
+    track's key, every other track snapped to the scale). Both are jsr
+    replacements of the same 10 bytes with scratch d0, d1, a0, a1. Bridged,
+    OCTA303's detour stays and its every-other-track path is built
+    (HK_CHROM_PITCH) to tail-jump into qz_chrom instead of the stock lea;
+    SCALE QUANTIZER's detour is overridden. HOOKS has no code here.
+  * chromatic -- the CHROMATIC octave keys 0x40045918, key index 0x40050254
+    and keyboard picture 0x40044968: BLACKPYRAMIDS_303 (Zac Kyoti's submodule,
+    not edited: four octaves on its track, and on any other track an octave
+    above 1 reset to 0, ot_chrom_sanitize) and SCALE QUANTIZER (a synth
+    track's octave -4..+4; every other track stock). Bridged, HOOKS asks
+    ot_track_is(the UI track): a BLACKPYRAMIDS track takes its handler (or,
+    for the picture, its full-keyboard branch); any other track gets
+    ot_chrom_sanitize and then SCALE QUANTIZER's handler. One difference from
+    BLACKPYRAMIDS alone: FUNC + LEFT/RIGHT on another track, with an octave
+    of 2 or 3 left by a BLACKPYRAMIDS track, lands on 1 (sanitized to 0, then
+    stock's toggle) where BLACKPYRAMIDS alone lands on 0. The picture's
+    detour spans SCALE QUANTIZER's 8 bytes, so stock's `bne` at 0x40044970,
+    which SCALE QUANTIZER's handler returns to, stays in place.
 """
 
 import os
@@ -120,10 +141,30 @@ BOOT = (
     ("PARTS", "pt_resident_activate"),   # last: it tail-jumps to the stock call
 )
 
+# ---- chrom_pitch, chromatic -------------------------------------------------
+PITCH_SITE = 0x4004FC58
+CHROM_PITCH = (
+    ("OCTA303", "o3_chrom"),            # first: a 303 track's own; every other track ->
+    ("SCALE QUANTIZER", "qz_chrom"),
+)
+CHROMATIC_SITES = (                     # (site, stock bytes, HOOKS's routine)
+    (0x40045918, H("7401b5b9460d16fc"), "hk_octkey"),   # moveq #1,%d2 ; eor.l %d2,0x460d16fc
+    (0x40050254, H("2039460d16fc2200"), "hk_keyidx"),   # move.l 0x460d16fc,%d0 ; move.l %d0,%d1
+    (0x40044968, H("7201b2b9460d16fc"), "hk_octdraw"),  # moveq #1,%d1 ; cmp.l 0x460d16fc,%d1
+)
+CHROMATIC = (
+    ("BLACKPYRAMIDS_303", "ot_track_is"),
+    ("SCALE QUANTIZER", "qz_octkey"),
+)
+
 BRIDGES = {"track_key": TRACK_KEY, "status_icon": STATUS_ICON, "frame_tail": FRAME_TAIL,
-           "frame_entry": FRAME_ENTRY, "boot": BOOT}
+           "frame_entry": FRAME_ENTRY, "boot": BOOT, "chrom_pitch": CHROM_PITCH,
+           "chromatic": CHROMATIC}
 # The flag each bridge sets in its participants' remix.inc (flags_inc).
-FLAGS = {"frame_tail": "HK_FRAME_TAIL", "frame_entry": "HK_FRAME_ENTRY", "boot": "HK_BOOT"}
+FLAGS = {"frame_tail": "HK_FRAME_TAIL", "frame_entry": "HK_FRAME_ENTRY", "boot": "HK_BOOT",
+         "chrom_pitch": "HK_CHROM_PITCH"}
+# Bridges that need no code of HOOKS's own: a participant's flagged build does it.
+CODELESS = {"chrom_pitch"}
 
 
 def _present(participants, modules):
@@ -177,7 +218,8 @@ def _handler(v):
 def hooks_inc(modules, remix=None):
     """remix.inc for bridge.s: which bridges are on and their tables."""
     on = bridged(modules)
-    out = [f".set hk_{b}, {int(b in on)}" for b in BRIDGES] + [".macro hk_track_key_records"]
+    out = [f".set hk_{b}, {int(b in on)}" for b in BRIDGES if b not in CODELESS]
+    out += [".macro hk_track_key_records"]
     if "track_key" in on:
         out += [f"    HKREC 0x{c:02x}, {_handler(p)}, {_handler(r)}"
                 for c, p, r in track_key_records(modules)]
@@ -209,7 +251,8 @@ ROM_ROUTINES = {"tr_frame", "tr_frame_end", "tr_dsp_done", "pt_resident_activate
 
 def _unit(modules):
     """HOOKS's unit for a selection, naming each ROM-placed routine it calls."""
-    used = {sym for b in bridged(modules) if b in FLAGS for _k, sym in _present(BRIDGES[b], modules)}
+    used = {sym for b in bridged(modules) if b in FLAGS and b not in CODELESS
+            for _k, sym in _present(BRIDGES[b], modules)}
     defs = tuple((s, 0) for s in sorted(used & ROM_ROUTINES))
     return Linked("hooks", UNIT.source, dram=True, include=hooks_inc, defsyms=defs)
 
@@ -240,7 +283,16 @@ def select(modules):
         if b in on:
             detours.append(Detour(site, stock, "hooks", sym, note, kind=kind, pad_to=pad))
             overrides += [Override(site, key) for key, _sym in _present(BRIDGES[b], modules)]
-    return {"linked": (_unit(modules),) if on else (), "detours": tuple(detours),
+    if "chrom_pitch" in on:
+        overrides.append(Override(PITCH_SITE, "SCALE QUANTIZER"))   # OCTA303's detour stays
+    if "chromatic" in on:
+        for site, stock, sym in CHROMATIC_SITES:
+            detours.append(Detour(site, stock, "hooks", sym,
+                                  "CHROMATIC: a BLACKPYRAMIDS track its own, another SCALE QUANTIZER's",
+                                  kind="jmp", pad_to=8))
+            overrides += [Override(site, key) for key, _s in _present(CHROMATIC, modules)]
+    coded = [b for b in on if b not in CODELESS]
+    return {"linked": (_unit(modules),) if coded else (), "detours": tuple(detours),
             "symbol_refs": tuple(refs), "overrides": tuple(overrides)}
 
 

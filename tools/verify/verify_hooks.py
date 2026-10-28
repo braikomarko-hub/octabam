@@ -69,9 +69,14 @@ def selection():
         bad = ledger.check(m(*sel))
         check(any(p.startswith("hooks:") for p in bad), f"{' + '.join(sel)} without HOOKS is refused")
         check(ledger.check(m(*sel, "HOOKS")) == [], f"{' + '.join(sel)} with HOOKS is clean")
-    rom = {sym for parts in DECL["BRIDGES"].values() for key, *rest in parts
-           for sym in (rest[0],) if isinstance(rest[0], str)
-           and any(sym in (ROOT / u.source).read_text() and not u.dram for u in known[key].linked)}
+    import re
+    called = {sym for b, parts in DECL["BRIDGES"].items() if b in DECL["FLAGS"] and b not in DECL["CODELESS"]
+              for _key, sym in parts}
+    rom = {sym for b, parts in DECL["BRIDGES"].items() if b in DECL["FLAGS"] and b not in DECL["CODELESS"]
+           for key, sym in parts
+           if any(re.search(rf"^{sym}:", (ROOT / u.source).read_text(), re.M) and not u.dram
+                  for u in known[key].linked)}
+    del called
     check(rom == DECL["ROM_ROUTINES"], f"ROM_ROUTINES names the ROM-placed routines ({', '.join(sorted(rom))})")
     tk = DECL["TRACK_KEY"]
     for bad, why in (((("A", ((0x31, "a", None),), (), False), ("B", ((0x31, "b", None),), (), False)),
@@ -202,11 +207,23 @@ def behaviour():
 
 
 def _link_units(work, keys, units, defs=()):
-    """Assemble (key, Linked) units with each one's remix.inc and link them
-    as one image at 0x41000000, as the platform links DRAM units. `defs` are
-    extra (name, value) link-time symbols. Returns (bytes, base, symbols)."""
-    known = registry.modules()
-    objs = []
+    """Assemble (key, Linked) units with each one's remix.inc and link them as
+    the build places them: ROM units floating together in a free cave
+    (0x400d7000 here), each pinned ROM unit at its cave_addr, and the DRAM
+    units as one runtime at 0x41000000, each part seeing the others' symbols.
+    `defs` are extra (name, value) link-time symbols. Returns ([(address,
+    bytes)], symbols)."""
+    def ld(name, at, objs, just=()):
+        elf = work / f"{name}.elf"
+        subprocess.run(["m68k-elf-ld", f"-Ttext=0x{at:x}", "--unresolved-symbols=ignore-all",
+                        *[f"--defsym={n}=0x{v:x}" for n, v in defs],
+                        *[f"--just-symbols={j}" for j in just], "-o", str(elf), *objs],
+                       check=True, capture_output=True)
+        subprocess.run(["m68k-elf-objcopy", "-O", "binary", str(elf), str(work / f"{name}.bin")], check=True)
+        return elf, (at, (work / f"{name}.bin").read_bytes())
+
+    groups = {"rom": [], "dram": []}
+    pinned = []
     for i, (_k, u) in enumerate(units):
         d = work / f"inc{i}"
         d.mkdir()
@@ -215,17 +232,37 @@ def _link_units(work, keys, units, defs=()):
         uds = [a for n, v in u.defsyms if n not in dict(defs) for a in ("--defsym", f"{n}={v}")]
         subprocess.run(["m68k-elf-as", "-mcpu=54455", "-I", str(d), "-I", str(ROOT), *uds,
                         "-o", str(obj), str(ROOT / u.source)], check=True, capture_output=True)
-        objs.append(str(obj))
-    base = 0x41000000
-    subprocess.run(["m68k-elf-ld", f"-Ttext=0x{base:x}", "--unresolved-symbols=ignore-all",
-                    *[f"--defsym={n}=0x{v:x}" for n, v in defs],
-                    "-o", str(work / "rt.elf"), *objs], check=True, capture_output=True)
-    subprocess.run(["m68k-elf-objcopy", "-O", "binary", str(work / "rt.elf"), str(work / "rt.bin")],
-                   check=True)
-    nm = subprocess.check_output(["m68k-elf-nm", str(work / "rt.elf")], text=True)
-    sym = {f[2]: int(f[0], 16) for line in nm.splitlines() if len(f := line.split()) == 3}
-    del known
-    return (work / "rt.bin").read_bytes(), base, sym
+        if u.cave_addr is not None:
+            pinned.append((u, str(obj)))
+        else:
+            groups["dram" if u.dram else "rom"].append(str(obj))
+    segs, elfs = [], []
+    if groups["rom"]:
+        e, s = ld("rom", 0x400D7000, groups["rom"])
+        elfs.append(e)
+        segs.append(s)
+    for u, obj in pinned:
+        e, s = ld(f"pin_{u.label}", u.cave_addr, [obj], just=[str(x) for x in elfs])
+        segs.append(s)
+        elfs.append(e)
+    if groups["dram"]:
+        e, s = ld("rt", 0x41000000, groups["dram"], just=[str(x) for x in elfs])
+        segs.append(s)
+        elfs.append(e)
+    sym = {}
+    for e in elfs:
+        nm = subprocess.check_output(["m68k-elf-nm", str(e)], text=True)
+        for line in nm.splitlines():
+            f = line.split()
+            if len(f) == 3 and f[2] not in sym:
+                sym[f[2]] = int(f[0], 16)
+    # ROM units reach runtime symbols through their defsyms (`defs` here), as in the build
+    return segs, sym
+
+
+def _load(u, segs):
+    for at, data in segs:
+        u.mem_write(at, data)
 
 
 def frames():
@@ -243,7 +280,7 @@ def frames():
     with tempfile.TemporaryDirectory(prefix="octabam-hooks-frames-") as td:
         # PARTS's runtime wrappers, which its resident entry publishes, at
         # stand-in addresses (the build resolves them from the runtime)
-        rt, base, sym = _link_units(Path(td), keys, units,
+        segs, sym = _link_units(Path(td), keys, units,
                                     defs=(("pt_native_copy", 0x41234560), ("pt_native_init", 0x41234570)))
     regs = [getattr(mc, f"UC_M68K_REG_D{i}") for i in range(8)] + \
            [getattr(mc, f"UC_M68K_REG_A{i}") for i in range(7)]
@@ -252,7 +289,7 @@ def frames():
     for a, n in ((0x10000000, 0x200000), (0x20000000, 0x10000), (0x40000000, 0x08000000),
                  (0x80000000, 0x100000), (0xFC000000, 0x100000)):
         u.mem_map(a, n)
-    u.mem_write(base, rt)
+    _load(u, segs)
     u.mem_write(0xFC060004, b"\x04")                     # UART0 USR (a byte): TXRDY, so a note never waits
     u.mem_write(0x4000F938, b"\x4e\x75")                 # the boot's callee: rts
     rd = lambda a: int.from_bytes(u.mem_read(a, 4), "big")   # noqa: E731
@@ -309,6 +346,133 @@ def frames():
     del UC_M68K_REG_D0, UC_M68K_REG_A6
 
 
+def _uc(segs):
+    from unicorn import Uc, UC_ARCH_M68K, UC_MODE_BIG_ENDIAN
+    from unicorn import m68k_const as mc
+    u = Uc(UC_ARCH_M68K, UC_MODE_BIG_ENDIAN)
+    u.ctl_set_cpu_model(mc.UC_CPU_M68K_CFV4E)
+    for a, n in ((0x10000000, 0x200000), (0x40000000, 0x08000000)):
+        u.mem_map(a, n)
+    _load(u, segs)
+    return u
+
+
+def chromatic():
+    """chrom_pitch and chromatic, under Unicorn: on a track a participant owns,
+    the bridged path equals that participant alone; on any other track it
+    equals SCALE QUANTIZER's handler (after BLACKPYRAMIDS's sanitize)."""
+    from unicorn import m68k_const as mc
+    known = registry.modules()
+    BANK, PARTX = 0x42000000, 0x42000000 + 0x8ED80        # the bank blob; Part 0
+    SETTINGS, OCT, UI_TRACK = 0x100B14F0, 0x460D16FC, 0x100B14CC
+    STACK, DONE = 0x47008000, 0x4700FFF0
+    regs = [getattr(mc, f"UC_M68K_REG_D{i}") for i in range(8)] + [getattr(mc, f"UC_M68K_REG_A{i}") for i in range(7)]
+
+    def link(keys, mods):
+        units = [(k, u) for k in mods for u in known[k].linked]
+        if "HOOKS" in keys:
+            units += [("HOOKS", hu) for hu in DECL["select"](keys)["linked"]]   # none for a codeless bridge
+        with tempfile.TemporaryDirectory(prefix="octabam-hooks-chrom-") as td:
+            return _link_units(Path(td), keys, units)
+
+    def track(u, t, kind):
+        """kind: static, sample, synth (SYNTH.WAV), tb303 (TB303.WAV), sig-tb (OCTA303's), sig-ot (BLACKPYRAMIDS's)."""
+        u.mem_write(BANK + 0x8ED80, bytes(0x18B2))
+        u.mem_write(0x46C82456, BANK.to_bytes(4, "big"))
+        u.mem_write(0x100B14CF, b"\x00")
+        u.mem_write(PARTX + 0x22 + t, b"\x00" if kind == "static" else b"\x01")
+        u.mem_write(PARTX + 0x2CB + t * 5, b"\x00")              # FLEX slot 0 (Part + 0x8f04b + 5t)
+        name = {"synth": b"/AUDIO/SYNTH.WAV", "tb303": b"/AUDIO/TB303.WAV"}.get(kind, b"/AUDIO/KICK.WAV")
+        u.mem_write(SETTINGS, name + bytes(32))
+        sig = {"sig-tb": b"TB\x01", "sig-ot": b"OT\x01"}.get(kind, b"\x00\x00\x00")
+        u.mem_write(PARTX + 0x3C + 30 * t, sig)
+
+    def run(u, entry, stop, d2=0, a2=0, stack=()):
+        for r in regs:
+            u.reg_write(r, 0)
+        u.reg_write(regs[2], d2)
+        u.reg_write(regs[10], a2)
+        u.reg_write(mc.UC_M68K_REG_SR, 0x2000)
+        sp = STACK - 4 * len(stack)
+        u.mem_write(sp, b"".join(v.to_bytes(4, "big") for v in stack))
+        u.reg_write(mc.UC_M68K_REG_A7, sp)
+        u.emu_start(entry, stop, count=200000)
+        return (u.reg_read(mc.UC_M68K_REG_PC), u.reg_read(regs[0]), u.reg_read(regs[1]), u.reg_read(regs[10]),
+                u.reg_read(mc.UC_M68K_REG_A7) - sp, int.from_bytes(u.mem_read(OCT, 4), "big"))
+
+    # ---- chrom_pitch: OCTA303 + SCALE QUANTIZER at 0x4004fc58 (jsr: return to DONE)
+    both = {"OCTA303", "SCALE QUANTIZER", "HOOKS"}
+    segs, sym = link(both, ("OCTA303", "SCALE QUANTIZER"))
+    segs1, sym1 = link({"OCTA303"}, ("OCTA303",))
+    ub, ua = _uc(segs), _uc(segs1)
+    for u in (ub, ua):
+        u.mem_write(DONE, b"\x4e\x71")
+    n = bad = 0
+    for kind in ("static", "sample", "synth", "tb303", "sig-tb"):
+        for scale in (0, 1):
+            for idx in (0, 7, 12, 24):
+                for u in (ub, ua):
+                    track(u, 2, kind)
+                ub.mem_write(sym["qz_scale"], bytes([scale]))
+                got = run(ub, sym["o3_chrom"], DONE, d2=2, a2=idx, stack=(DONE,))
+                if kind in ("tb303", "sig-tb"):
+                    want = run(ua, sym1["o3_chrom"], DONE, d2=2, a2=idx, stack=(DONE,))
+                else:
+                    track(ub, 2, kind)
+                    ub.mem_write(sym["qz_scale"], bytes([scale]))
+                    want = run(ub, sym["qz_chrom"], DONE, d2=2, a2=idx, stack=(DONE,))
+                n += 1
+                bad += got[3] != want[3] or got[1] != want[1] or got[4] != want[4]
+    check(bad == 0, f"chrom_pitch: {n} cases -- a 303 track (its sample or its signature) as OCTA303 alone, "
+                    f"every other track (static, sample, synth; scale off and on) as SCALE QUANTIZER's qz_chrom")
+    track(ub, 2, "sample")
+    ub.mem_write(sym["qz_scale"], b"\x00")
+    check(run(ub, sym["o3_chrom"], DONE, d2=2, a2=7, stack=(DONE,))[3] == 5 * 7 + 4,
+          "chrom_pitch: a sample track with no scale gets stock's 5 * index + 4")
+
+    # ---- chromatic: BLACKPYRAMIDS_303 + SCALE QUANTIZER at the three sites
+    both = {"BLACKPYRAMIDS_303", "SCALE QUANTIZER", "HOOKS"}
+    segs, sym = link(both, ("BLACKPYRAMIDS_303", "SCALE QUANTIZER"))
+    u = _uc(segs)
+    for stop in (0x40045920, 0x4005025C, 0x40044970, 0x40044972, 0x40044988):
+        u.mem_write(stop, b"\x4e\x71")
+    n = bad = 0
+    for kind in ("sig-ot", "sample", "static"):
+        for octv in (0, 1, 2, 3):
+            for key in (0x21, 0x34):
+                # octave keys: the handler's frame, d2 pushed at its entry, the key at 8(sp)
+                def octkey(entry):
+                    track(u, 2, kind)
+                    u.mem_write(UI_TRACK, b"\x02")
+                    u.mem_write(OCT, octv.to_bytes(4, "big"))
+                    return run(u, entry, 0x40045920, stack=(0, 0, key))
+                got = octkey(sym["hk_octkey"])
+                if kind == "sig-ot":
+                    want = octkey(sym["ot_oct_hook"])
+                else:
+                    o = 0 if octv > 1 else octv              # ot_chrom_sanitize, then stock's toggle
+                    want = got[:5] + (o ^ 1,)
+                n += 1
+                bad += got[0] != want[0] or got[4] != want[4] or got[5] != want[5]
+            # key index: d0 = d1 = the word (sanitized on another track), on at 0x4005025c
+            track(u, 2, kind)
+            u.mem_write(UI_TRACK, b"\x02")
+            u.mem_write(OCT, octv.to_bytes(4, "big"))
+            got = run(u, sym["hk_keyidx"], 0x4005025C)
+            w = octv if kind == "sig-ot" or octv <= 1 else 0
+            n += 1
+            bad += got[0] != 0x4005025C or got[1] != w or got[2] != w or got[5] != w
+            # the picture: a BLACKPYRAMIDS track its full image (0x40044988, d1 = 1); another, stock's bne
+            track(u, 2, kind)
+            u.mem_write(UI_TRACK, b"\x02")
+            u.mem_write(OCT, octv.to_bytes(4, "big"))
+            got = run(u, sym["hk_octdraw"], 0x40044988 if kind == "sig-ot" else 0x40044970)
+            n += 1
+            bad += got[0] != (0x40044988 if kind == "sig-ot" else 0x40044970) or got[2] != 1 or got[5] != octv
+    check(bad == 0, f"chromatic: {n} cases -- a BLACKPYRAMIDS track as its own handlers, every other track "
+                    f"BLACKPYRAMIDS's sanitize then SCALE QUANTIZER's, stack and continuations as the sites expect")
+
+
 def installed(name):
     img_path = ROOT / "out/mainos_bus.bin"
     raw = ROOT / "out/raw/section_3_MAIN_OS.bin"
@@ -361,6 +525,14 @@ def installed(name):
                 if not u.dram and ue.exists():
                     out = subprocess.check_output(["m68k-elf-nm", str(ue)], text=True)
                     rom.update({f[2]: int(f[0], 16) for line in out.splitlines() if len(f := line.split()) == 3})
+    if "chrom_pitch" in DECL["bridged"](set(sel)):
+        # codeless: OCTA303's own jsr at the site, its every-other-track path
+        # built to jmp qz_chrom (SCALE QUANTIZER's detour overridden)
+        site = DECL["PITCH_SITE"]
+        o3 = sym["o3_chrom"] - base
+        check(img[site - BASE_IMG:site - BASE_IMG + 6] == b"\x4e\xb9" + sym["o3_chrom"].to_bytes(4, "big")
+              and b"\x4e\xf9" + sym["qz_chrom"].to_bytes(4, "big") in rt[o3:o3 + 0x100],
+              "0x4004fc58: jsr o3_chrom, and o3_chrom hands every other track to qz_chrom")
     stubs = {"status_icon": ("hk_status_icon", 0), "frame_tail": ("hk_frame_tail", 0),
              "frame_entry": ("hk_frame_entry", 8), "boot": ("hk_boot", 0)}
     on = DECL["bridged"](set(sel))
@@ -386,6 +558,8 @@ def main():
     behaviour()
     print("verify_hooks: frame interrupt and boot chains under Unicorn")
     frames()
+    print("verify_hooks: CHROMATIC bridges under Unicorn")
+    chromatic()
     print(f"verify_hooks: installed ({name})")
     installed(name)
     print(f"verify_hooks: {'all passed' if not fails else f'{fails} failed'}")

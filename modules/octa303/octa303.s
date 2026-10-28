@@ -1267,8 +1267,9 @@ o3_fmt_tune:
 | a held or live-recorded trig's PTCH lock receives and the screen shows.  On a 303 track
 | (FLEX, its slot's sample TB303*) the byte is semitones (v6.4): raw = 52 + idx = -12..+12, so
 | keys and recorded locks play what they say (the knob and the locks reach +24).  Every other
-| track: the stock lea.  The quantizer module's qz_chrom owns the same site (a remix carries
-| one of the two; the ledger refuses both).  Scratch: d0, d1, a0, a1 (as qz_chrom).
+| track: the stock lea.  The quantizer module's qz_chrom owns the same site: beside it, HOOKS
+| overrides qz_chrom's detour and this one, built with HK_CHROM_PITCH, hands every other track
+| to qz_chrom (modules/hooks, chrom_pitch).  Scratch: d0, d1, a0, a1 (as qz_chrom).
 | ============================================================================
 o3_chrom:
         movea.l BANK_PTR,%a0
@@ -1308,11 +1309,15 @@ o3_chrom:
         lea     64-12(%a2),%a2          | a 303: raw = 64 + (idx - 12) = 52 + idx (semitones)
         bra     .Lch_out
 .Lch_stock:
+        .if     HK_CHROM_PITCH          | beside SCALE QUANTIZER (modules/hooks, chrom_pitch):
+        jmp     qz_chrom                | every other track is its, with the stock lea in it
+        .else
         move.l  %a2,%d0                 | displaced (as plain arithmetic): raw = 5 * idx + 4
         lsl.l   #2,%d0
         add.l   %a2,%d0
         addq.l  #4,%d0
         move.l  %d0,%a2
+        .endif
 .Lch_out:
         mvz.b   PART_IDX,%d0            | displaced: the part
         rts

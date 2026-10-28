@@ -65,3 +65,54 @@ hk_frame_entry:
 hk_boot:
         hk_boot_chain
         .endif
+
+        .if     hk_chromatic
+| CHROMATIC, BLACKPYRAMIDS_303 beside SCALE QUANTIZER. Each stub is entered
+| as the participants' own detours were: same registers, same stack (the
+| octave keys' handler reads the key at 8(%sp)).
+| .hk_is_bp: Z clear when the UI track (0x100b14cc) is a BLACKPYRAMIDS track
+| (its ot_track_is, C ABI). Keeps every register; movem, lea and rts keep CCR.
+.hk_is_bp:
+        lea     -16(%sp),%sp
+        movem.l %d0-%d1/%a0-%a1,(%sp)
+        moveq   #0,%d0
+        move.b  0x100b14cc,%d0
+        move.l  %d0,-(%sp)
+        jsr     ot_track_is
+        addq.l  #4,%sp
+        tst.l   %d0
+        movem.l (%sp),%d0-%d1/%a0-%a1
+        lea     16(%sp),%sp
+        rts
+| .hk_sanitize: ot_chrom_sanitize (an octave above 1 on another track -> 0;
+| nothing on a BLACKPYRAMIDS track). Keeps every register.
+.hk_sanitize:
+        lea     -16(%sp),%sp
+        movem.l %d0-%d1/%a0-%a1,(%sp)
+        jsr     ot_chrom_sanitize
+        movem.l (%sp),%d0-%d1/%a0-%a1
+        lea     16(%sp),%sp
+        rts
+
+        .global hk_octkey, hk_keyidx, hk_octdraw
+| 0x40045918, FUNC + LEFT/RIGHT: both handlers go on at 0x40045920.
+hk_octkey:
+        bsr.w   .hk_is_bp
+        beq.s   1f
+        jmp     ot_oct_hook
+1:      bsr.w   .hk_sanitize
+        jmp     qz_octkey
+| 0x40050254, the key's index: both go on at 0x4005025c (8 bytes replayed).
+hk_keyidx:
+        bsr.w   .hk_sanitize
+        jmp     qz_keyidx
+| 0x40044968, the keyboard picture: a BLACKPYRAMIDS track the full image
+| (its own branch, d1 = 1); another track SCALE QUANTIZER's, which goes on
+| at stock's bne 0x40044970.
+hk_octdraw:
+        bsr.w   .hk_is_bp
+        beq.s   1f
+        moveq   #1,%d1
+        jmp     (0x40044988).l
+1:      jmp     qz_octdraw
+        .endif

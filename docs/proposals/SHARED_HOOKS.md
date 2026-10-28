@@ -13,8 +13,16 @@ frame_entry, boot); [PARTS](../../modules/parts/README.md) carries MIDI PART
 STATE's API and retires it. Two departures from sections 4.3 and 7: the
 in-tree participants were not rewritten as clients -- each keeps its
 proven standalone bytes and, where its detour never returns, builds a
-returning form under a HOOKS flag -- and midi.note_in (phase 5) and the
-machine table (phase 6) are not started.
+returning form under a HOOKS flag -- and the machine table (phase 6) is not started.
+
+**Phase 5 (28 Oct 2026).** The four sites SCALE QUANTIZER shares are the
+CHROMATIC keyboard, not MIDI note-in: `0x4004fc58` with OCTA303, and
+`0x40045918`, `0x40050254`, `0x40044968` with BLACKPYRAMIDS_303. HOOKS
+bridges both pairs (chrom_pitch, chromatic). The MIDI note-on site
+`0x4000e746` is contested only by the machines (BLACKPYRAMIDS_303, CX OSC,
+SYNTH MACHINE) and goes with phase 6; SCALE QUANTIZER gave it to SYNTH
+MACHINE on 30 Sep 2026, so section 2's row for it was wrong about SCALE
+QUANTIZER.
 
 Confidence markers: ✅ measured, 🟡 inferred with a falsifier stated,
 ⬜ not looked at.
@@ -39,7 +47,8 @@ at `1f01ce4`).
 | boundary | sites | in-tree modules | submodule modules |
 |---|---|---|---|
 | machine registration: chooser rows, SRC SETUP, Part validator, FLEX renderer entry, PLAYBACK resolver, LFO PMTR names | 23 sites, among them `0x400d6438`, `0x40002318`, `0x4000c634`, `0x40031ece`, `0x4003bff0`; cave `0x400d24d0` | OCTA303, ANALOG BD, CX OSC | SYNTH MACHINE (timhastie), BLACKPYRAMIDS_303 (Zac Kyoti) |
-| MIDI note in | `0x4000e746`, `0x4004fc58`, `0x40044968`, `0x40045918`, `0x40050254` | OCTA303 | SCALE QUANTIZER (CORE), BLACKPYRAMIDS_303, SYNTH MACHINE |
+| CHROMATIC keyboard (first written here as "MIDI note in": corrected, see Phase 5 above) | `0x4004fc58`, `0x40044968`, `0x40045918`, `0x40050254` | OCTA303 | SCALE QUANTIZER (CORE), BLACKPYRAMIDS_303 |
+| MIDI note-on | `0x4000e746` | CX OSC | BLACKPYRAMIDS_303, SYNTH MACHINE (not SCALE QUANTIZER, as first written) |
 | `[TRACK]`-held key layer | table `0x400d1594`, its YES/NO records | MORPH | REC_TRIG_MUTE (CORE) |
 | track status icon | the state-cache load `0x4004bee2` | REC THRESHOLD | REC_TRIG_MUTE (CORE) |
 | frame interrupt tail, and order within it | `0x4000d9a6`, `0x4000aad0` | CF METER, CF METER IDLE, WAVE LOAD, LOAD METER (CORE), BOOT TRACE; LOAD METER before STEM REC (declared) | |

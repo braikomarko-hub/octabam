@@ -27,6 +27,13 @@ from remix.schema import Category, Proof
 _UPSTREAM = pathlib.Path(__file__).resolve().parent / "upstream" / "octabam-modules" / "blackpyramids-303" / "manifest.py"
 
 MODULE = runpy.run_path(str(_UPSTREAM), run_name="remix_manifest_blackpyramids_303")["MODULE"]
+# The author's conflict with SCALE QUANTIZER names the MIDI note site 0x4000e746,
+# which SCALE QUANTIZER no longer claims (SYNTH MACHINE's po_mon took it, 30 Sep
+# 2026: modules/quantizer). The three CHROMATIC sites the two do share are
+# bridged by HOOKS (modules/hooks, chromatic), so that one conflict is dropped
+# here; the author's manifest is not edited.
+MODULE = dataclasses.replace(MODULE, conflicts=tuple(
+    c for c in MODULE.conflicts if c[0] != "SCALE QUANTIZER"))
 # The module table's fields are octabam's (README.md, `make docs`), so they
 # are added here rather than in the author's manifest.
 MODULE = dataclasses.replace(
