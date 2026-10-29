@@ -126,6 +126,7 @@ proc:
         tgt     y1,b                    ; t >= 4: payload A's half
         add     x1,b
         move    b1,r1
+        nop                             ; two moves between writing r1 and using it
         nop
         move    y:(r1),x0               ; the bus word
         move    x0,x:(r7+$05)
@@ -300,7 +301,7 @@ dbc_end:
 ; track's audio at X:$00..$1f. Writes the block's mean square, ONE word, at
 ; this core's half: @SBASE@ + (track - @COREBASE@). Uses only a, r0, r1, n1,
 ; x0 -- inside the set stock reloads after this site (a b r0 r1 n1 x0, as
-; audited for sctap) -- then replays the displaced instruction.
+; audited for sctap) -- and replays the displaced instruction before its store.
 ; ---------------------------------------------------------------------------
 dbt_tap:
         clr     a
@@ -315,7 +316,10 @@ dbt_sum:
         sub     #>@COREBASE@,a          ; this core's own 0..3
         move    a1,n1
         move    #>@SBASE@,r1
+        move    x:>$208,r6              ; --- displaced --- (here: it fills the AGU gap)
+        nop                             ; two moves between writing r1/n1 and the lua
         lua     (r1)+n1,r1
+        nop                             ; two moves between the lua and the store
+        nop
         move    x0,y:(r1)
-        move    x:>$208,r6              ; --- displaced ---
         rts

@@ -1,7 +1,7 @@
 """dB666 -- the dbx 160 compressor/limiter (1976), with a light side-chain bus.
 
-A per-track insert with an id of its own (0x1b preferred; every stock
-effect stays), modelled from the 160's schematic and its manual
+A per-track insert with an id of its own (0x1b preferred; it takes no stock
+effect's id, and its code runs in a given-up effect's words), modelled from the 160's schematic and its manual
 (modules/db666/README.md):
 
   * the detector is dbx's TRUE RMS (the RMS 208 module, M2: Blackmer's
@@ -98,10 +98,10 @@ MODULE = Module(
     kind=Kind.DSP_EFFECT,
     category=Category.TRACK, author="MaMarko", author_url="https://github.com/braikomarko-hub",
     proof=Proof.HARDWARE,
-    proof_note="the owner's MKI, acidtrack images from 11 Oct 2026 to ACIDV81 (28 Oct), on EQUALIZER's id: "
-               "side-chain ducking by ear, hours of live use beside OCTA303, dEVILish, DISTORX and AtoMizer; "
-               "make check passed on the owner's tree. On its own id (this form): not yet on the unit. "
-               "Bit-exact against its fixed-point model (verify_db666)",
+    proof_note="the owner's MKI, acidtrack images on EQUALIZER's id from 11 Oct 2026, with the bus at today's "
+               "+$3FF8 words in ACIDV79 (27 Oct) and ACIDV81 (28 Oct): side-chain ducking by ear, hours of live use "
+               "beside OCTA303, dEVILish, DISTORX and AtoMizer. On its own id (this form, with two AGU nops added): "
+               "not yet on the unit. Bit-exact against its fixed-point model (verify_db666)",
     doc="A model of the dbx 160 compressor: true-RMS detector, threshold, ratio to infinity and beyond, side-chain KEY from any track.",
     menu=MenuEntry(
         fx2_id=0x1b,                  # preferred, not a stock id: the remix may move it (registry.assign_ids)
@@ -131,7 +131,7 @@ MODULE = Module(
     dsp=DspSection(
         asm="modules/db666/db666.asm",
         ptable=PTABLE,
-        priority=19,
+        priority=25,                  # 19 is STUTTR's and VOCODER's
         bus_role=BusRole.NONE,
         ybase=YBase.NEVER,
         r7_latch_slot=None,
@@ -139,7 +139,7 @@ MODULE = Module(
         hooks=(
             # SIDECHAIN_COMPRESSOR's `sctap` site: the dispatcher's FX1 entry,
             # every track, every block, the track's audio at X:0..$1f. The
-            # displaced `move x:>$208,r6` is replayed at the end of dbt_tap.
+            # displaced `move x:>$208,r6` is replayed inside dbt_tap, before its store.
             DspHook({"A": 0x004a7, "B": 0x0029c}, (0x66f000, 0x000208), "dbt_tap",
                     "dispatcher: publish every track's block mean square, one word"),
         ),
