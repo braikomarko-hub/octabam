@@ -240,8 +240,10 @@ def tap_gates():
     src = (pathlib.Path("modules/db666/db666.asm").read_text()
            .replace("$fab1e0", "$000400").replace("@ROFF@", "$37fe0"))
     (d / "s.asm").write_text(src)
-    subprocess.run(["vendor/dsp56300/build/source/dsp_host/dsp_asm", "-in", str(d / "s.asm"), "-org", "0",
-                    "-out", str(d / "s.bin"), "-sym", str(d / "s.sym")], capture_output=True, text=True)
+    r = subprocess.run(["vendor/dsp56300/build/source/dsp_host/dsp_asm", "-in", str(d / "s.asm"), "-org", "0",
+                        "-out", str(d / "s.bin"), "-sym", str(d / "s.sym")], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"dsp_asm failed on db666.asm for the tap's offset:\n{r.stdout}\n{r.stderr}")
     sym = dict((n, int(v, 16)) for n, v in (ln.split() for ln in (d / "s.sym").read_text().splitlines() if ln.strip()))
     tapat = init + sym["dbt_tap"] - sym["init"]
     rec = REF.REC_A + 4 * 0                      # T5 = track 4, the first record of payload A's half
@@ -273,6 +275,9 @@ def tap_gates():
     b, c, l, v = run(3, {LEVEL: 0x123456})
     check("nobody keys: asleep, LEVEL written 0, COUNT and LAST untouched", (b, c, l, v) == (0, 0, 0, 0),
           f"BEAT COUNT LAST LEVEL = {b:x} {c:x} {l:x} {v:x}")
+    b, c, l, v = run(3, {BEAT: 0x800007, LAST: 0x800007, LEVEL: 0x123456})
+    check("the same nonzero beat, COUNT 0 (a sign-extended word): asleep, LAST kept",
+          (b, c, l, v) == (0x800007, 0, 0x800007, 0), f"BEAT COUNT LAST LEVEL = {b:x} {c:x} {l:x} {v:x}")
     b, c, l, v = run(1, {BEAT: 5, LEVEL: 0x123456})
     check(f"a new beat: LAST = BEAT, COUNT = {REF.M.WANT_BLOCKS}, LEVEL = db666_ref.tap() of the block",
           (l, c, v) == (5, REF.M.WANT_BLOCKS, last_block(1)), f"COUNT {c} LAST {l:x} LEVEL {v:06x} model {last_block(1):06x}")
@@ -302,7 +307,11 @@ def tap_gates():
                "-in", str(src_raw), "-out", str(d / "out.raw"), "-params", ",".join(str(x) for x in pv),
                "-pokey", f"{t1:x}=abcdef,{t8:x}=abcdef", "-peeky", f"{t1:x},{t8:x}"]
         r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit(f"dsp_host failed for the effect's heartbeat:\n{r.stdout}\n{r.stderr}")
         vals = [int(ln.split(" = ")[1], 16) for ln in r.stdout.splitlines() if ln.strip().startswith("Y:0x")]
+        if len(vals) != 2:
+            sys.exit(f"dsp_host printed {len(vals)} Y peeks, not 2:\n{r.stdout}")
         return vals
     on3, on5 = run_fx(1, 3), run_fx(1, 5)
     check("KEY T1: the heartbeat goes into T1's BEAT word, one step a block", on3[0] == 3 and on5[0] == 5,

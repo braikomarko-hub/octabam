@@ -18,10 +18,11 @@ effect's id, and its code runs in a given-up effect's words), modelled from the 
     (-1:1, the 160A's "negative compression") over 101..127;
   * OUTPUT GAIN (R80), +-20 dB;
   * KEY: OFF (the track itself) or T1..T8, read from the SIDE-CHAIN BUS: a
-    hook in the stock dispatcher (where SIDECHAIN_COMPRESSOR hooks) writes
-    each track's block mean square, ONE word per track, into the shared
-    window; any dB666 on either core reads the one word it needs. The tap
-    sums a track only while a dB666 keys it (the track's BEAT word changes).
+    hook in the stock dispatcher (where SIDECHAIN_COMPRESSOR hooks) keeps a
+    record of four words per track in the shared window (BEAT COUNT LAST
+    LEVEL); a keyed dB666 writes its heartbeat to BEAT and reads LEVEL, the
+    block's mean square, which the tap computes only while a dB666 keys
+    that track.
 Stereo-linked: one detector on (L^2 + R^2)/2, one gain for both channels.
 """
 import math as _m
@@ -50,20 +51,17 @@ KNEE_DB = 10.0                               # ASSUMED OverEasy width (the 160A'
 DB_PER_BIT = 10 * _m.log10(2.0)              # 3.0103 dB per bit of MEAN SQUARE
 
 # ---- the side-chain bus ------------------------------------------------------
-# One word per track, the block's mean square (L^2 + R^2)/2 over 16 frames, in
-# the last words of each core's half of the shared window. Payload A writes
-# tracks 5-8 at $37ff8.., payload B tracks 1-4 at $3fff8..; any core reads
-# track t (0-based) at $3fff8 + t (t < 4) or $37ff4 + t (t >= 4). The top of
-# T8's and T4's FX2 slots (+$3FF8): above every stock effect's extent (DARK
-# REV +$3DA2) and inside Y:0x37f00..0x3ffff, which payload B's boot zero loop
-# clears. (Until 26 Oct 2026 the bus sat at $33ff8 / $3bff8; the demand
-# loader's window code now starts below $33ff8 and stops payload A's boot
-# zero loop at 0x33dc3, so that word range would no longer be zeroed.)
-# One record of four words per track, BEAT COUNT LAST LEVEL, from +$3FF0 of
+# The top of T8's and T4's FX2 slots (+$3FF0): above every stock effect's
+# extent (DARK REV +$3DA2) and inside Y:0x37f00..0x3ffff, which payload B's
+# boot zero loop clears. (Until 26 Oct 2026 one word per track sat at
+# $33ff8 / $3bff8; the demand loader's window code now starts below $33ff8
+# and stops payload A's boot zero loop at 0x33dc3. 26-29 Oct: one word per
+# track at +$3FF8.) One record of four words per track, BEAT COUNT LAST LEVEL, from +$3FF0 of
 # each core's half: payload A tracks 4..7 at $37ff0.., payload B tracks 0..3
 # at $3fff0... A dB666 whose KEY names the track writes its heartbeat to BEAT
 # each block; the tap (the only writer of COUNT, LAST and LEVEL) sums the
-# block only while BEAT changed within the last WANT_BLOCKS blocks.
+# block only while BEAT changed within the last WANT_BLOCKS blocks. Track t
+# (0-based)'s LEVEL: $3fff0 + 4t + 3 (t < 4) or $37fe0 + 4t + 3 (t >= 4).
 REC_A, REC_B = 0x37FF0, 0x3FFF0
 LEVEL_AT = 3
 WANT_BLOCKS = 8
@@ -147,9 +145,9 @@ MODULE = Module(
         hooks=(
             # SIDECHAIN_COMPRESSOR's `sctap` site: the dispatcher's FX1 entry,
             # every track, every block, the track's audio at X:0..$1f. The
-            # displaced `move x:>$208,r6` is replayed inside dbt_tap, before its store.
+            # displaced `move x:>$208,r6` is replayed inside dbt_tap, after its address arithmetic.
             DspHook({"A": 0x004a7, "B": 0x0029c}, (0x66f000, 0x000208), "dbt_tap",
-                    "dispatcher: publish every track's block mean square, one word"),
+                    "dispatcher: every keyed track's block mean square, into its record"),
         ),
         subst={
             "A": {"@ROFF@": "$37fe0"},     # REC_A - 4 x 4: T5..T8 are tracks 4..7

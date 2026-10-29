@@ -74,7 +74,8 @@ The tap reads BEAT: changed since LAST → LAST = BEAT, COUNT = 8, sum; the
 same → COUNT − 1 and sum while COUNT was above 0; else LEVEL = 0 and return.
 A KEY turned on reads 0 for its first one or two blocks (0.36–0.73 ms,
 against the detector's 34.7 ms: not heard); a KEY turned off keeps the tap
-running 9 more blocks (3.3 ms). Two dB666 keying one track only make BEAT
+running 8 more blocks after the last beat it saw, plus up to one by the two
+cores' order (about 3 ms). Two dB666 keying one track only make BEAT
 change more often. (A first form of 29 Oct, one WANT word refilled by the
 effect and counted down by the tap, could lose the refill when the two
 cores' writes crossed: found by an independent review before it ran.)
@@ -117,15 +118,15 @@ them, so they moved.
 The ledger refuses dB666 beside SIDECHAIN_COMPRESSOR (the same hook site,
 and a declared `conflicts`), so it cannot join `octabam`, which carries
 SIDECHAIN_COMPRESSOR, and beside DELAY SERVER, whose line covers payload B's
-words from 0x38000 up, the bus words at $3FFF8 included (so no bus remix).
+words from 0x38000 up, the records at $3FFF0–$3FFFF included (so no bus remix).
 No `window` placement is declared; the build checks window homes against
 `Claims.dsp_ranges`.
 
 ## Measured
 
 ✅ `tools/verify/verify_db666.py` in `dsp_host`, the code as this image
-places it, 29 Oct 2026 (the bus words planted with `-pokey`; the tap itself
-is not run by the gate, see below):
+places it, 29 Oct 2026 (the LEVEL words planted with `-pokey`; the tap is
+run on its own, below):
 
 - **Bit-exact** against `db666_ref.fixed()`: defaults, every knob at its
   ends, OverEasy, KEY from T1 (payload B's half) and T7 (payload A's), KEY
@@ -139,7 +140,7 @@ is not run by the gate, see below):
   law's figure exactly; an empty word does nothing.
 - Below threshold at OUT 0 dB, and at MIX 0, the output is the input exactly;
   silence comes out as zeros.
-- **Cost**: 338 words of code (the tap's 41 included; 297 before 29 Oct,
+- **Cost**: 338 words of code (the tap's 45 included; 297 before 29 Oct,
   when the AGU nops and the records came in) + 66 words of table; 160 cycles per sample by the
   pricer (`make cycles`), plus the tap (above). Worst core: 8 instances
   (FX1 and FX2 on its four tracks) = 1,280 static, about 1,800 with the

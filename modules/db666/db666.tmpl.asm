@@ -6,7 +6,8 @@
 ; manifest.py). Edit the template, then: python3 modules/db666/generate_asm.py
 ;
 ; Insert contract: frames in place at x:(r0)/x:(r0+n0), knobs from r6,
-; state in this instance's r7 block. Reads one word of the shared window.
+; state in this instance's r7 block. In the shared window it reads one LEVEL
+; word and, with KEY on, writes its heartbeat to that track's BEAT word.
 ;
 ; ---- the 160 (schematic + manual; modules/db666/README.md) -----------------
 ;   ms   = (L^2 + R^2)/2, or KEY's block mean square from the bus
@@ -318,8 +319,9 @@ dbc_end:
 ; ---------------------------------------------------------------------------
 ; dbt_tap -- the side-chain bus. Reached by a `jsr` at the dispatcher's FX1
 ; entry (SIDECHAIN_COMPRESSOR's `sctap` site), every track, every block, the
-; track's audio at X:$00..$1f. Writes the block's mean square, ONE word, at
-; this core's half (the per-payload base literal, less the half's first track).
+; track's audio at X:$00..$1f. Keeps the track's record at this core's half
+; (@ROFF@: the half's first record less four words for each track before
+; it): reads BEAT, writes COUNT, LAST and LEVEL (the block's mean square).
 ; Uses only a, b, r0, r1, x0 -- inside the set stock reloads after this site
 ; (a b r0 r1 n1 x0, as audited for sctap) -- and replays the displaced
 ; instruction after the address arithmetic. It sums the block only while a
