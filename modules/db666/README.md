@@ -73,6 +73,14 @@ window code (DLCOPY from 0x33DC3) now stops payload A's boot zero loop below
 them, so they moved. The ledger refuses dB666 beside SIDECHAIN_COMPRESSOR
 (the same hook site).
 
+Beside the demand loader (29 Oct 2026, read from the build report of
+`octabam` on main bc14452): the highest window words in use are TRANSIENT's
+home in the fourth block (to P:0x3FF65) and LOAD METER's B half in the
+second (to P:0x37EF7), with its figures at X:$37F10–$37F2F; the bus words
+at +$3FF8 of the second and fourth blocks are clear of every home. A
+14-effect remix could carry dB666's code in the window as well; that
+placement is not made here.
+
 ## Measured
 
 ✅ in a standalone DSP56300 harness (garbage in every register and state
