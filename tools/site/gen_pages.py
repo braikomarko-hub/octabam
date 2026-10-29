@@ -94,6 +94,7 @@ def _label(m) -> str:
         "ata-write-guard": "ATA write guard",
         "bbd": "BBD delay",
         "character-txtr": "Character TXTR",
+        "db666": "dB666",
         "devilish": "dEVILish",
         "direct-jump-kyoti": "Direct jump (Kyoti)",
         "distorx": "DisTorX",

@@ -74,6 +74,7 @@ nav:
       - BBD Delay: reference/modules/bbd.md
       - Character: reference/modules/character.md
       - Character TXTR: reference/modules/character-txtr.md
+      - dB666: reference/modules/db666.md
       - Delay Server: reference/modules/busdelay.md
       - dEVILish: reference/modules/devilish.md
       - DisTorX: reference/modules/distorx.md
