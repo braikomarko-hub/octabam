@@ -130,6 +130,23 @@ proc:
         nop
         move    y:(r1),x0               ; the bus word
         move    x0,x:(r7+$05)
+; ---- KEY on: ask that track's tap to run (its WANT word, 4 above the bus word) -
+; The tap computes a track's word only while someone keys it: each block a
+; keyed dB666 refills the WANT word (WANT_BLOCKS), the tap counts it down and
+; sleeps at 0 (writing 0 to the bus word, so a fresh KEY never reads a stale
+; level). Off: the word is written back as read (no branch; a racing write by
+; another dB666 can only keep it awake a block longer).
+        move    #>$000004,x0
+        add     x0,b                    ; b1 = the WANT word's address
+        move    b1,r1
+        nop                             ; two moves between writing r1 and using it
+        nop
+        move    y:(r1),a                ; the count
+        move    #>$000008,x0
+        move    x:(r7+$04),b            ; KEY on (1) or off (0)
+        tst     b
+        tne     x0,a                    ; on: refresh
+        move    a,y:(r1)+               ; (post-increment: stock's store form; r1 is not used again)
         move    #$1,n0                  ; (short immediate, stock's own form)
 ; ===========================================================================
 ; THE SAMPLE LOOP
@@ -299,27 +316,37 @@ dbc_end:
 ; dbt_tap -- the side-chain bus. Reached by a `jsr` at the dispatcher's FX1
 ; entry (SIDECHAIN_COMPRESSOR's `sctap` site), every track, every block, the
 ; track's audio at X:$00..$1f. Writes the block's mean square, ONE word, at
-; this core's half: @SBASE@ + (track - @COREBASE@). Uses only a, r0, r1, n1,
-; x0 -- inside the set stock reloads after this site (a b r0 r1 n1 x0, as
-; audited for sctap) -- and replays the displaced instruction before its store.
+; this core's half (the per-payload base literal, less the half's first track).
+; Uses only a, r0, r1, x0 -- inside the set stock reloads after this site (a b r0 r1 n1 x0, as
+; audited for sctap) -- and replays the displaced instruction first. It sums
+; the block only while the track's WANT word is above 0 (a dB666 keys it);
+; asleep it costs a dozen cycles and writes 0.
 ; ---------------------------------------------------------------------------
 dbt_tap:
+        move    x:>$420,a               ; the track, 0..7
+        add     #>@SOFF@,a              ; its bus word: this half's base less its first track
+        move    a1,r1
+        add     #>$000004,a             ; its WANT word, 4 above
+        move    a1,r0
+        move    x:>$208,r6              ; --- displaced --- (here: it fills the AGU gap)
+        nop                             ; two moves between writing r0 and using it
+        move    y:(r0),a                ; the count: does a dB666 key this track?
+        tst     a
+        beq     dbt_idle
+        sub     #>$1,a                  ; count down one block
+        move    a,y:(r0)+               ; (stock's store form; r0 is set again below)
         clr     a
         move    #0,r0
-        do      #<$20,>dbt_sum
+        nop                             ; two moves between writing r0 and using it
+        nop
         move    x:(r0)+,x0
-        mac     x0,x0,a
+        do      #<$20,>dbt_sum
+        mac     x0,x0,a x:(r0)+,x0      ; sum and load the next in one cycle
 dbt_sum:
         asr     #$5,a,a                 ; / 32: the mean of (L^2 + R^2)/2
         move    a,x0                    ; limited below 1.0
-        move    x:>$420,a               ; the track, 0..7
-        sub     #>@COREBASE@,a          ; this core's own 0..3
-        move    a1,n1
-        move    #>@SBASE@,r1
-        move    x:>$208,r6              ; --- displaced --- (here: it fills the AGU gap)
-        nop                             ; two moves between writing r1/n1 and the lua
-        lua     (r1)+n1,r1
-        nop                             ; two moves between the lua and the store
-        nop
-        move    x0,y:(r1)
+        move    x0,y:(r1)+              ; (stock's store form; stock reloads r1 after the site)
+        rts
+dbt_idle:
+        move    a,y:(r1)+               ; nobody keys this track: its word is 0
         rts

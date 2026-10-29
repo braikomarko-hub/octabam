@@ -20,7 +20,8 @@ effect's id, and its code runs in a given-up effect's words), modelled from the 
   * KEY: OFF (the track itself) or T1..T8, read from the SIDE-CHAIN BUS: a
     hook in the stock dispatcher (where SIDECHAIN_COMPRESSOR hooks) writes
     each track's block mean square, ONE word per track, into the shared
-    window; any dB666 on either core reads the one word it needs.
+    window; any dB666 on either core reads the one word it needs. The tap
+    sums a track only while a dB666 keys it (its WANT word, 4 above).
 Stereo-linked: one detector on (L^2 + R^2)/2, one gain for both channels.
 """
 import math as _m
@@ -59,6 +60,10 @@ DB_PER_BIT = 10 * _m.log10(2.0)              # 3.0103 dB per bit of MEAN SQUARE
 # loader's window code now starts below $33ff8 and stops payload A's boot
 # zero loop at 0x33dc3, so that word range would no longer be zeroed.)
 BUS_A, BUS_B = 0x37FF8, 0x3FFF8
+# The WANT words, 4 above: a keyed dB666 sets its track's to WANT_BLOCKS each
+# block; the tap counts it down and sums the block only while it is above 0.
+WANT_A, WANT_B = BUS_A + 4, BUS_B + 4
+WANT_BLOCKS = 8
 
 # P table: LOG[i] = log2(0.5 + i/64)/32 (33), EXP[i] = 2^(i/32)/2 (33; the
 # last is 1.0, held at full scale).
@@ -87,7 +92,7 @@ CONST = {
     "STRETCH": 1.0 / 127.0,
 }
 CONSTQ = {k: _q(v) for k, v in CONST.items()}
-CONSTQ.update(EXP_AT=EXP_AT)
+CONSTQ.update(EXP_AT=EXP_AT, WANT=WANT_BLOCKS)
 
 _P = Formatter.PLAIN
 _B = Formatter.BIPOLAR
@@ -100,7 +105,7 @@ MODULE = Module(
     proof=Proof.HARDWARE,
     proof_note="the owner's MKI, acidtrack images on EQUALIZER's id from 11 Oct 2026, with the bus at today's "
                "+$3FF8 words in ACIDV79 (27 Oct) and ACIDV81 (28 Oct): side-chain ducking by ear, hours of live use "
-               "beside OCTA303, dEVILish, DISTORX and AtoMizer. On its own id (this form, with two AGU nops added): "
+               "beside OCTA303, dEVILish, DISTORX and AtoMizer. On its own id (this form: AGU nops, the tap asleep unless a KEY names its track): "
                "not yet on the unit. Bit-exact against its fixed-point model (verify_db666)",
     doc="A model of the dbx 160 compressor: true-RMS detector, threshold, ratio to infinity and beyond, side-chain KEY from any track.",
     menu=MenuEntry(
@@ -144,13 +149,13 @@ MODULE = Module(
                     "dispatcher: publish every track's block mean square, one word"),
         ),
         subst={
-            "A": {"@COREBASE@": "4", "@SBASE@": "$37ff8"},
-            "B": {"@COREBASE@": "0", "@SBASE@": "$3fff8"},
+            "A": {"@SOFF@": "$37ff4"},     # BUS_A - 4: T5..T8 are tracks 4..7
+            "B": {"@SOFF@": "$3fff8"},     # BUS_B - 0: T1..T4 are tracks 0..3
         },
     ),
     claims=Claims(dsp_ranges=(
-        DspRange("y", 0x7FF8, 0x8, "the side-chain bus: one word per track, "
-                                   "four per core's half", half_relative=True),
+        DspRange("y", 0x7FF8, 0x8, "the side-chain bus: one level word and one WANT word per track, "
+                                   "four of each per core's half", half_relative=True),
     )),
     conflicts=(("SIDECHAIN_COMPRESSOR",
                 "the same dispatcher hook site (sctap): both tap every track's block at the FX1 entry"),),

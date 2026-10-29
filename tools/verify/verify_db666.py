@@ -254,7 +254,7 @@ def precedent():
         if f.exists():
             have |= {n for n in map(norm, f.read_text().splitlines()) if n}
     src = (pathlib.Path("modules/db666/db666.asm").read_text()
-           .replace("$fab1e0", "$000400").replace("@COREBASE@", "0").replace("@SBASE@", "$3fff8"))
+           .replace("$fab1e0", "$000400").replace("@SOFF@", "$3fff8"))
     d = pathlib.Path(tempfile.mkdtemp(prefix="dbxprec."))
     (d / "s.asm").write_text(src)
     r = subprocess.run(["vendor/dsp56300/build/source/dsp_host/dsp_asm", "-in", str(d / "s.asm"),

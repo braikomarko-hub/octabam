@@ -60,16 +60,38 @@ block's mean square, at its core's half of the shared window:
 | T1–T4 | payload B (core 1) | Y:$3FFF8–$3FFFB |
 | T5–T8 | payload A (core 0) | Y:$37FF8–$37FFB |
 
+Each level word has a **WANT** word 4 above it (Y:$3FFFC–$3FFFF,
+Y:$37FFC–$37FFF). **The tap sums a track's block only while someone listens**
+(29 Oct 2026, the author's rule: what nobody hears is not computed): every
+block, each dB666 whose KEY names a track sets that track's WANT word to 8;
+the tap counts it down one per block, sums the block while it is above 0,
+and otherwise writes 0 to the level word and returns. A KEY turned on reads
+0 for its first block (0.36 ms, against the detector's 34.7 ms: not heard);
+a KEY turned off keeps its track's tap running 8 more blocks (2.9 ms). The
+dB666 that is OFF writes the WANT word it would name back as it read it,
+so the code has no branch on KEY; a race with another dB666 on the other
+core can only keep a tap awake one block longer.
+
 A dB666 on either core reads the one word its KEY names, once per block.
 One 24-bit store is atomic, so the two cores need no generation counter; a
-word is at most one block (0.36 ms) old. The tap uses a, r0, r1, n1, x0 —
+word is at most one block (0.36 ms) old. The tap uses a, r0, r1, x0 —
 inside the set stock reloads after this site — and replays the displaced
-`move x:>$208,r6` (before its store, where it fills the AGU gap). Cost,
-counted from the code, not measured: 32 `mac`s and about 80 cycles per
-track per block, so about 20 cycles a sample per core for its four tracks.
-It is paid by every image that carries dB666, whether or not a track uses
-it, and `cycle_count` does not price it (it is reached from the dispatcher,
-not from the effect). SIDECHAIN_COMPRESSOR's tap copies the track's audio
+`move x:>$208,r6` first, where it fills the AGU gap. The sum is one `mac`
+with its parallel load per sample word (32 a block). Cost, counted from
+the listing at about one cycle a word, four for a taken branch, three for
+`jsr` and `rts`, not measured: asleep about 24 cycles per track per block,
+awake about 70. Per core, for its four tracks, cycles a sample:
+
+| what the tracks do | before 29 Oct | now |
+|---|---|---|
+| nobody keys any track | ~24 | **~6** |
+| one track keyed (a kick pumping a bass) | ~24 | **~9** |
+| all four keyed | ~24 | ~17 |
+
+That is about 0.8 % of a core before and 0.2 % now when nobody keys
+(against ≈3,120 usable cycles a sample, CHIP.md). It is paid by every image
+that carries dB666, and `cycle_count` does not price it (it is reached from
+the dispatcher, not from the effect). SIDECHAIN_COMPRESSOR's tap copies the track's audio
 instead, to offer audio-rate keys and a key listen, which the 160's RMS
 detector does not need. The words sit at +$3FF8 of T8's and T4's FX2
 slots, above every stock effect's measured extent (DARK REV's +$3DA2), in
@@ -104,23 +126,28 @@ is not run by the gate, see below):
   law's figure exactly; an empty word does nothing.
 - Below threshold at OUT 0 dB, and at MIX 0, the output is the input exactly;
   silence comes out as zeros.
-- **Cost**: 301 words of code (the tap's 23 included; 297 before the two
-  AGU nops of 29 Oct) + 66 words of table; 160 cycles per sample by the
+- **Cost**: 323 words of code (the tap's 32 included; 297 before 29 Oct,
+  when the AGU nops and the WANT words came in) + 66 words of table; 160 cycles per sample by the
   pricer (`make cycles`), plus the tap (above). Worst core: 8 instances
   (FX1 and FX2 on its four tracks) = 1,280 static, about 1,800 with the
   ~1.4 that COSTS.md measured between static counts and the unit
   (inferred), against about 3,120 usable cycles a sample (CHIP.md). The
   code has no branch on a knob, so its cost does not depend on the
   settings (no `max_per_core`).
-- **Instruction forms** (`verify_db666`, after `verify_distorx`): 95 used,
-  80 with a stock site; the 15 without one (Tcc forms, `mac x0,x0,a`, P
-  table reads, the bus store) ran on the owner's MKI in every acidtrack
-  image (the same instructions; the nops of 29 Oct have stock sites).
-- **Not proven locally: the tap's word.** No gate runs `dbt_tap` and checks
-  the word it writes against `db666_ref.tap()`; `make check` boots it in
-  the real dispatcher under the port, which shows it does not hang, not
-  that the word is right. On the unit the ducking from another track was
-  heard in every image (below).
+- **Instruction forms** (`verify_db666`, after `verify_distorx`): 100 used,
+  84 with a stock site. Of the 16 without one, 14 (Tcc forms,
+  `mac x0,x0,a`, the P table reads) ran on the owner's MKI in every
+  acidtrack image; `beq` has stock sites (the report's normaliser does not
+  match stock's labels); **`mac x0,x0,a x:(rN)+,x0`, the tap's new sum, has
+  none and has not run on a unit.** The tap's stores now use stock's
+  post-increment form.
+- **Not proven locally: the tap's word and the WANT handshake.** No gate
+  runs `dbt_tap` and checks the word it writes against `db666_ref.tap()`
+  (dsp_host's `-dispatch` mode does not run on this payload dump);
+  `make check` boots it in the real dispatcher under the port, which shows
+  it does not hang, not that the word is right. On the unit the ducking from
+  another track was heard in every image up to ACIDV81 (below), with the
+  tap as it was before 29 Oct.
 
 ## How it differs from COMPRESSOR and SIDECHAIN_COMPRESSOR
 
@@ -135,7 +162,7 @@ whose character is that it has neither.
 | ratio | stock's range (not measured here) | 1:1 … 120:1 (the 160's "infinity") and on to −1:1 (the 160A's negative compression) |
 | knee | stock's (not measured here) | HARD (the 160) or OVER (the 160A's OverEasy) |
 | parallel | MIX | MIX (0 is an exact passthrough, `verify_db666`) |
-| key | SIDECHAIN_COMPRESSOR: T1–T8 as audio, a base-width key filter (KBAS, KWID), key gain, a key listen (MON) | T1–T8 as a level: one mean-square word per track per block over a bus, about 20 cycles a sample per core (counted, not measured); no filter, no listen (the 160's detector takes a level, not audio) |
+| key | SIDECHAIN_COMPRESSOR: T1–T8 as audio, a base-width key filter (KBAS, KWID), key gain, a key listen (MON) | T1–T8 as a level: one mean-square word per track per block over a bus, computed only while a dB666 keys that track (about 6 cycles a sample per core asleep, 9 with one key; counted, not measured); no filter, no listen (the 160's detector takes a level, not audio) |
 | knobs | 6 on page 1 + RMS and 5 key controls on page 2 | 5 on page 1 (THRS RATI OUT KEY MIX) + KNEE |
 | in one image | — | not with SIDECHAIN_COMPRESSOR (the same dispatcher hook, `conflicts`); beside stock COMPRESSOR, yes |
 | cost on a unit | COMPRESSOR 2.18 % a slot (COSTS.md); SIDECHAIN_COMPRESSOR not read | not read yet (see "Open") |
@@ -161,7 +188,8 @@ on the unit.
 ⏳ On its own id (this form, `remixes/test/db666`): not yet flashed. What
 changed for it: the dispatch row, the descriptor clone and the FX1 chooser
 (now a list of its own, `Remix.fx1`, where before the module inherited
-EQUALIZER's row), and two AGU nops in the DSP code. The bus words have been
+EQUALIZER's row), and in the DSP code the AGU nops, the WANT handshake and
+the one-cycle sum (the tap and the consumer's KEY block). The bus words have been
 at today's +$3FF8 since ACIDV78 (26 Oct 2026); ACIDV79 (27 Oct) and ACIDV81
 (28 Oct) ran them on the unit.
 
@@ -184,7 +212,7 @@ attack and release, the ratios, the key, silence, every knob.
 | file | what |
 |---|---|
 | `manifest.py` | the module, the hook, the bus words, every constant |
-| `db666.tmpl.asm` | the DSP code with `@NAME@` constants (`@COREBASE@`, `@SBASE@` per payload) |
+| `db666.tmpl.asm` | the DSP code with `@NAME@` constants (`@SOFF@` per payload: the half's bus base less its first track) |
 | `generate_asm.py` | writes `db666.asm`; `--check` |
 | `db666_ref.py` | the 160 in float (`DB666`) and the module bit for bit (`fixed`, `tap`) |
 
