@@ -44,7 +44,7 @@ def key(code, gap=0.6, hold=0.4):
 
 FUNC_SRC = [(0.6, "key 0x2d down"), (0.3, "key 0x22 down"), (0.3, "key 0x22 up"), (0.3, "key 0x2d up")]
 TO_LIST = key(0x10) + FUNC_SRC
-DOWN4 = [e for _ in range(4) for e in key(0x20, 0.25, 0.25)]
+DOWN4 = [e for _ in range(4) for e in key(0x20, 0.35, 0.1)]   # held 0.1 s: a port key held 0.25 s can repeat (TRAPS.md)
 SELECT = TO_LIST + DOWN4 + key(0x31)
 
 
@@ -107,6 +107,9 @@ def main():
     rows = image.read_bytes()[0x40079248 - 0x40000400 + 3]       # the machine list's row count
     beside = rows == 7
     sym = symbols()
+    if "sj_desc" not in sym:                # the runtime in out/ is whatever built last (TRAPS.md)
+        sys.exit("verify_stroj_port: out/platform/runtime is not a STROJ build: "
+                 "make bus REMIX=test/stroj (or test/stroj-303) first, then pass its image")
     rec = sym["sj_desc"]
     shots = []
 
@@ -115,7 +118,7 @@ def main():
     assert "ended on quit" in log, "list: the script did not finish"
     shots.append(shot(d, "1_list_stroj"))
     if beside:
-        _, log, d = run("list303", card, image, TO_LIST + DOWN4 + key(0x20, 0.25, 0.25))
+        _, log, d = run("list303", card, image, TO_LIST + DOWN4 + key(0x20, 0.35, 0.1))
         shots.append(shot(d, "1b_list_octa303"))
 
     # 2. select STROJ, edit SETUP (VOIC down, BRTH +10, WAVE up)
@@ -194,7 +197,7 @@ def main():
 
     # 3. select, then another machine
     rd, log, _ = run("unsign", card, image, SELECT + key(0x32) + FUNC_SRC +
-                     [e for _ in range(4) for e in key(0x33, 0.25, 0.25)] + key(0x31))
+                     [e for _ in range(4) for e in key(0x33, 0.35, 0.1)] + key(0x31))
     part, shadow = rd("part.bin"), rd("shadow.bin")
     assert part[0x3C:0x3F] == bytes(3) and shadow[0x3C:0x3F] == bytes(3), \
         ("signature not cleared", part[0x3C:0x3F], shadow[0x3C:0x3F])
