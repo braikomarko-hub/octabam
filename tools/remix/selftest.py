@@ -1052,6 +1052,7 @@ def main():
              "shatter": ("PLATE REV",),   # SHATTER runs in its words; the other 13 stay
              "stuttr": ("PLATE REV",),   # STUTTR runs in its words; the other 13 stay
              "db666": ("PLATE REV",),   # dB666 on its own id runs in its words; the other 13 stay
+             "db666-meter": ("SPATIALIZER", "PLATE REV"),   # stock-meter-b + dB666 in PLATE REV's words
              "devilish": ("PHASER",),   # dEVILish is on PHASER's id; its pass-through runs in PHASER's words
              "ids64": ("PLATE REV", "SPRING REV"),   # the bbd remix with id_space=64 and BBD pinned to 0x25
              "testgen": ("PLATE REV",),     # TESTGEN runs in its words; the other 13 stay
