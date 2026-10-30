@@ -375,6 +375,10 @@ ms_2:   rts
 |   YES  close, and the held tracks start on the next step (from A)
 |   NO or UP  close, nothing starts; the window's tracks stay ARMED for the long press (below)
 |   DOWN  stop (as [TRACK]+[DOWN])
+|   RIGHT / LEFT  the LOCK pages (the recorded knob values as bars) and back; see "the LOCK page".
+|   While the window is open LEFT and RIGHT are the window's: stock's tempo nudge does not reach.
+|   Known limit: changing page while a trig key is held pushes the window's layer back on top of
+|   stock's held-trig layer (its knobs then go where the page says, not to the trig's locks).
 | Either way the window's tracks are ARMED (mp_prime): a track key held ~1 s alone then starts and
 | stops that track's morph (the long press, below). A soft timer (~60 Hz) redraws the state, the
 | step and the scenes when they change.
@@ -441,6 +445,8 @@ mw_open:
         move.l  mp_gen,%d0              | the project it belongs to (mp_apply counts loads)
         move.l  %d0,mw_gen
         clr.l   mw_go
+        clr.l   mw_page                 | always opens on the MORPH page,
+        bsr     mw_setenc               | with A-C on MORPH's settings
         pea     mw_closed
         pea     5                       | TEMPO class: windows of the class evict each other
         clr.l   -(%sp)
@@ -525,6 +531,13 @@ mw_c9:  rts
 mw_tick:
         tst.l   mw_win
         beq     mw_closed               | (gone without the callback: as NO, the timer and layer dropped)
+        tst.l   mw_page
+        beq     mw_tk0
+        bsr     lv_sig                  | the LOCK page: repaint only when what it shows changed
+        cmp.l   mw_lsig,%d0
+        bne     mw_draw
+        rts
+mw_tk0:
         bsr     mw_first                | a0 = the first track's state, d0 = its index
         move.l  %d0,-(%sp)
         bsr     mw_sig                  | d0 = state << 16 | k
@@ -624,22 +637,110 @@ mw_yes:                                 | YES: close; the held tracks start on t
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
         bne     mw_k9
+        tst.l   mw_page
+        bne     mw_k9                   | the LOCK page: YES does nothing (no morph starts by mistake)
         move.l  %d0,mw_go
         bra     mw_close
 
-mw_no:                                  | NO, UP: close; nothing starts
+mw_no:                                  | NO: close; nothing starts (from either page)
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
         beq     mw_close
 mw_k9:  rts
 
-mw_down:
+mw_up:                                  | UP: MORPH page, close as NO; LOCK page, the knob before
         moveq   #1,%d0
         cmp.l   8(%sp),%d0
         bne     mw_k9
+        tst.l   mw_page
+        beq     mw_close
+        move.l  mw_lk,%d0
+        subq.l  #1,%d0
+        bpl     mw_u1
+        moveq   #5,%d0                  | A -> F
+mw_u1:  move.l  %d0,mw_lk
+        bra     mw_draw
+
+mw_down:                                | DOWN: MORPH page, stop; LOCK page, the knob after
+        moveq   #1,%d0
+        cmp.l   8(%sp),%d0
+        bne     mw_k9
+        tst.l   mw_page
+        bne     mw_dn1
         move.l  mw_targets,%d1
         bsr     mp_stopmask
         bra     mw_draw
+mw_dn1: move.l  mw_lk,%d0
+        addq.l  #1,%d0
+        moveq   #6,%d1
+        cmp.l   %d1,%d0
+        bcs     mw_dn2
+        moveq   #0,%d0                  | F -> A
+mw_dn2: move.l  %d0,mw_lk
+        bra     mw_draw
+
+| LEFT / RIGHT walk the pages in a row: MORPH | steps 1-16 | 17-32 | 33-48 | 49-64 (as far as the
+| track's length goes). d0/d1/a0/a1 only, as every key handler here.
+mw_left:
+        moveq   #1,%d0
+        cmp.l   8(%sp),%d0
+        bne     mw_k9
+        move.l  mw_page,%d0
+        beq     mw_k9                   | already on MORPH
+        subq.l  #1,%d0
+        move.l  %d0,mw_page
+        bsr     mw_setenc
+        moveq   #-1,%d0                 | back on MORPH: its paint from scratch
+        move.l  %d0,mw_last
+        move.l  %d0,mw_last2
+        bra     mw_draw
+
+mw_right:
+        moveq   #1,%d0
+        cmp.l   8(%sp),%d0
+        bne     mw_k9
+        bsr     lv_where                | lv_len = the first window track's length
+        move.l  lv_len,%d0
+        moveq   #15,%d1
+        add.l   %d1,%d0
+        lsr.l   #4,%d0                  | its step pages, 1..4
+        move.l  mw_page,%d1
+        cmp.l   %d0,%d1
+        bcc     mw_k9                   | the last one already
+        addq.l  #1,%d1
+        move.l  %d1,mw_page
+        bsr     mw_setenc
+        bra     mw_draw
+
+| mw_setenc -- the window layer's encoder table for the page: MORPH's (A STEPS, B x, C MODE) on the
+| MORPH page, none on a LOCK page, so that there all six knobs reach the Octatrack's own page and
+| live recording works while the bars are watched. (An encoder the table does not list goes on to
+| stock: measured in the port, 30 Oct 2026, D with the MORPH window open.) The firmware takes the
+| table when the layer is pushed (measured the same day: changed under a pushed layer, A still
+| reached mw_enc), so with the layer up it is popped and pushed again around the change, as
+| mw_close pops it from a key handler. Clobbers d0, d1, a0, a1.
+mw_setenc:
+        lea     MW_ENCS,%a0
+        tst.l   mw_page
+        beq     mw_se1
+        lea     MW_ENCS0,%a0
+mw_se1: move.l  MW_LAYER+8,%d0
+        cmp.l   %a0,%d0
+        beq     mw_se9                  | already that table
+        tst.l   mw_pushed
+        bne     mw_se2
+        move.l  %a0,MW_LAYER+8          | not pushed yet (mw_open): LPUSH takes it
+        rts
+mw_se2: move.l  %a0,mw_setp             | pop, change, push (the pop sees the layer as pushed)
+        pea     MW_LAYER
+        jsr     LPOP
+        addq.l  #4,%sp
+        move.l  mw_setp,%d0
+        move.l  %d0,MW_LAYER+8
+        pea     MW_LAYER
+        jsr     LPUSH
+        addq.l  #4,%sp
+mw_se9: rts
 
 | mw_enc -- encoder (index @4, delta @8): A STEPS 0..64, B x 1..100, C MODE 0..1 (any turn to the
 | right HOLD, to the left SMOOTH), on every window track; the first track's value is the base.
@@ -715,6 +816,8 @@ mw_draw:
         move.l  %a5,-(%sp)
         jsr     CLEAR
         addq.l  #4,%sp
+        tst.l   mw_page
+        bne     lv_draw                 | a LOCK page
         moveq   #4,%d0
         moveq   #Y_TITLE,%d1
         lea     T_TITLE,%a0
@@ -871,6 +974,7 @@ mw_d4:
         move.l  %d6,%d0
         bsr     mw_sig
         move.l  %d0,mw_last
+mw_dend:
         moveq   #1,%d0
         move.l  %d0,SCRDIRTY
         movem.l (%sp),%d2-%d7/%a2-%a6
@@ -967,6 +1071,379 @@ mwf_2:  addq.l  #1,%d1
         bcs     mwf_1
         clr.b   (%a0)
         rts
+
+| ---------------------------------------------------------------- the LOCK page (LOCK VIEW)
+| RIGHT in the window: the first window track's recorded knob values (its page-1 parameter locks)
+| on the parameter page under the window, one bar per step, 16 steps a page. Inspired by DOOM OS's
+| FX Automation page on the SP-404MKII. Read only: it reads the pattern, never writes it. Where the
+| bytes live is Sam's docs/firmware/STEP_LOCKS.md, PARAM_PAGES.md (OS 1.40C):
+|   track record  bank + pattern * 0x8ed8 + track * 0x91a (pattern: 0x100b14d0)
+|   trigs         the record's first 8 bytes, big-endian, bit n = step n + 1 (port, 30 Oct 2026)
+|   lock          record + 0x59 + step * 32 + flat, 0xff = none; flat = page * 6 + knob
+|   page          0x460d1684: 0 SRC, 1 LFO, 2 AMP, 3 FX1, 4 FX2 (tools/panel/KEYMAP.md)
+|   Part value    bank + part * 0x18b2 + 0x8edaa + t * 30 + machine * 6 + k (SRC), or
+|                 + 0x8ee9a + t * 24 + (page - 1) * 6 + k (LFO, AMP, FX1, FX2)
+| The paint:
+|   T1 SRC D                  1-16
+|   ──────────────────────────────
+|   ▐█ ▐█ ▐█ ▯  ▐█ ...              (full bar: the step's lock; hollow: a trig without a lock, the
+|   ·  ·  ·  ·  ·  ...               Part's value; a dot under: a trig; nothing: no trig, no lock)
+| Costs nothing while the window is shut; open on a LOCK page, the soft timer hashes 16 lock bytes
+| and repaints only when the hash changes.
+
+        .set    PAGEKIND, 0x460d1684    | the parameter page under the window (long)
+        .set    UI_PTN,   0x100b14d0    | the pattern on screen (byte)
+        .set    PTN_STR,  0x8ed8
+        .set    TRK_STR,  0x91a
+        .set    LOCK0,    0x59
+        .set    TLESS,    0x10          | the trigless trigs' mask in the record (tools/hw/ot_bank.py)
+        .set    PAT_LEN,  0x8e53        | the pattern's length (NORMAL scale), byte
+        .set    PAT_PER,  0x8e55        | nonzero: PER TRACK, the length is the track's
+        .set    TRK_LEN,  0x50          | the track's length in its record, byte
+        .set    MACH_OFF, 0x8eda2       | the Part: a machine byte per track
+        .set    SRC_P1,   0x8edaa       | the Part: SRC page 1, t * 30 + machine * 6
+        .set    PG1_P1,   0x8ee9a       | the Part: LFO AMP FX1 FX2 page 1, t * 24
+        .set    LV_X0,    2             | the first bar's left edge; bars 5 px wide, 7 apart
+        .set    LV_DX,    7
+        .set    LV_Y0,    10            | the bars' foot (y up from the bottom)
+        .set    LV_DOT,   5             | the trig dots, y 5..6
+
+| lv_where -- what the LOCK page reads, into lv_t, lv_kind, lv_flat, lv_rec (0 = nothing to
+| show), lv_len (1..64, 16 without a bank) and lv_base (the Part's value, -1 unknown).
+| d0/d1/a0/a1 only.
+lv_where:
+        bsr     mw_first                | d0 = the first window track
+        move.l  %d0,lv_t
+        clr.l   lv_rec
+        moveq   #16,%d0
+        move.l  %d0,lv_len
+        moveq   #-1,%d0
+        move.l  %d0,lv_base
+        move.l  PAGEKIND,%d1
+        move.l  %d1,lv_kind
+        tst.l   MIDIMODE                | (a long: the MIDI key writes 1 into all four bytes)
+        bne     lw_9                    | MIDI tracks: not these records
+        moveq   #4,%d0
+        cmp.l   %d0,%d1
+        bhi     lw_9                    | not a parameter page (unsigned: negatives too)
+        move.l  %d1,%d0
+        mulu.w  #6,%d0
+        add.l   mw_lk,%d0
+        move.l  %d0,lv_flat
+        move.l  BANK_PTR,%d0
+        beq     lw_9
+        move.l  %d0,%a0
+        mvz.b   UI_PTN,%d0
+        and.l   #15,%d0
+        move.l  #PTN_STR,%d1
+        mulu.l  %d1,%d0
+        add.l   %d0,%a0                 | a0 = the pattern
+        move.l  lv_t,%d0
+        move.l  #TRK_STR,%d1
+        mulu.l  %d1,%d0
+        lea     (%a0,%d0.l),%a1         | a1 = the track's record
+        move.l  %a1,lv_rec
+        move.l  #PAT_PER,%d0            | the length (EUCLID FILL's sources; offsets past 32 K
+        tst.b   (%a0,%d0.l)             | through a register)
+        beq     lw_pl
+        mvz.b   TRK_LEN(%a1),%d0
+        bra     lw_len
+lw_pl:  move.l  #PAT_LEN,%d0
+        mvz.b   (%a0,%d0.l),%d0
+lw_len: moveq   #1,%d1
+        cmp.l   %d1,%d0
+        bge     lw_l1
+        move.l  %d1,%d0
+lw_l1:  moveq   #64,%d1
+        cmp.l   %d1,%d0
+        ble     lw_l2
+        move.l  %d1,%d0
+lw_l2:  move.l  %d0,lv_len
+        moveq   #15,%d1                 | the pattern shortened under a later page: its last
+        add.l   %d1,%d0
+        lsr.l   #4,%d0
+        move.l  mw_page,%d1
+        cmp.l   %d0,%d1
+        bls     lw_l3
+        move.l  %d0,mw_page
+lw_l3:
+| the Part's value of the knob
+        move.l  BANK_PTR,%a0
+        mvz.b   PART,%d0
+        and.l   #3,%d0
+        move.l  #PART_STRIDE,%d1
+        muls.l  %d1,%d0
+        add.l   %d0,%a0                 | a0 = bank + part * 0x18b2
+        move.l  lv_kind,%d0
+        bne     lw_p1
+        move.l  #MACH_OFF,%d0           | SRC: the block of the track's machine
+        add.l   lv_t,%d0
+        mvz.b   (%a0,%d0.l),%d1
+        moveq   #4,%d0
+        cmp.l   %d0,%d1
+        bhi     lw_9                    | not one of the five stock machines: unknown
+        mulu.w  #6,%d1
+        move.l  lv_t,%d0
+        mulu.w  #30,%d0
+        add.l   %d0,%d1
+        add.l   #SRC_P1,%d1
+        bra     lw_b
+lw_p1:  subq.l  #1,%d0                  | LFO 0, AMP 1, FX1 2, FX2 3
+        mulu.w  #6,%d0
+        move.l  lv_t,%d1
+        mulu.w  #24,%d1
+        add.l   %d0,%d1
+        add.l   #PG1_P1,%d1
+lw_b:   add.l   mw_lk,%d1
+        mvz.b   (%a0,%d1.l),%d0
+        move.l  %d0,lv_base
+lw_9:   rts
+
+| lv_sig -- d0 = a hash of what the LOCK page shows (lv_where first). Clobbers d1, a0, a1.
+lv_sig:
+        lea     -12(%sp),%sp
+        movem.l %d2-%d4,(%sp)
+        bsr     lv_where
+        move.l  lv_kind,%d0
+        lsl.l   #3,%d0
+        add.l   mw_lk,%d0
+        lsl.l   #3,%d0
+        add.l   lv_t,%d0
+        lsl.l   #3,%d0
+        add.l   mw_page,%d0
+        lsl.l   #7,%d0
+        add.l   lv_len,%d0
+        lsl.l   #8,%d0
+        add.l   lv_base,%d0
+        move.l  lv_rec,%d1
+        beq     ls_9
+        move.l  %d1,%a0
+        move.l  (%a0),%d1               | the trigs, 64 bits
+        eor.l   %d1,%d0
+        move.l  4(%a0),%d1
+        add.l   %d1,%d0
+        move.l  TLESS(%a0),%d1          | the trigless trigs, 64 bits
+        swap    %d1
+        eor.l   %d1,%d0
+        move.l  TLESS+4(%a0),%d1
+        swap    %d1
+        add.l   %d1,%d0
+        move.l  mw_page,%d1             | the page's 16 lock bytes
+        subq.l  #1,%d1
+        lsl.l   #4,%d1                  | its first step
+        lsl.l   #5,%d1                  | * 32
+        add.l   lv_flat,%d1
+        add.l   #LOCK0,%d1
+        lea     (%a0,%d1.l),%a1
+        moveq   #15,%d4
+ls_1:   mvz.b   (%a1),%d2
+        move.l  %d0,%d3                 | d0 = d0 * 33 + byte
+        lsl.l   #5,%d0
+        add.l   %d3,%d0
+        add.l   %d2,%d0
+        lea     32(%a1),%a1
+        subq.l  #1,%d4
+        bpl     ls_1
+ls_9:   movem.l (%sp),%d2-%d4
+        lea     12(%sp),%sp
+        rts
+
+| lv_h -- d0 = a value (0..255) -> d0 = its bar's top y, LV_Y0 + min(v, 127) * 9 / 32 (0..35 px).
+| Clobbers d1.
+lv_h:
+        moveq   #127,%d1
+        cmp.l   %d1,%d0
+        ble     lh_1
+        move.l  %d1,%d0
+lh_1:   mulu.w  #9,%d0
+        lsr.l   #5,%d0
+        moveq   #LV_Y0,%d1
+        add.l   %d1,%d0
+        rts
+
+| lv_box -- stack: (return), x1, y1, x2, y2, mode -> INVERT(a5, x1, y1, x2, y2, mode); the caller
+| pops the 20 bytes. Clobbers d0, d1, a0, a1.
+lv_box:
+        move.l  20(%sp),-(%sp)          | mode
+        move.l  20(%sp),-(%sp)          | y2
+        move.l  20(%sp),-(%sp)          | x2
+        move.l  20(%sp),-(%sp)          | y1
+        move.l  20(%sp),-(%sp)          | x1
+        move.l  %a5,-(%sp)
+        jsr     INVERT
+        lea     24(%sp),%sp
+        rts
+
+| lv_draw -- the LOCK page, from mw_draw (its registers saved, a5 = the surface); ends in
+| mw_dend. d3 = x, d4 = the lock, d5 = the trig, d6 = i, d7 = the page's first step, a4 = the
+| record.
+lv_draw:
+        bsr     lv_where
+| title: "T1 SRC D" and "1-16"
+        move.l  lv_kind,%d0
+        moveq   #4,%d1
+        cmp.l   %d1,%d0
+        bls     ld_k
+        moveq   #5,%d0                  | "---"
+ld_k:   lsl.l   #2,%d0
+        lea     LV_PAGES,%a0
+        add.l   %d0,%a0
+        move.l  mw_lk,%d0
+        add.l   %d0,%d0
+        lea     LV_KNOBS,%a1
+        add.l   %d0,%a1
+        move.l  %a1,-(%sp)
+        move.l  %a0,-(%sp)
+        move.l  lv_t,%d0
+        addq.l  #1,%d0
+        move.l  %d0,-(%sp)
+        pea     F_LT
+        pea     mw_buf
+        jsr     SPRINTF
+        lea     20(%sp),%sp
+        moveq   #4,%d0
+        moveq   #Y_TITLE,%d1
+        lea     mw_buf,%a0
+        bsr     mw_text
+        move.l  mw_page,%d7
+        lsl.l   #4,%d7                  | the page's last step, from 1
+        move.l  %d7,-(%sp)
+        moveq   #15,%d0
+        sub.l   %d0,%d7
+        move.l  %d7,-(%sp)              | its first, from 1
+        pea     F_RNG
+        pea     mw_buf
+        jsr     SPRINTF
+        lea     16(%sp),%sp
+        moveq   #X_VAL,%d0
+        moveq   #Y_TITLE,%d1
+        lea     mw_buf,%a0
+        bsr     mw_rtext
+        pea     1
+        pea     WINW-4
+        pea     Y_RULE
+        pea     4
+        move.l  %a5,-(%sp)
+        jsr     RULE
+        lea     20(%sp),%sp
+        move.l  lv_rec,%d0
+        beq     ld_none
+        move.l  %d0,%a4
+        subq.l  #1,%d7                  | d7 = the first step, from 0
+        moveq   #0,%d6
+ld_loop:
+        move.l  %d7,%d0
+        add.l   %d6,%d0                 | n = the step, from 0
+        cmp.l   lv_len,%d0
+        bge     ld_next                 | past the track's length: nothing
+        moveq   #0,%d5                  | the trig: byte 7 - n / 8, bit n % 8
+        move.l  %d0,%d1
+        lsr.l   #3,%d1
+        moveq   #7,%d2
+        sub.l   %d1,%d2
+        mvz.b   (%a4,%d2.l),%d2
+        move.l  %d0,%d1
+        and.l   #7,%d1
+        btst    %d1,%d2
+        beq     ld_1
+        moveq   #1,%d5
+ld_1:   moveq   #0,%d2                  | the trigless trig: the same bit of the mask at +0x10
+        move.l  %d0,%d1                 | (measured, 30 Oct 2026: live record's locks on steps
+        lsr.l   #3,%d1                  | without a trig set exactly these bits)
+        moveq   #TLESS+7,%d4
+        sub.l   %d1,%d4
+        mvz.b   (%a4,%d4.l),%d4
+        move.l  %d0,%d1
+        and.l   #7,%d1
+        btst    %d1,%d4
+        beq     ld_2
+        moveq   #1,%d2
+ld_2:   lsl.l   #5,%d0                  | the lock
+        add.l   lv_flat,%d0
+        moveq   #LOCK0,%d1
+        add.l   %d1,%d0
+        mvz.b   (%a4,%d0.l),%d4
+        move.l  %d6,%d3                 | x
+        mulu.w  #LV_DX,%d3
+        addq.l  #LV_X0,%d3
+        cmp.l   #0xff,%d4
+        beq     ld_nolock
+        move.l  %d5,%d0                 | a lock byte on a step with neither trig: stale (a trig
+        or.l    %d2,%d0                 | removed leaves its bytes; stock never plays them)
+        beq     ld_next
+        move.l  %d4,%d0                 | a full bar
+        bsr     lv_h
+        pea     1
+        move.l  %d0,-(%sp)
+        move.l  %d3,%d0
+        addq.l  #4,%d0
+        move.l  %d0,-(%sp)
+        pea     LV_Y0
+        move.l  %d3,-(%sp)
+        bsr     lv_box
+        lea     20(%sp),%sp
+        bra     ld_dot
+ld_nolock:
+        tst.l   %d5
+        beq     ld_next                 | no trig, no lock: nothing
+        move.l  lv_base,%d0
+        bmi     ld_dot                  | the Part's value unknown: the dot alone
+        bsr     lv_h                    | a hollow bar at the Part's value
+        move.l  %d0,%d4                 | d4 = its top
+        pea     1
+        move.l  %d4,-(%sp)
+        move.l  %d3,%d0
+        addq.l  #4,%d0
+        move.l  %d0,-(%sp)
+        pea     LV_Y0
+        move.l  %d3,-(%sp)
+        bsr     lv_box
+        lea     20(%sp),%sp
+        move.l  %d4,%d0
+        subq.l  #1,%d0                  | the inside: y LV_Y0 + 1 .. top - 1
+        moveq   #LV_Y0,%d1
+        cmp.l   %d1,%d0
+        ble     ld_dot                  | too low to be hollow
+        clr.l   -(%sp)
+        move.l  %d0,-(%sp)              | top - 1
+        move.l  %d3,%d0
+        addq.l  #3,%d0
+        move.l  %d0,-(%sp)
+        pea     LV_Y0+1
+        move.l  %d3,%d0
+        addq.l  #1,%d0
+        move.l  %d0,-(%sp)
+        bsr     lv_box
+        lea     20(%sp),%sp
+ld_dot:
+        tst.l   %d5
+        beq     ld_next
+        pea     1
+        pea     LV_DOT+1
+        move.l  %d3,%d0
+        addq.l  #3,%d0
+        move.l  %d0,-(%sp)
+        pea     LV_DOT
+        move.l  %d3,%d0
+        addq.l  #1,%d0
+        move.l  %d0,-(%sp)
+        bsr     lv_box
+        lea     20(%sp),%sp
+ld_next:
+        addq.l  #1,%d6
+        moveq   #16,%d0
+        cmp.l   %d0,%d6
+        blt     ld_loop
+        bra     ld_sig
+ld_none:
+        moveq   #X_LAB,%d0
+        moveq   #Y_STEPS,%d1
+        lea     L_NOPG,%a0
+        bsr     mw_text
+ld_sig:
+        bsr     lv_sig
+        move.l  %d0,mw_lsig
+        bra     mw_dend
 
 | ---------------------------------------------------------------- the long press
 | A track key held ~1 s alone (as TRACK MENU v1 measured it on the owner's MKI, 24 Oct 2026): the
@@ -1165,6 +1642,21 @@ F_NUM:  .asciz  "%d"
 F_POS:  .asciz  "STEP %d/%d"
 F_CYC:  .asciz  "CYCLE %d"
 F_TOAST: .asciz "T%d MORPH %s"
+F_LT:   .asciz  "T%d %s %s"
+F_RNG:  .asciz  "%d-%d"
+L_NOPG: .asciz  "NO PAGE"
+LV_PAGES: .asciz "SRC"                      | 4 bytes a name, by the page kind; "---" otherwise
+        .asciz  "LFO"
+        .asciz  "AMP"
+        .asciz  "FX1"
+        .asciz  "FX2"
+        .asciz  "---"
+LV_KNOBS: .asciz "A"                        | 2 bytes a letter
+        .asciz  "B"
+        .asciz  "C"
+        .asciz  "D"
+        .asciz  "E"
+        .asciz  "F"
 
 | ---- the window's layer (pushed while it is open): {next, keys, encoders, +12, +16, -1, -1}
         .balign 4
@@ -1173,8 +1665,10 @@ MW_LAYER:
 MW_KEYS:
         KEYREC  0x31, mw_yes, 0                     | YES:  close, the held tracks start
         KEYREC  0x32, mw_no, 0                      | NO:   close
-        KEYREC  0x33, mw_no, 0                      | UP:   close
-        KEYREC  0x20, mw_down, 0                    | DOWN: stop
+        KEYREC  0x33, mw_up, 0                      | UP:   close (LOCK page: the knob before)
+        KEYREC  0x20, mw_down, 0                    | DOWN: stop (LOCK page: the knob after)
+        KEYREC  0x34, mw_left, 0                    | LEFT:  the page before
+        KEYREC  0x21, mw_right, 0                   | RIGHT: the page after (LOCK)
         .byte   0xff, 0
         .space  24
 MW_ENCS:
@@ -1184,6 +1678,9 @@ MW_ENCS:
         .long   mw_enc, 0, 0, 0, 0
         .byte   2, 0                                | C: MODE
         .long   mw_enc, 0, 0, 0, 0
+        .byte   0xff, 0
+        .long   0, 0, 0, 0, 0
+MW_ENCS0:                                           | the LOCK pages: no knob is ours
         .byte   0xff, 0
         .long   0, 0, 0, 0, 0
 
@@ -1563,6 +2060,16 @@ mw_targets: .long 0                         | the window's tracks (bits)
 mw_last:   .long -1                         | state << 16 | k the last paint showed
 mw_last2:  .long -1                         | the scene indicator the last paint showed
 mw_go:     .long 0                          | YES: the held tracks start when the window closes
+mw_page:   .long 0                          | 0 MORPH, 1..4 LOCK (steps 1-16 .. 49-64)
+mw_lk:     .long 0                          | the LOCK page's knob, 0..5 = A..F (kept between opens)
+mw_lsig:   .long -1                         | lv_sig at the last LOCK paint
+lv_t:      .long 0                          | lv_where's results
+lv_kind:   .long 0
+lv_flat:   .long 0
+lv_rec:    .long 0
+lv_len:    .long 16
+lv_base:   .long -1
+mw_setp:   .long 0                          | mw_setenc: the table across LPOP
 mp_prime:  .long 0                          | ARMED: the tracks the long press starts and stops
 lp_cand:   .long -1                         | the long press: the track key down, or -1
 lp_count:  .long 0

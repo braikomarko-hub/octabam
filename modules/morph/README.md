@@ -63,6 +63,38 @@ its morph is while it morphs, A while it is parked, else the crossfader's.
 | YES | close; the tracks start on the next step |
 | NO, UP | close; nothing starts |
 | DOWN | stop, as [TRACK] + [DOWN] |
+| RIGHT | the LOCK page (below) |
+
+### The LOCK page (experimental, branch `morph-lock`)
+
+RIGHT in the window shows the recorded knob values (the page-1 parameter
+locks) of the first window track, for one knob of the parameter page under
+the window, one bar per step, 16 steps a page. Inspired by DOOM OS's FX
+Automation page on the SP-404MKII. It only reads the pattern.
+
+```
+T1 SRC A                  1-16
+──────────────────────────────
+█  ▯  █  █  ▯  █ ...     full bar: the step's lock
+·  ·  ·  ·  ·  · ...     hollow: a trig without a lock (the Part's value)
+                         dot: a trig; a bar without a dot: a trigless lock
+```
+
+| on a LOCK page | what happens |
+|---|---|
+| A–F | reach the Octatrack's own page: live recording (REC + PLAY) works while watching |
+| UP / DOWN | the knob shown (A..F of the page under the window) |
+| RIGHT / LEFT | the next 16 steps (up to the track's length) / back, down to the MORPH page |
+| YES | nothing |
+| NO | close |
+| a page key (SRC, LFO, AMP, FX1, FX2) | the bars follow the page |
+
+Measured under the port (30 Oct 2026, remix acidtrack, a fresh project):
+knob A recorded PTCH locks on T1 with the LOCK page open (live record), the
+STEPS setting stayed untouched, and the page drew the recorded values after a
+repaint. Not yet seen: the automatic repaint while recording (the window's
+soft timer did not fire under the port in these runs, MORPH v1.1's own
+included); not yet on the unit.
 
 | setting (per track) | values | default |
 |---|---|---|
