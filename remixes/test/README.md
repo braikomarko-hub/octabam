@@ -80,6 +80,8 @@ Each carries one module, or one combination, for that module's gates: `make chec
 | [`stems-brain`](stems-brain/README.md) | STEM REC (UP+REC) with BRAIN on the root: coexistence without two menu growers. | port-gated: verify_stems_menu under ot_emu |
 | [`stock-meter-a`](stock-meter-a/README.md) | CORE with LOAD METER and the stock effects except PHASER. | `make check` |
 | [`stock-meter-b`](stock-meter-b/README.md) | CORE with LOAD METER and the stock effects except SPATIALIZER. | `make check` |
+| [`stroj`](stroj/README.md) | STROJ alone: the drone machine on row 5 of the machine list, with stock's effects. | `make check`: test_stroj: the voice bit-exact under cfsim; the image builds and boots under the port |
+| [`stroj-303`](stroj-303/README.md) | STROJ and OCTA303 in one image: HOOKS gives the track's machine list seven rows, STROJ on row 5 (the head, in ANALOG BD's place) and OCTA-303 on row 6. | `make check`: the image builds and boots under the port |
 | [`stuttr`](stuttr/README.md) | STUTTR beside the stock effects (all but PLATE REV, whose words it takes). | local render: verify_stuttr; chance-engage redesign. |
 | [`tapeecho`](tapeecho/README.md) | Tape Echo replacing Spring Reverb, alone. | on hardware: the author's unit (OCTACLID4): six instances; a seventh freezes it, open |
 | [`testgen`](testgen/README.md) | TESTGEN on FX1 beside the stock effects (all but PLATE REV, whose words it takes). | on hardware: Ignorato's MKII, OCTABAM6, 4 Oct 2026 |

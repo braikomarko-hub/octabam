@@ -174,12 +174,20 @@ CHROMATIC = (
 )
 
 # ---- machine_rows -----------------------------------------------------------
-# (module key, its row-type routine), the head first: ANALOG BD's hooks take
-# every site and hand every row but 5 on to OCTA303's (HK_MACHINE_ROWS).
+# (module key, its row-type routine), the heads first: the head's hooks take
+# every site and hand every row but 5 on to OCTA303's (HK_MACHINE_ROWS).  The
+# head is ANALOG BD or STROJ (modules/stroj), never both: they declare each
+# other a conflict, and the bridge is on only with OCTA303 and one head.
 MACHINE_ROWS = (
     ("ANALOG BD", "ab_row_type"),
+    ("STROJ", "sj_row_type"),
     ("OCTA303", "o3_type"),
 )
+MC_HEADS = ("ANALOG BD", "STROJ")
+MC_TAIL = "OCTA303"
+# A head's own claims at sites OCTA303 keeps beside it (STROJ's retrig hook:
+# OCTA303's o3_retrig, built with HK_HEAD_STROJ, asks sj_latched).
+MC_HEAD_YIELDS = {"ANALOG BD": (), "STROJ": (0x4000C634,)}
 # OCTA303's detours that ANALOG BD's, built flagged, chain into.
 MC_OCTA_DETOURS = (0x400334D8, 0x4003C928, 0x4003D718, 0x4004C36A, 0x4003C980, 0x400786C8,
                    0x400585DC, 0x4005221E, 0x40078886, 0x4007981C, 0x4005A616, 0x4005A850,
@@ -224,10 +232,21 @@ def _present(participants, modules):
                  and (p[0] != "STORE" or _STORE_PARTS["layout"](modules)[0]))
 
 
+def _needed(b, parts, modules):
+    if b == "machine_rows":             # OCTA303 and exactly one head
+        return MC_TAIL in modules and sum(h in modules for h in MC_HEADS) == 1
+    return len(_present(parts, modules)) >= 2
+
+
 def bridged(modules) -> tuple[str, ...]:
     """The bridges a selection of module keys needs: those with two or more
-    participants in it."""
-    return tuple(b for b, parts in BRIDGES.items() if len(_present(parts, modules)) >= 2)
+    participants in it (machine_rows: OCTA303 and one head)."""
+    return tuple(b for b, parts in BRIDGES.items() if _needed(b, parts, modules))
+
+
+def mc_head(modules):
+    """machine_rows's head in a selection (ANALOG BD or STROJ), or None."""
+    return next((h for h in MC_HEADS if h in modules), None) if "machine_rows" in bridged(modules) else None
 
 
 def flags_inc(key, modules) -> str:
@@ -276,6 +295,9 @@ def hooks_inc(modules, remix=None):
     if "track_key" in on:
         out += [f"    HKREC 0x{c:02x}, {_handler(p)}, {_handler(r)}"
                 for c, p, r in track_key_records(modules)]
+    out += [".endm", ".macro hk_mc_row_type"]
+    if "machine_rows" in on:
+        out += [f"    jsr {dict(MACHINE_ROWS)[mc_head(modules)]}"]
     out += [".endm", ".macro hk_status_icon_chain"]
     if "status_icon" in on:
         out += [f"    jsr {sym}" for _key, sym in _present(STATUS_ICON, modules)]
@@ -350,8 +372,10 @@ def select(modules):
                                   "the machine list scrolls: row top + d2 on screen row d2",
                                   kind="jmp", pad_to=pad))
         pokes += MC_POKES
+        head = mc_head(modules)
         overrides += [Override(site, "OCTA303") for site in MC_OCTA_DETOURS + MC_POKE_SITES]
-        overrides += [Override(site, "ANALOG BD") for site in (0x400786C8, MC_KIND_FLEX) + MC_POKE_SITES]
+        overrides += [Override(site, head) for site in (0x400786C8, MC_KIND_FLEX) + MC_POKE_SITES
+                      + MC_HEAD_YIELDS[head]]
     coded = [b for b in on if b not in CODELESS]
     return {"linked": (_unit(modules),) if coded else (), "detours": tuple(detours),
             "symbol_refs": tuple(refs), "overrides": tuple(overrides), "pokes": tuple(pokes)}
@@ -360,7 +384,12 @@ def select(modules):
 # The unbound declaration carries every bridge, so the matrix and the
 # remixer see HOOKS as the bridge that joins each pair (index.py, app.py);
 # ledger.check and registry.bound apply select() to any real selection.
-_ALL = select({p[0] for parts in BRIDGES.values() for p in parts} | set(_STORE_PARTS["PART_CLIENTS"]))
+# machine_rows has one head at a time: the declaration is ANALOG BD's
+# selection's, with STROJ's own overrides added (each claim once).
+_EVERY = {p[0] for parts in BRIDGES.values() for p in parts} | set(_STORE_PARTS["PART_CLIENTS"])
+_ALL = select(_EVERY - {"STROJ"})
+_ALL["overrides"] = _ALL["overrides"] + tuple(
+    o for o in select(_EVERY - {"ANALOG BD"})["overrides"] if o not in _ALL["overrides"])
 
 MODULE = Module(
     name="hooks",

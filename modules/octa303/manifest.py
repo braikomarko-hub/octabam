@@ -39,8 +39,10 @@ def remix_inc(modules, remix=None):
 
     The build calls include(modules, remix) (schema.Linked.include); the remix is not needed here."""
     from remix import hooks_flags
+    head = hooks_flags._hooks()["mc_head"](modules)     # machine_rows's head: ANALOG BD or STROJ
     return ("        .set    DEVIL_ID, 0x%x\n" % (DEVIL_ID if "DEVILISH" in modules else 0x100)
-            + hooks_flags.inc("OCTA303", modules))
+            + hooks_flags.inc("OCTA303", modules)
+            + "        .set    HK_HEAD_STROJ, %d\n" % (head == "STROJ"))
 
 
 CHROM_HOOK = 0x4004FC58                  # `lea (4,a2,a2.l*4),a2; mvz.b 0x100b14cf,d0` (quantizer's qz_chrom site)

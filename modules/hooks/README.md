@@ -22,7 +22,13 @@ The design, and the conflicts it is meant to remove next:
 | chrom_pitch | the CHROMATIC key handler's key → pitch `0x4004fc58` | OCTA303 (`o3_chrom`), SCALE QUANTIZER (`qz_chrom`) | no code of its own: OCTA303's detour stays and, built with `HK_CHROM_PITCH`, hands every non-303 track to `qz_chrom`; SCALE QUANTIZER's detour is overridden |
 | chromatic | the CHROMATIC octave keys `0x40045918`, key index `0x40050254`, keyboard picture `0x40044968` | BLACKPYRAMIDS_303, SCALE QUANTIZER | asks `ot_track_is(the UI track)`: a BLACKPYRAMIDS track its own handler or full-keyboard branch; any other track `ot_chrom_sanitize`, then SCALE QUANTIZER's handler |
 | boot | the boot's `jsr 0x4000f938` at `0x40000512` | BOOT TRACE (`tr_dsp_done`), STORE (`store_part_resident_activate`) | calls BOOT TRACE's note 3 (`HK_BOOT`: it returns), then jumps to STORE's routine, which tail-jumps to the stock call |
-| machine_rows | the track's machine list and SRC SETUP: the name formatter `0x400334d8`, the name tables, the row highlights, the list's opens, its commits, the SETUP editor and drawer, the Part validator `0x40002318`, the tick that publishes a machine's record, the FLEX kind entry `0x400d6438`; the lists' row counts and bounds | ANALOG BD (row 5), OCTA303 (row 6) | ANALOG BD's hooks take every shared site; built with `HK_MACHINE_ROWS`, each hands a row not its own to OCTA303's routine for the same hook, and OCTA303 is built with its row as 6. HOOKS pokes the lists to seven rows (the counts, SRC SETUP's name bound, the commit's persist bound, and the cursor clamp in the list's five key handlers) and takes the drawer's two row tests, so the list scrolls |
+| machine_rows | the track's machine list and SRC SETUP: the name formatter `0x400334d8`, the name tables, the row highlights, the list's opens, its commits, the SETUP editor and drawer, the Part validator `0x40002318`, the tick that publishes a machine's record, the FLEX kind entry `0x400d6438`; the lists' row counts and bounds | ANALOG BD or STROJ (row 5, the head), OCTA303 (row 6) | ANALOG BD's hooks take every shared site; built with `HK_MACHINE_ROWS`, each hands a row not its own to OCTA303's routine for the same hook, and OCTA303 is built with its row as 6. HOOKS pokes the lists to seven rows (the counts, SRC SETUP's name bound, the commit's persist bound, and the cursor clamp in the list's five key handlers) and takes the drawer's two row tests, so the list scrolls |
+
+machine_rows has one head: ANALOG BD or STROJ (modules/stroj), which declare
+each other a conflict; the bridge is on with OCTA303 and one head. Beside
+STROJ, OCTA303's renderer calls `stroj_render` as its next and its
+`o3_retrig` asks `sj_latched` (both under `HK_HEAD_STROJ`, which OCTA303's
+`remix.inc` carries), and STROJ's own retrig detour yields to OCTA303's.
 
 A bridge takes each participant's claim at the site by `schema.Override`
 (`ledger.py` and `build_bus.py` skip the overridden detour or symbol ref).

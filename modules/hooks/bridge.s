@@ -149,10 +149,10 @@ hk_mc_name:
         lea     28(%sp),%sp
 1:      jmp     (0x400786a2).l
 | 0x400786c8, a0 the UI track's machine byte: the box on screen row d2 when
-| that track's row (ab_row_type: 5 / 6 for a signed track) is top + d2.
+| that track's row (the head's row type: 5 / 6 for a signed track) is top + d2.
 hk_mc_box:
         mvs.b   (%a0),%d0
-        jsr     ab_row_type
+        hk_mc_row_type                  | the head's row type (ANALOG BD's ab_row_type, STROJ's sj_row_type)
         move.l  (MC_LIST).l,%d1
         add.l   %d2,%d1
         cmp.l   %d1,%d0

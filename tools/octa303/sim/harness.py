@@ -36,12 +36,13 @@ def remix_inc(devilish=True):
     """What the build writes as remix.inc (modules/octa303/manifest.py remix_inc): OCTA303
     alone, so every HOOKS flag 0 (its own bytes)."""
     return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
-            + ''.join('        .set    %s, 0\n' % f for f in hooks_flags()))
+            + ''.join('        .set    %s, 0\n' % f for f in hooks_flags())
+            + '        .set    HK_HEAD_STROJ, 0\n')
 
 def _unflag(s):
     """The .if / .else / .endif blocks on a HOOKS flag resolved as OCTA303 alone builds them (every
     flag 0): cfsim has no conditional assembly."""
-    flags, out, keep = set(hooks_flags()), [], [True]
+    flags, out, keep = set(hooks_flags()) | {'HK_HEAD_STROJ'}, [], [True]
     for line in s.split('\n'):
         tok = line.split('|')[0].split()
         if tok[:1] == ['.if']:

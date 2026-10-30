@@ -83,7 +83,11 @@
         .set    LANE_HOLD,      13              | the live lane's AMP HOLD (lock slot 13, PARAM_PAGES.md 5a')
         .include "remix.inc"            | DEVIL_ID: dEVILish's FX id, or 0x100 (never a byte) without it
         .if     HK_MACHINE_ROWS         | beside ANALOG BD (modules/hooks, machine_rows): its renderer
-        .set    STOCK_RENDER,   ab_render       | is the next in the FLEX kind entry's chain
+        .if     HK_HEAD_STROJ           | is the next in the FLEX kind entry's chain; beside STROJ
+        .set    STOCK_RENDER,   stroj_render    | (modules/stroj, the head in ANALOG BD's place) STROJ's
+        .else
+        .set    STOCK_RENDER,   ab_render
+        .endif
         .endif
         .set    CURVALS,        0x80000810      | the frame builder's live lane, 72 B a track, locks applied
         .set    CV_STRIDE,      72
@@ -851,7 +855,16 @@ o3_retrig:
         add.l   %d1,%d1
         lea     o3_state,%a2
         tst.l   S_LATCHED(%a2,%d1.l)
+        .if     HK_HEAD_STROJ           | beside STROJ this site is ours: a STROJ track's START is
+        bne     .Lrt_303                | made clean too (sj_latched, modules/stroj)
+        move.l  %a1,%d1
+        jsr     sj_latched
+        tst.l   %d1
+        beq     .Lrt_out
+.Lrt_303:
+        .else
         beq     .Lrt_out                | not an OCTA303 track: stock's byte stands
+        .endif
         moveq   #0,%d1
         move.b  (%a0,%a1.l),%d1
         and.l   #0x30,%d1
