@@ -64,11 +64,13 @@
         .set    PB_TABLE,       0x400d5f38      | the PLAYBACK records by UI type
         .set    STOCK_DEFS,     0x400d320c      | FLEX_P + 0x5e: FLEX's twelve defaults
         .set    PAGE2_GAP,      0x1b0           | SETUP bytes - PLAYBACK bytes
+        .set    MACH_OFF,       0x8eda2         | Part + this + track: the track's machine (1 = FLEX)
 
         .global stroj_render, sj_voice, sj_init, sj_latched, sj_retrig
         .global sj_machine_name, sj_src_names, sj_name_a, sj_name_b, sj_setup_row, sj_chooser_row
         .global sj_setup_open, sj_chooser_open, sj_tick, sj_main_commit, sj_src_commit, sj_src_commit2
         .global sj_setup_edit6, sj_setup_draw6, sj_validate, sj_resolve_pb, sj_row_type, sj_title
+        .global sj_sig, sj_mdesc, sj_lfo_name, sj_chrom
 
 
 | ============================================================================
@@ -1194,6 +1196,65 @@ sj_stock_validate:
         movem.l %d2-%d7/%a2-%a6,(%sp)
         jmp     0x40002320
         .endif
+
+| sj_lfo_name -- Detour 0x4003bff0 (`mvs.b (a0),d0; lea 0x400d5f38,a0`, 8 bytes), STROJ alone (beside
+| OCTA303 the site is its o3_lfo_name, which asks sj_sig): the LFO PMTR formatter's PLAYBACK names.
+| a0 = Part + 0x8eda2 + track, d1 = the track.  On a STROJ track the machine's record goes to a2
+| (NOTE SPRD INTV FM SUB TONE) and the formatter resumes at 0x4003c058; else the displaced
+| instructions and 0x4003c054.  The formatter keeps d1, d2, a4 across here; scratch d0, a0, a1.
+sj_lfo_name:
+        mvs.b   (%a0),%d0               | displaced: the machine
+        moveq   #FLEX,%d3
+        cmp.l   %d3,%d0
+        bne     .Llf_stock
+        move.l  %d1,-(%sp)
+        suba.l  %d1,%a0
+        suba.l  #0x22,%a0               | Part' (Part + 0x8ed80)
+        move.l  %d1,%d0
+        bsr     sj_sig                  | (clobbers d1)
+        beq     .Llf_flex
+        bsr     sj_mdesc                | d0 = the machine's record (keeps d2, a2, a3)
+        move.l  (%sp)+,%d1
+        movea.l %d0,%a2
+        jmp     0x4003c058
+.Llf_flex:
+        move.l  (%sp)+,%d1
+        moveq   #FLEX,%d0
+.Llf_stock:
+        lea     PB_TABLE,%a0            | displaced
+        jmp     0x4003c054
+
+| sj_chrom -- Detour 0x4004fc58 (jsr over 10 bytes: `lea (4,a2,a2.l*4),a2; mvz.b 0x100b14cf,d0`),
+| STROJ alone (beside OCTA303 the site is its o3_chrom, which asks sj_sig): the CHROMATIC key ->
+| pitch, track d2, key index a2 = 0..24 (12 = TRIG 13).  On a STROJ track NOTE is semitones, so the
+| key is too: raw = 52 + idx (TRIG 13 = the NOTE knob's 64 = C2); every other track the stock
+| 5 * idx + 4.  Scratch: d0, d1, a0, a1.
+sj_chrom:
+        movea.l BANK_PTR,%a0
+        mvz.b   PART_IDX,%d0
+        move.l  #PART_SIZE,%d1
+        muls.l  %d1,%d0
+        adda.l  %d0,%a0                 | the Part
+        move.l  %a0,%a1
+        adda.l  #MACH_OFF,%a1
+        mvz.b   (%a1,%d2.l),%d0
+        cmpi.l  #FLEX,%d0
+        bne     .Lch_stock
+        adda.l  #PART_OFF,%a0
+        move.l  %d2,%d0
+        bsr     sj_sig
+        beq     .Lch_stock
+        lea     64-12(%a2),%a2          | semitones: raw = 52 + idx
+        bra     .Lch_out
+.Lch_stock:
+        move.l  %a2,%d0                 | displaced (as plain arithmetic): raw = 5 * idx + 4
+        lsl.l   #2,%d0
+        add.l   %a2,%d0
+        addq.l  #4,%d0
+        move.l  %d0,%a2
+.Lch_out:
+        mvz.b   PART_IDX,%d0            | displaced: the part
+        rts
 
 | ---- the formatters: fmt(buf, value) -> length (stock's contract; scratch d0, d1, a0, a1)
 sj_fmt_note:                            | raw 40..112 = C0..C6 (the voice: MIDI = raw - 28)

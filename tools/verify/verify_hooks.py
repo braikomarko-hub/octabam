@@ -661,7 +661,8 @@ def installed(name):
                  (p + "src_commit", b"\x4e\xf9", "o3_src_commit2"),
                  ("sy_render", b"\x4e\xb9", "ab_render" if head == "ANALOG BD" else "stroj_render"))
         if head == "STROJ":                 # OCTA303 keeps the retrig site and asks STROJ about its tracks
-            chain += (("o3_retrig", b"\x4e\xb9", "sj_latched"),)
+            chain += (("o3_retrig", b"\x4e\xb9", "sj_latched"), ("o3_lfo_name", b"\x4e\xb9", "sj_mdesc"),
+                      ("o3_chrom", b"\x4e\xb9", "sj_sig"))
             check(img[0x4000C634 - BASE_IMG:0x4000C634 - BASE_IMG + 2] == b"\x4e\xf9"
                   and rd(img, 0x4000C636) == sym["o3_retrig"], "0x4000c634: OCTA303's o3_retrig")
         for src, op, dst in chain:

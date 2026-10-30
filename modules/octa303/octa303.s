@@ -1305,6 +1305,15 @@ o3_chrom:
         move.l  (%sp)+,%a0
         tst.l   %d0
         bne     .Lch_303
+        .if     HK_HEAD_STROJ           | beside STROJ this site is ours: its NOTE is semitones too
+        move.l  %a0,-(%sp)
+        adda.l  #PART_OFF,%a0
+        move.l  %d2,%d0
+        jsr     sj_sig                  | (clobbers d1)
+        move.l  (%sp)+,%a0
+        tst.l   %d0
+        bne     .Lch_303
+        .endif
         move.l  %d2,%d0
         lsl.l   #2,%d0
         add.l   %d2,%d0                 | track * 5
@@ -1682,6 +1691,16 @@ o3_lfo_name:
         movea.l %d0,%a2
         jmp     0x4003c058
 .Llf_flex:
+        .if     HK_HEAD_STROJ           | beside STROJ this site is ours: its tracks get its record
+        move.l  (%sp),%d0               | the track (a0 = Part')
+        jsr     sj_sig                  | (clobbers d1)
+        beq     .Llf_flex2
+        jsr     sj_mdesc
+        move.l  (%sp)+,%d1
+        movea.l %d0,%a2
+        jmp     0x4003c058
+.Llf_flex2:
+        .endif
         move.l  (%sp)+,%d1
         moveq   #1,%d0
 .Llf_stock:

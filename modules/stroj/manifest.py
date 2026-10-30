@@ -65,6 +65,11 @@ MODULE = Module(
                "the frame builder's DSP command-byte copy: a START on a sounding STROJ track is "
                "posted as the clean 0x30 (no DSP crossfade of the one continuous stream)",
                kind="jmp", pad_to=8),
+        Detour(0x4003BFF0, H("711041f9400d5f38"), "stroj", "sj_lfo_name",
+               "LFO SETUP's destination names: a STROJ track's PLAYBACK row from the machine's record"),
+        Detour(0x4004FC58, H("45f2ac04" "71b9100b14cf"), "stroj", "sj_chrom",
+               "CHROMATIC key -> pitch: on a STROJ track NOTE is semitones (raw = 52 + key index), every "
+               "other track the stock 5 * index + 4", kind="jsr", pad_to=10),
         Detour(0x40031E74, H("710541f9400d5f386050"), "stroj", "sj_resolve_pb",
                "the page resolver: a STROJ track gets the machine's PLAYBACK record", pad_to=10),
         # ANALOG BD's measured seams (modules/analog-bassdrum/manifest.py), the same sites and bytes

@@ -145,6 +145,53 @@ def main():
     rd, log, d = run("playback", card, image, SELECT + key(0x22))
     shots.append(shot(d, "3_playback"))
 
+    # 3b. LFO SETUP on the STROJ track: its PLAYBACK destinations read as NOTE SPRD INTV FM SUB TONE
+    rd, log, d = run("lfo", card, image, SELECT + key(0x24) + [(0.6, "key 0x2d down"), (0.3, "key 0x24 down"),
+                                                               (0.3, "key 0x24 up"), (0.3, "key 0x2d up")])
+    shots.append(shot(d, "4_lfo_setup"))
+
+    # 3c. CHROMATIC on the STROJ track: TRIG 16 (index 15) is NOTE raw 52 + 15 = 67 = D#2 (77.8 Hz),
+    #     not the stock 5 * 15 + 4 = 79 (D#3, 155.6 Hz); TRIG 1 (index 0) raw 52 = C1 (32.7 Hz)
+    chrom = (SELECT + [(0.6, "key 0x2d down"), (0.3, "key 0x20 down"), (0.1, "key 0x20 up"),
+                       (0.3, "key 0x20 down"), (0.1, "key 0x20 up"), (0.5, "key 0x2d up")] + key(0x31)
+             + [(1.0, "key 0xf down"), (3.0, "key 0xf up"), (1.0, "key 0x0 down"), (3.0, "key 0x0 up")])
+    cbase = OUT / "chrom"
+    rd, log, d = run("chrom", card, image, chrom, ("--audio-out", str(cbase)))
+    shots.append(shot(d, "5_chromatic"))
+    import numpy as np
+    cw = sorted(OUT.glob("chrom*core*.wav"))
+    assert cw, ("CHROMATIC: no audio written", log[-1500:])
+    with wave.open(str(cw[0]), "rb") as f:
+        ch, n = f.getnchannels(), f.getnframes()
+        raw = np.frombuffer(f.readframes(n), dtype=np.uint8).reshape(n, ch, 3)
+    x = raw[..., 0].astype(np.int32) | raw[..., 1].astype(np.int32) << 8 | raw[..., 2].astype(np.int32) << 16
+    x = np.where(x & 0x800000, x - (1 << 24), x).astype(float)
+    c = int(np.argmax(np.abs(x).max(axis=0)))
+    y = x[:, c]
+    on = np.nonzero(np.abs(y) > np.abs(y).max() / 30)[0]
+    assert len(on), "CHROMATIC: the STROJ track is silent"
+    # the two held notes: the first sound, and the sound after the longest silence-free gap past 2 s
+    t0 = on[0]
+    starts = [t0] + [i for a, i in zip(on[:-1], on[1:]) if i - a > 4410]
+    def f0(at):
+        seg = y[at + 2205:at + 2205 + 32768]
+        seg = seg[:len(seg) // 2 * 2]
+        sp = np.abs(np.fft.rfft(seg * np.hanning(len(seg)))); fq = np.fft.rfftfreq(len(seg), 1 / 44100)
+        return fq[np.argmax(sp)]
+    got = [round(f0(a), 1) for a in starts[:2]]
+    print("CHROMATIC: strongest partial of TRIG 16, TRIG 1:", got, "starts", [round(a / 44100, 2) for a in starts[:3]])
+    # the defaults (INTV 5TH, SUB /2 /3): D#2's own partial must be there, and the note must not be
+    # the stock mapping's D#3 with nothing at D#2
+    def level(at, hz):
+        seg = y[at + 2205:at + 2205 + 32768]
+        seg = seg[:len(seg) // 2 * 2]
+        sp = np.abs(np.fft.rfft(seg * np.hanning(len(seg)))); fq = np.fft.rfftfreq(len(seg), 1 / 44100)
+        return sp[(fq > hz * 0.98) & (fq < hz * 1.02)].max() / sp.max()
+    l16 = level(starts[0], 77.78)
+    print(f"CHROMATIC: TRIG 16 at D#2 (77.8 Hz) {20 * np.log10(l16):.1f} dB from the strongest")
+    assert l16 > 0.1, ("TRIG 16 is not D#2", got)
+    print("PASS CHROMATIC: TRIG 16 plays D#2 (NOTE in semitones)")
+
     # 3. select, then another machine
     rd, log, _ = run("unsign", card, image, SELECT + key(0x32) + FUNC_SRC +
                      [e for _ in range(4) for e in key(0x33, 0.25, 0.25)] + key(0x31))

@@ -185,9 +185,10 @@ MACHINE_ROWS = (
 )
 MC_HEADS = ("ANALOG BD", "STROJ")
 MC_TAIL = "OCTA303"
-# A head's own claims at sites OCTA303 keeps beside it (STROJ's retrig hook:
-# OCTA303's o3_retrig, built with HK_HEAD_STROJ, asks sj_latched).
-MC_HEAD_YIELDS = {"ANALOG BD": (), "STROJ": (0x4000C634,)}
+# A head's own claims at sites OCTA303 keeps beside it (STROJ's retrig, LFO-name
+# and CHROMATIC hooks: OCTA303's o3_retrig, o3_lfo_name and o3_chrom, built with
+# HK_HEAD_STROJ, ask sj_latched / sj_sig).
+MC_HEAD_YIELDS = {"ANALOG BD": (), "STROJ": (0x4000C634, 0x4003BFF0, 0x4004FC58)}
 # OCTA303's detours that ANALOG BD's, built flagged, chain into.
 MC_OCTA_DETOURS = (0x400334D8, 0x4003C928, 0x4003D718, 0x4004C36A, 0x4003C980, 0x400786C8,
                    0x400585DC, 0x4005221E, 0x40078886, 0x4007981C, 0x4005A616, 0x4005A850,
