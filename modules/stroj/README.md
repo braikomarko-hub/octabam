@@ -31,6 +31,9 @@ ordinary project. No sample is needed.
 | RYTM | OFF 3:4 4:5 3:5 5:7 | the two sub-octaves swell at these rates against the breath |
 | WAVE | SIN TRI SAW SQR | the plates' wave (band-limited tables, 48 partials) |
 
+LFO SETUP names the PLAYBACK destinations NOTE SPRD INTV FM SUB TONE. CHROMATIC plays NOTE in
+semitones (TRIG 13 = C2, as the knob's middle; raw = 52 + key index, OCTA303's mapping).
+
 A trig starts the track; a trigless trig, a lock or a scene change only changes what the plates
 play: their phases never restart, so a chord moves without a click. AMP, FX1 and FX2 are stock
 after the voice: a long AMP ATK lets the plates in slowly; the Lyra's delay is the track's DELAY
@@ -55,8 +58,9 @@ Not measured on a unit (the LOAD METER's ColdFire share would be the number).
 With OCTA303 in the remix, HOOKS's `machine_rows` bridge makes STROJ the head of a seven-row
 list, in ANALOG BD's place: STROJ row 5, OCTA-303 row 6. STROJ's hooks take every shared site and
 hand each row but 5 to OCTA303's routine for it; OCTA303 keeps the kind table's FLEX entry and calls
-`stroj_render` as its next renderer (`HK_HEAD_STROJ` in its `remix.inc`), and its `o3_retrig`
-asks `sj_latched` about tracks that are not 303s. STROJ and ANALOG BD are never in one remix (both
+`stroj_render` as its next renderer (`HK_HEAD_STROJ` in its `remix.inc`), and its `o3_retrig`,
+`o3_lfo_name` and `o3_chrom` ask STROJ (`sj_latched`, `sj_sig`) about tracks that are not 303s;
+STROJ's own retrig, LFO-name and CHROMATIC detours (used alone) yield to them. STROJ and ANALOG BD are never in one remix (both
 are the head). Remixes: `test/stroj` (STROJ alone), `test/stroj-303` (beside OCTA303).
 
 ## How it works
@@ -83,14 +87,13 @@ are the head). Remixes: `test/stroj` (STROJ alone), `test/stroj-303` (beside OCT
 - ✅ `tools/verify/verify_stroj_port.py` (OT_PROJECT, under the ColdFire port): the list shows STROJ
   on row 5 (OCTA-303 on row 6 beside it), YES signs the track with STROJ's defaults in the Part, its
   shadow and the live lane, SETUP edits land there, UI type 5's record is STROJ's, another machine
-  clears the signature; a signed track with a trig reaches the outputs.
+  clears the signature; LFO SETUP reads `PB NOTE`; CHROMATIC's TRIG 16 / 1 / 13 play D#2 / C1 / C2;
+  a signed track with a trig reaches the outputs with C2, its octave and the /2 /3 sub-octaves.
+  Run on both test remixes (30 Oct 2026).
 - Not run on a unit.
 
 ## Not yet
 
-- LFO SETUP still shows FLEX's destination names on a STROJ track (OCTA303's `o3_lfo_name` hook is
-  OCTA303's own).
-- CHROMATIC writes FLEX's pitch values into NOTE.
 - A track is checked for STROJ at a START (as OCTA303 does): choosing another machine without a
   trig leaves the drone sounding until the next trig.
 - `verify_hooks`'s Unicorn run of the machine rows (`machines()`) covers ANALOG BD as the head only;
