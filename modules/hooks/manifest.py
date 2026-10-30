@@ -176,8 +176,8 @@ CHROMATIC = (
 # ---- machine_rows -----------------------------------------------------------
 # (module key, its row-type routine), the heads first: the head's hooks take
 # every site and hand every row but 5 on to OCTA303's (HK_MACHINE_ROWS).  The
-# head is ANALOG BD or STROJ (modules/stroj), never both: they declare each
-# other a conflict, and the bridge is on only with OCTA303 and one head.
+# head is ANALOG BD or STROJ (modules/stroj), never both: STROJ declares
+# ANALOG BD a conflict, and the bridge is on only with OCTA303 and one head.
 MACHINE_ROWS = (
     ("ANALOG BD", "ab_row_type"),
     ("STROJ", "sj_row_type"),

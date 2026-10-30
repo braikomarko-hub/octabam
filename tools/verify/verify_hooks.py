@@ -66,6 +66,11 @@ def selection():
     check(bridged({RTM, THR}) == ("status_icon",), "REC_TRIG_MUTE + REC THRESHOLD: status_icon only")
     check(bridged({RTM, THR, "MORPH"}) == ("track_key", "status_icon"), "all three: both bridges")
     check(bridged({"ANALOG BD", "OCTA303"}) == ("machine_rows",), "ANALOG BD + OCTA303: machine_rows only")
+    check(bridged({"STROJ", "OCTA303"}) == ("machine_rows",), "STROJ + OCTA303: machine_rows only")
+    check(bridged({"ANALOG BD", "STROJ", "OCTA303"}) == () and bridged({"ANALOG BD", "STROJ"}) == ()
+          and bridged({"STROJ"}) == (), "machine_rows needs OCTA303 and exactly one head")
+    check(DECL["mc_head"]({"ANALOG BD", "OCTA303"}) == "ANALOG BD" and DECL["mc_head"]({"STROJ", "OCTA303"}) == "STROJ"
+          and DECL["mc_head"]({"STROJ"}) is None, "mc_head: the head present beside OCTA303")
     check(DECL["select"](set()) == {"linked": (), "detours": (), "symbol_refs": (), "overrides": (), "pokes": ()},
           "an empty selection: HOOKS has no unit, claim or override")
     check(not registry.hooks_needed(known, {RTM, "MORPH"} - {"MORPH"}) and
@@ -76,7 +81,7 @@ def selection():
         except SystemExit:
             continue
         check(has == want, f"remix {name}: HOOKS {'appended' if want else 'not appended'}")
-    for sel in ((RTM, "MORPH", "STORE"), (RTM, THR), ("ANALOG BD", "OCTA303")):
+    for sel in ((RTM, "MORPH", "STORE"), (RTM, THR), ("ANALOG BD", "OCTA303"), ("STROJ", "OCTA303")):
         bad = ledger.check(m(*sel))
         check(any(p.startswith("hooks:") for p in bad), f"{' + '.join(sel)} without HOOKS is refused")
         check(ledger.check(m(*sel, "HOOKS")) == [], f"{' + '.join(sel)} with HOOKS is clean")
@@ -638,20 +643,28 @@ def installed(name):
               and b"\x4e\xf9" + sym["qz_chrom"].to_bytes(4, "big") in rt[o3:o3 + 0x100],
               "0x4004fc58: jsr o3_chrom, and o3_chrom hands every other track to qz_chrom")
     if "machine_rows" in DECL["bridged"](set(sel)):
-        # ANALOG BD's hooks at every shared site; its flagged not-ours paths
-        # reach OCTA303's routines; the FLEX kind entry is OCTA303's, chaining to ab_render
-        own = {d.site: d.symbol for d in sel["ANALOG BD"].detours}
+        # the head's hooks (ANALOG BD's or STROJ's) at every shared site; its flagged
+        # not-ours paths reach OCTA303's routines; the FLEX kind entry is OCTA303's,
+        # chaining to the head's renderer
+        head = DECL["mc_head"](set(sel))
+        p = {"ANALOG BD": "ab_", "STROJ": "sj_"}[head]
+        own = {d.site: d.symbol for d in sel[head].detours}
         check(all(img[a - BASE_IMG:a - BASE_IMG + 2] in (b"\x4e\xf9", b"\x4e\xb9", b"\x41\xf9", b"\x4b\xf9")
                   and rd(img, a + 2) == sym[own[a]] for a in DECL["MC_OCTA_DETOURS"] if a in own and a != 0x400786C8),
-              "OCTA303's machine sites hold ANALOG BD's hooks")
+              f"OCTA303's machine sites hold {head}'s hooks")
         check(rd(img, DECL["MC_KIND_FLEX"]) == sym["sy_render"], "0x400d6438: OCTA303's sy_render")
-        for src, op, dst in (("ab_machine_name", b"\x4e\xf9", "o3_machine_name"),
-                             ("ab_stock_validate", b"\x4e\xf9", "o3_validate"),
-                             ("ab_tick_hook", b"\x4e\xb9", "o3_publish"),
-                             ("ab_row_type", b"\x4e\xf9", "o3_type"),
-                             ("ab_main_commit", b"\x4e\xf9", "o3_main_commit"),
-                             ("ab_src_commit", b"\x4e\xf9", "o3_src_commit2"),
-                             ("sy_render", b"\x4e\xb9", "ab_render")):
+        chain = ((p + "machine_name", b"\x4e\xf9", "o3_machine_name"),
+                 (p + "stock_validate", b"\x4e\xf9", "o3_validate"),
+                 (p + "tick_hook" if head == "ANALOG BD" else "sj_tick", b"\x4e\xb9", "o3_publish"),
+                 (p + "row_type", b"\x4e\xf9", "o3_type"),
+                 (p + "main_commit", b"\x4e\xf9", "o3_main_commit"),
+                 (p + "src_commit", b"\x4e\xf9", "o3_src_commit2"),
+                 ("sy_render", b"\x4e\xb9", "ab_render" if head == "ANALOG BD" else "stroj_render"))
+        if head == "STROJ":                 # OCTA303 keeps the retrig site and asks STROJ about its tracks
+            chain += (("o3_retrig", b"\x4e\xb9", "sj_latched"),)
+            check(img[0x4000C634 - BASE_IMG:0x4000C634 - BASE_IMG + 2] == b"\x4e\xf9"
+                  and rd(img, 0x4000C636) == sym["o3_retrig"], "0x4000c634: OCTA303's o3_retrig")
+        for src, op, dst in chain:
             at = sym[src] - base
             check(op + sym[dst].to_bytes(4, "big") in rt[at:at + 0x200], f"{src} reaches {dst}")
     stubs = {"status_icon": ("hk_status_icon", 0), "frame_tail": ("hk_frame_tail", 0),

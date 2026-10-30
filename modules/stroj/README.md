@@ -91,3 +91,7 @@ are the head). Remixes: `test/stroj` (STROJ alone), `test/stroj-303` (beside OCT
 - LFO SETUP still shows FLEX's destination names on a STROJ track (OCTA303's `o3_lfo_name` hook is
   OCTA303's own).
 - CHROMATIC writes FLEX's pitch values into NOTE.
+- A track is checked for STROJ at a START (as OCTA303 does): choosing another machine without a
+  trig leaves the drone sounding until the next trig.
+- `verify_hooks`'s Unicorn run of the machine rows (`machines()`) covers ANALOG BD as the head only;
+  STROJ as the head is covered in the image (`installed`) and under the port (`verify_stroj_port`).
