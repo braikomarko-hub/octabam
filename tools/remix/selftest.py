@@ -1068,7 +1068,8 @@ def main():
              "atomizer": (),  # all 14 stock effects stay; ATOMIZER is loaded on demand into T8's FX2 slot
              # DISTORX on SPATIALIZER's id, dEVILish on PHASER's, dB666 on EQUALIZER's; their DSP words come
              # from the others the remix does not list; ATOMIZER is loaded on demand (no words)
-             "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "CHORUS", "PLATE REV", "SPRING REV"),
+             # FET76 on a new id; FLANGER given up to join the two runs (its 289 words)
+             "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS", "PLATE REV", "SPRING REV"),
              "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
              "ext-probe": ("EQUALIZER",),   # EXTPROBE takes EQUALIZER's id
              "stock-meter-a": ("PHASER",), "stock-meter-b": ("SPATIALIZER",),   # LOAD METER's DSP half in the given-up effect's words
@@ -1082,6 +1083,7 @@ def main():
              "lofi2": ("PLATE REV", "SPRING REV"),   # LOFI2's 1,372 words with its table; PLATE alone is 594
              "bbd": ("PLATE REV", "SPRING REV"),   # BBD's 1,112 words from PLATE's start, clear of the SPRING words DARK calls
              "distorx": ("SPATIALIZER", "CHORUS", "PLATE REV", "SPRING REV"),   # DISTORX on SPATIALIZER's id; its 1,586 words in one run; DARK REV stays
+             "fet76": ("SPATIALIZER", "CHORUS", "PLATE REV", "SPRING REV"),   # FET76 on a new id, beside 10 stock effects
              "shatter": ("PLATE REV",),   # SHATTER runs in its words; the other 13 stay
              "stuttr": ("PLATE REV",),   # STUTTR runs in its words; the other 13 stay
              "db666": ("PLATE REV",),   # dB666 on its own id runs in its words; the other 13 stay
