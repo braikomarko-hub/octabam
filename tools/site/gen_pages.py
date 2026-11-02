@@ -99,6 +99,7 @@ def _label(m) -> str:
         "devilish": "dEVILish",
         "direct-jump-kyoti": "Direct jump (Kyoti)",
         "distorx": "DisTorX",
+        "fet76": "FET76",
         "lofi-amf-fix": "Lo-Fi AMF fix",
         "octa303": "OCTA-303",
         "plocks-p2": "Page 2 parameter locks",

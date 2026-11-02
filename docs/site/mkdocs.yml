@@ -39,6 +39,7 @@ nav:
       - Delay Server: reference/modules/busdelay.md
       - dEVILish: reference/modules/devilish.md
       - DisTorX: reference/modules/distorx.md
+      - FET76: reference/modules/fet76.md
       - Euclid: reference/modules/euclid.md
       - Gate Verb: reference/modules/gateverb.md
       - LOFI2: reference/modules/lofi2.md
