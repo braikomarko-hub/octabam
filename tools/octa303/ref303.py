@@ -104,7 +104,7 @@ def kfb(i, kmul, ud):
 
 def clset(st, i):
     """v7.3: the ladder clip's operating point at ladder index i (0 = the plain soft clip).  ACID only (SWP 2):
-    dEVILish's WHST / SELF oscillate on purpose and the clip sets their level, v7.2 as it was."""
+    dEVILish's WHST / SELF oscillate on purpose and the clip sets their level, as in v7.1."""
     j = i - T.CL_I0
     if j > 0 and st.swp == 2: st.clg, st.cli, st.cll = T.CL_G[j], T.CL_INV[j], T.CL_LIM[j]
     else: st.clg = 0
@@ -217,9 +217,9 @@ def sample(st):
     o = clamp(o, -T.VCA_LIM, T.VCA_LIM)              # v6.9: the VCA multiply never wraps
     st.amp += st.ampstep
     if st.amp < 0: st.amp = 0
-    o = fm(o, st.amp >> 1, 7, 6, 'amp')              # v7.3: four times the room (#1011; v6.9-v7.2: amp, 6, 8)
+    o = fm(o, st.amp >> 1, 7, 6, 'amp')              # v7.3: four times the room (#1011; v6.9-v7.1: amp, 6, 8)
     if st.muff:                                      # MUFF: the bass passes, the rest is clipped
-        st.mlo += fm(o - st.mlo, T.DF_MUFF_LP, 4, 11, 'mlo')
+        st.mlo += fm(clamp(o - st.mlo, -T.DF_MUFF_DLIM, T.DF_MUFF_DLIM), T.DF_MUFF_LP, 4, 11, 'mlo')   # v7.3: fits 32 bits
         h = o - st.mlo
         if st.muff == 1:
             h = clamp(h, -1048576, 1048576)                      # v6.7: no overflow (softclip saturates far below)

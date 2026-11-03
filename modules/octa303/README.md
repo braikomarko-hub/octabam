@@ -48,7 +48,7 @@ The older form still works and is unchanged: a FLEX track whose sample is named 
 |---|---|---|---|
 | 0 | TUNE | C1..C5 (raw 40..88) | semitones, shown as note names; C3 = 0 |
 | 1 | CUT | 0..127 | cutoff, the 303's CUTOFF FREQ law |
-| 2 | RES | 0..127 | resonance (never self-oscillates without Devil Fish SWP; v7.3: no fs/4 whistle at the top, #1011) |
+| 2 | RES | 0..127 | resonance (never self-oscillates without Devil Fish SWP; v7.3, ACID: no fs/4 whistle at the top, #1011) |
 | 3 | ENV | 0..127 | ENV MOD (audio taper, as the Roland service notes) |
 | 4 | DEC | 0..127 | DECAY, ~0.13..2.4 s (✅ recovered from the Din Sync set) |
 | 5 | ACC | 0..127 | the ACCENT knob, applied on the notes that carry an ACC lock |
@@ -174,7 +174,8 @@ defects; the three that are calibration choices stay as fitted until they can be
   multiply** (found while checking #1011; CUT 80 RES 0 ENV 127 ACC 127 ACCV 127: full-scale jumps, a
   crack, in v7.0–v7.1). `VCA_LIM` 3 878 080 → 10 154 880: on a grid of CUT 0/80/127 × RES 0/10/127 ×
   ENV 0/127 × ACC 0/127 at ACCV 64 and 127, DRIV 0 and 127, saw and square, nothing clips and the
-  loudest peak is −4.1 dB under it; only dEVILish's self-oscillating modes or OVDR far up can reach it.
+  loudest peak is −4.1 dB under it (OVDR 127: about half of it). MUFF's lowpass input is clamped so its
+  multiply still fits 32 bits at the wider VCA (independent review: not reached in the model).
 - 🟡 **Not changed, open** (2, 4, 5): they are the fit's choices, and moving one moves the others (Zac:
   the two high-passes trade against each other on single notes). A Python-only experiment, the
   circuit's high-pass layout (VCO → VCF 0.7 Hz, one 92 Hz high-pass shared by the loop and the output,

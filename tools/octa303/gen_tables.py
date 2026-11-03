@@ -16,7 +16,7 @@ SRC = os.path.normpath(os.path.join(HERE, '..', '..', 'modules', 'octa303', 'oct
 CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', 'GATE_K', 'GATE_HOLD_INF', 'GATE_IDLE', 'GATE_TPS0', 'ONE30', 'S_MAX', 'DIST_GAIN', 'DIST_BIAS',
           'TB_MEG_ATT', 'TB_ACC_VCA', 'TB_DIS', 'TB_SWEEP_ST', 'TB_ACCVCA_GAIN',
           'DF_FM_MUL', 'DF_GIN_Q15', 'DF_SLOW_G', 'DF_FAST_G', 'DF_DIS_SLOW', 'DF_ENVX_MUL',
-          'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0']
+          'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM']
 
 TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R]),
           ('O3_INC_TAB', T.INC_TAB), ('O3_TB_MEG', T.TB_MEG), ('O3_TB_ACH', T.TB_ACH),

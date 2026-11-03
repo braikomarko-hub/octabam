@@ -244,6 +244,7 @@
         .set    SMOOTH_K,        9971
         .set    FINE_Q8,         2
         .set    CL_I0,           383
+        .set    DF_MUFF_DLIM,    49581136
         .set    NHZ,             446
 | <<< GENERATED CONSTANTS
 
@@ -726,13 +727,14 @@ sy_render:
 .Lamp:
         move.l  %d1,S_AMP(%a3)
         asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
-        asr.l   #7,%d6                  | (#1011; v6.9-v7.2: FM68 with amp)
+        asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
         muls.l  %d1,%d6
         asr.l   #6,%d6
         move.l  S_MUFF(%a3),%d0         | MUFF: the bass passes, the rest is clipped
         beq     .Lmu9
         move.l  %d6,%d1
         sub.l   S_MLO(%a3),%d1
+        CLAMP   %d1,-DF_MUFF_DLIM,DF_MUFF_DLIM  | v7.3: the product fits 32 bits at the wider VCA
         move.l  #DF_MUFF_LP,%d2
         FM411   %d1,%d2
         add.l   S_MLO(%a3),%d1
