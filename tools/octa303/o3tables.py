@@ -263,8 +263,33 @@ OSAT_LIM = 4 * ((2 ** 31 - 1) // OSAT_IN) - 4                                   
 # v6.9: the VCA's multiply (o >> 6) * amp must fit 32 bits; the loudest amp is the full VCA envelope plus the
 # accent path at ACC 127.  The ladder's output is held under VCA_LIM before it (reached only by dEVILish's
 # self-oscillating modes or OVDR far up; the 303 alone peaks ~0.9 of it): a clip there, never a wrap.
-AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * TB_ACCVCA_GAIN) >> 15) + 64
-VCA_LIM = (((2 ** 31 - 1) // AMP_MAX) << 6) - 64
+# v7.3: with SETUP's ACCV (v7.0) the accent path's gain goes to (TB_ACCVCA_GAIN * 127) >> 6, twice the 303's:
+# v7.0-v7.2 sized AMP_MAX with the 303's gain only, so ACCV > 64 on an open accented note could wrap the VCA
+# multiply (found while checking #1011: CUT 80 RES 0 ENV 127 ACC 127 ACCV 127).
+AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * ((TB_ACCVCA_GAIN * 127) >> 6)) >> 15) + 64
+# v7.3 (Zac Kyoti, sambanks/octabam#1011): the plain 303 did reach the old limit (RES near 0 with the filter open
+# or accented: +3.4 dB over it, hard-clipped).  The VCA multiply is now (o >> 7) * (amp >> 1) >> 6: one bit off
+# the ladder's output and one off the VCA level (Q14, ~-96 dB steps), four times the room; with AMP_MAX now
+# counting ACCV, the 303 alone peaks ~-4 dB under it at any ACCV; only dEVILish's modes still reach it.
+VCA_LIM = (((2 ** 31 - 1) // ((AMP_MAX >> 1) + 1)) << 7) - 128
+# ---------------------------------------------------------------- v7.3: the ladder's soft clip at the top
+# Zac Kyoti, sambanks/octabam#1011: with CUT, RES and ENV high the resonance sweeps up through ~11 kHz, the
+# cubic soft clip's 3rd harmonic (3 fs/4) folds back onto fs/4 exactly and the loop locks to a period-4
+# cycle -- a fixed 11.025 kHz whistle for the first 25-45 ms of every note (measured in ref303: -2.7 dB of
+# the note at CUT 127 RES 127 ENV 120).  The clip now works at a lower operating point near the top of the
+# table: y0 = softclip(u * g) / g, g = 1 up to ladder index CL_I0 (~5 kHz; v7.2 sample for sample below it)
+# falling linearly to CL_GMIN at CL_I1 (~10 kHz) and above.  Small signals are unchanged (the clip's slope
+# is 1 at 0, so the resonance law, KO/KD, is the same); only the loop's saturation eases where it folds.
+# ACID mode only: dEVILish's WHST / SELF oscillate on purpose, the clip sets their level, and easing it there
+# made them up to +4.6 dB louder at the top without curing their own fs/4 lock (left as it was, see the README).
+CL_I0, CL_I1, CL_GMIN = 383, 431, 0.5
+def _clg(i):
+    if i <= CL_I0: return 4096
+    if i >= CL_I1: return int(round(CL_GMIN * 4096))
+    return int(round(4096 * (1.0 + (CL_GMIN - 1.0) * (i - CL_I0) / (CL_I1 - CL_I0))))
+CL_G = [_clg(i) for i in range(CL_I0, S_MAX // 64 + 1)]            # Q12, by ladder index - CL_I0
+CL_INV = [(4096 * 4096 + g // 2) // g for g in CL_G]               # Q12, 1/g
+CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's clamp (+-sqrt2) before the * g
 # <<< CAL v6.7
 
 

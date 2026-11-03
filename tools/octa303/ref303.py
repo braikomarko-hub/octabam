@@ -1,4 +1,4 @@
-"""OCTA303 v6.9 (dEVILish) golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
+"""OCTA303 v7.3 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
 
 One engine (TB-303).  Every helper is one assembly idiom.  sim/test_octa303.py runs the assembly
 source in cfsim and requires its output to be BIT-IDENTICAL to this model.
@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs'
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -101,6 +101,19 @@ def kfb(i, kmul, ud):
     k = (((LK[i] * kmul) >> 15) * T.KF[i]) >> 12
     k -= chk(ud * T.KD[i], 'ud') >> 10
     return k if k > 0 else 0
+
+def clset(st, i):
+    """v7.3: the ladder clip's operating point at ladder index i (0 = the plain soft clip).  ACID only (SWP 2):
+    dEVILish's WHST / SELF oscillate on purpose and the clip sets their level, v7.2 as it was."""
+    j = i - T.CL_I0
+    if j > 0 and st.swp == 2: st.clg, st.cli, st.cll = T.CL_G[j], T.CL_INV[j], T.CL_LIM[j]
+    else: st.clg = 0
+
+def ladder_clip(st, u):
+    """v7.3: softclip(u * g) / g at the top of the table, softclip(u) below it."""
+    if not st.clg: return softclip(u)
+    u = clamp(u, -st.cll, st.cll)
+    return fm(softclip(fm(u, st.clg, 4, 8, 'clg')), st.cli, 4, 8, 'cli')
 
 def ctrl(st):
     st.pcur += mulq15((st.ptgt << 8) - st.pcur, st.slide)              # SLID
@@ -151,6 +164,7 @@ def ctrl(st):
     i = s >> 6
     st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
     st.k = kfb(i, st.kmul, st.ud)
+    clset(st, i)                                                       # v7.3
     g0 = T.TB_GCOMP[0]
     st.gcomp = ((g0 + (((T.TB_GCOMP[res] - g0) * st.ocomp) >> 12)) * st.ogain) >> 12   # OVDR comp
     st.gcomp = (st.gcomp * T.LG[i]) >> 12                             # v6.7: LG, the level by frequency
@@ -168,6 +182,7 @@ def sample(st):
         i = s >> 6
         st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
         st.k = kfb(i, st.kmul, st.ud)
+        clset(st, i)                                 # v7.3
     inc = st.inc
     ph = st.phase = (st.phase + inc) & M32
     if st.wave == 0:
@@ -193,7 +208,7 @@ def sample(st):
     y4 = st.y4
     st.fb += fm(y4 - st.fb, T.TB_FBHP, 4, 11, 'fbhp')
     fb = clamp(y4 - st.fb, -(1 << 23), 1 << 23)
-    y0 = softclip(x - chk((fb >> 8) * st.k, 'kfb'))
+    y0 = ladder_clip(st, x - chk((fb >> 8) * st.k, 'kfb'))   # v7.3: eased at the top (#1011)
     st.y1 += fm(y0 - st.y1 + st.y2, st.c1, 7, 8, 'l1')
     st.y2 += fm(st.y1 - 2 * st.y2 + st.y3, st.b, 7, 8, 'l2')
     st.y3 += fm(st.y2 - 2 * st.y3 + y4, st.b, 7, 8, 'l3')
@@ -202,7 +217,7 @@ def sample(st):
     o = clamp(o, -T.VCA_LIM, T.VCA_LIM)              # v6.9: the VCA multiply never wraps
     st.amp += st.ampstep
     if st.amp < 0: st.amp = 0
-    o = fm(o, st.amp, 6, 8, 'amp')
+    o = fm(o, st.amp >> 1, 7, 6, 'amp')              # v7.3: four times the room (#1011; v6.9-v7.2: amp, 6, 8)
     if st.muff:                                      # MUFF: the bass passes, the rest is clipped
         st.mlo += fm(o - st.mlo, T.DF_MUFF_LP, 4, 11, 'mlo')
         h = o - st.mlo

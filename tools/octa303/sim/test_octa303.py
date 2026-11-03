@@ -147,6 +147,27 @@ for k in range(8):
     sc += [(W(k, 90, 100, 80, 30, 127 * (k & 1)), 0, fn, True)] + [(W(k + 3, 90, 100, 80, 30, 0), None, fn, True)] * 30
 A, B, mm = run(sc); check('bit_exact_carrier_switch', mm is None)
 
+# v7.3 (#1011): the ladder clip eased at the top of the table (ACID only), with and without dEVILish's
+# per-sample FM; WHST keeps the plain clip; ACCV 127 on open accented notes through the wider VCA.
+_top = []; _seen = {'clg': 0}
+_DFM = (25, 90, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0)                  # FM up, ACID
+_DWH = (25, 0, 0, 64, 0, 50, 0, 1, 1, 0, 1, 1)                   # WHST, CUTX, ENVX
+for df, su, v in ((None, (0, 0, 64, 0, 0, 64), (127, 127, 120, 64, 0)), (None, (0, 0, 64, 0, 0, 64), (127, 127, 104, 64, 127)),
+                  (_DFM, None, (112, 120, 127, 64, 90)), (_DWH, None, (127, 127, 127, 64, 127)),
+                  (None, (0, 0, 64, 0, 0, 127), (80, 0, 127, 64, 127)), (None, (1, 0, 64, 0, 127, 127), (127, 0, 127, 64, 127))):
+    n = 90 if FULL else 45
+    fn = 'KICK.WAV' if su else 'TB303.WAV'                       # the machine (SETUP), or a TB303 sample + dEVILish
+    fr = lambda tune, at: (W(tune, *v), at, fn, True, df, 1, None, df, su)        # rdf: the 303 hears dEVILish too
+    sc = [fr(0, 0)] + [fr(0, None)] * n + [fr(-12, 3)] + [fr(-12, None)] * n
+    _orig = R.clset
+    def _spy(st, i, _o=_orig):
+        _o(st, i); _seen['clg'] += st.clg > 0
+    R.clset = _spy
+    A, B, mm = run(sc); _top.append(mm is None)
+    R.clset = _orig
+check('bit_exact_v73_top_clip_accv', all(_top) and _seen['clg'] > 0,
+      '%d/%d, clip eased in %d control steps' % (sum(_top), len(_top), _seen['clg']))
+
 # ---------------------------------------------------------------- integration
 rig = Rig(); feed = sample_feed(1)
 rig.path(2, '/AUDIO/KICK.WAV'); rig.voice(1, True, 2); rig.seen.clear()

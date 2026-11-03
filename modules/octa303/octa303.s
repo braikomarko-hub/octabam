@@ -191,6 +191,9 @@
         .set    S_FSEEN,356                     | v7.0: a move seen (FCNT is a whole interval)
         .set    S_GELF,360                      | v7.0: frames since the START
         .set    S_MACH,364                      | v7.0: the track is the TB-303 machine (signed FLEX)
+        .set    S_CLG,368                       | v7.3: the ladder clip's gain g (Q12), 0 = the plain soft clip
+        .set    S_CLI,372                       | v7.3: 1/g (Q12)
+        .set    S_CLL,376                       | v7.3: the clamp before * g (+-sqrt2 / g)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -237,9 +240,10 @@
         .set    OSAT_IN,         535
         .set    OSAT_OUT,        62733
         .set    OSAT_LIM,        16055948
-        .set    VCA_LIM,         3878080
+        .set    VCA_LIM,         10154880
         .set    SMOOTH_K,        9971
         .set    FINE_Q8,         2
+        .set    CL_I0,           383
         .set    NHZ,             446
 | <<< GENERATED CONSTANTS
 
@@ -333,6 +337,29 @@
         muls.l  K_C6(%a5),%d1
         asr.l   #8,%d1
         sub.l   %d1,\reg
+        .endm
+| ---- v7.3: the ladder clip's operating point at the ladder index in d0 (clobbered); d1, a0 scratch.
+|      ACID (SWP 2) only.
+        .macro  CLSET
+        moveq   #2,%d1                  | ACID only (SWP 2): WHST / SELF keep the plain clip
+        cmp.l   S_SWP(%a3),%d1
+        bne     .Lcs0\@
+        sub.l   #CL_I0,%d0
+        bgt     .Lcs1\@
+.Lcs0\@:
+        clr.l   S_CLG(%a3)              | at or below CL_I0: the plain soft clip
+        bra     .Lcs9\@
+.Lcs1\@:
+        lea     O3_CL_G,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLG(%a3)
+        lea     O3_CL_INV,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLI(%a3)
+        lea     O3_CL_LIM,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLL(%a3)
+.Lcs9\@:
         .endm
         .macro  KB off, areg            | d0 = the knob byte at off(areg), clamped 0..127
         moveq   #0,%d0
@@ -541,6 +568,7 @@ sy_render:
         moveq   #0,%d1
 .Lfm_k:
         move.l  %d1,S_K(%a3)
+        CLSET                 | v7.3
 .Lnofm:
         move.l  S_INC(%a3),%d5          | VCO
         move.l  S_PHASE(%a3),%d4
@@ -635,7 +663,29 @@ sy_render:
         asr.l   #8,%d1
         muls.l  S_K(%a3),%d1
         sub.l   %d1,%d6
+        tst.l   S_CLG(%a3)              | v7.3 (#1011): at the top of the table softclip(u * g) / g,
+        beq     .Llcp                   | so its 3rd harmonic cannot lock the loop at fs/4
+        move.l  S_CLL(%a3),%d2
+        cmp.l   %d2,%d6
+        ble     .Llc1
+        move.l  %d2,%d6
+.Llc1:
+        neg.l   %d2
+        cmp.l   %d2,%d6
+        bge     .Llc2
+        move.l  %d2,%d6
+.Llc2:
+        asr.l   #4,%d6
+        muls.l  S_CLG(%a3),%d6
+        asr.l   #8,%d6
         SOFTCLIP %d6
+        asr.l   #4,%d6
+        muls.l  S_CLI(%a3),%d6
+        asr.l   #8,%d6
+        bra     .Llc9
+.Llcp:
+        SOFTCLIP %d6
+.Llc9:
         move.l  S_Y1(%a3),%d1           | diode ladder
         move.l  S_Y2(%a3),%d2
         move.l  S_Y3(%a3),%d3
@@ -675,7 +725,10 @@ sy_render:
         moveq   #0,%d1
 .Lamp:
         move.l  %d1,S_AMP(%a3)
-        FM68    %d6,%d1
+        asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
+        asr.l   #7,%d6                  | (#1011; v6.9-v7.2: FM68 with amp)
+        muls.l  %d1,%d6
+        asr.l   #6,%d6
         move.l  S_MUFF(%a3),%d0         | MUFF: the bass passes, the rest is clipped
         beq     .Lmu9
         move.l  %d6,%d1
@@ -2910,6 +2963,8 @@ o3_ctrl:
         moveq   #0,%d0
 .Lc_kp:
         move.l  %d0,S_K(%a3)
+        move.l  %d3,%d0                 | v7.3: the ladder clip's operating point
+        CLSET
         lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's
         move.l  (%a0),%d1               | factor (overdrive swamps the resonance)
         move.l  (%a0,%d5.l*4),%d0
@@ -3969,6 +4024,33 @@ O3_DRV_LIM:
         .long   2941752, 2894176, 2847172, 2801668, 2755828, 2711464, 2667676, 2624476
         .long   2581880, 2539892, 2499248, 2458476, 2419012, 2379476, 2341212, 2302924
         .long   2265868, 2229408, 2192984, 2157728, 2122536, 2088476, 2054512, 2021156
+O3_CL_G:
+        .long   4096, 4053, 4011, 3968, 3925, 3883, 3840, 3797
+        .long   3755, 3712, 3669, 3627, 3584, 3541, 3499, 3456
+        .long   3413, 3371, 3328, 3285, 3243, 3200, 3157, 3115
+        .long   3072, 3029, 2987, 2944, 2901, 2859, 2816, 2773
+        .long   2731, 2688, 2645, 2603, 2560, 2517, 2475, 2432
+        .long   2389, 2347, 2304, 2261, 2219, 2176, 2133, 2091
+        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048
+        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048
+O3_CL_INV:
+        .long   4096, 4139, 4183, 4228, 4274, 4321, 4369, 4419
+        .long   4468, 4520, 4573, 4626, 4681, 4738, 4795, 4855
+        .long   4916, 4977, 5041, 5107, 5173, 5243, 5314, 5386
+        .long   5461, 5539, 5617, 5699, 5783, 5868, 5958, 6050
+        .long   6143, 6242, 6343, 6445, 6554, 6666, 6779, 6899
+        .long   7023, 7148, 7282, 7420, 7561, 7710, 7866, 8024
+        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192
+        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192
+O3_CL_LIM:
+        .long   1482910, 1498642, 1514335, 1530745, 1547515, 1564254, 1581770, 1599683
+        .long   1617576, 1636314, 1655491, 1674662, 1694754, 1715334, 1735924, 1757522
+        .long   1779665, 1801839, 1825120, 1849010, 1872956, 1898124, 1923978, 1949919
+        .long   1977213, 2005282, 2033478, 2063179, 2093760, 2124518, 2156960, 2190407
+        .long   2224093, 2259672, 2296408, 2333461, 2372656, 2413190, 2454141, 2497532
+        .long   2542486, 2587984, 2636284, 2686421, 2737268, 2791360, 2847632, 2904829
+        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
+        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
 | <<< GENERATED TABLES
 
 | ---- the page clone's fields (poly.s po_pgdesc's {offset.w, length.w, source.l} list;

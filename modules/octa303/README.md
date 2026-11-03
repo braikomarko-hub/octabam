@@ -48,7 +48,7 @@ The older form still works and is unchanged: a FLEX track whose sample is named 
 |---|---|---|---|
 | 0 | TUNE | C1..C5 (raw 40..88) | semitones, shown as note names; C3 = 0 |
 | 1 | CUT | 0..127 | cutoff, the 303's CUTOFF FREQ law |
-| 2 | RES | 0..127 | resonance (never self-oscillates without Devil Fish SWP) |
+| 2 | RES | 0..127 | resonance (never self-oscillates without Devil Fish SWP; v7.3: no fs/4 whistle at the top, #1011) |
 | 3 | ENV | 0..127 | ENV MOD (audio taper, as the Roland service notes) |
 | 4 | DEC | 0..127 | DECAY, ~0.13..2.4 s (✅ recovered from the Din Sync set) |
 | 5 | ACC | 0..127 | the ACCENT knob, applied on the notes that carry an ACC lock |
@@ -117,7 +117,7 @@ Accent (v6.8, Din Sync set A5, peak / energy in the first 4–40 ms, relative to
 
 ### The code (✅)
 
-- `tools/octa303/sim/test_octa303.py`: 108/108 with `modules/devilish` (v7.1; 92/92 before, 89/89 without it:
+- `tools/octa303/sim/test_octa303.py`: 109/109 with `modules/devilish` (v7.3; v7.1: 108/108; 92/92 before, 89/89 without it:
   three checks read dEVILish's manifest, one checks OCTA303's own `DEVIL_ID`). `octa303.s` executed
   from its source text in a ColdFire simulator equals the Python model `ref303.py` sample for sample:
   both carriers, accents, slides, split frames, extreme knobs, Devil Fish on FX1/FX2 (read from the DSP
@@ -139,6 +139,49 @@ but driving one engine call per case through the sequencer there would take hour
 simulator checks in seconds. Not done: `cfsim.py`'s output has not been compared bit for bit with
 the same calls under `ot_emu`; the port gate and the unit are what catch a simulator that reads an
 instruction differently from the chip.
+
+### v7.3 (3 Nov 2026): Zac Kyoti's report, sambanks/octabam#1011
+
+Zac Kyoti studied `ref303.py` against v7.1 and sent five findings with a repro script. Every number
+in his report was reproduced exactly on `828314dc` before anything changed. v7.3 fixes the two that are
+defects; the three that are calibration choices stay as fitted until they can be refitted on Din Sync.
+
+| # | finding | v7.3 |
+|---|---|---|
+| 1 | CUT, RES and ENV high: an 11.025 kHz (fs/4) tone locks for the first 25–45 ms of every note (up to −1.7 dB of the signal) | **fixed** |
+| 3 | `VCA_LIM` hard-clips plain notes (RES ≈ 0, open or accented: +3.4 dB over it) | **fixed** |
+| 2 | the coupling high-passes (149 Hz in, 45 Hz in the loop) are not the circuit's (flat in, one ~92 Hz shared) | open: needs a refit |
+| 4 | ENV MOD depth grows with RES (+0.36 to +0.80 octave) | open: needs a refit |
+| 5 | accent peaks +1 to +4.5 dB over the 303 at 50–100 % | open: needs a refit |
+
+- ✅ **The fs/4 lock** (simulator). As Zac found, the cubic soft clip in the resonance loop: as the
+  resonance sweeps up through ~11 kHz its 3rd harmonic (3 fs/4) folds onto fs/4 and the loop locks to a
+  period-4 cycle. v7.3 runs the clip at a lower operating point near the top of the table only:
+  `y0 = softclip(u·g)/g`, g = 1 up to ladder index 383 (~5 kHz; the engine is unchanged below it), falling
+  linearly to 0.5 at index 431 (~10 kHz) and above. The clip's slope at 0 is 1, so the small-signal
+  resonance law (KO / KD) is the same. ACID mode only: dEVILish's WHST / SELF oscillate on purpose and the
+  clip sets their level (eased there, they were up to +4.6 dB louder at the top), so they are unchanged.
+  Share of the first 46 ms at fs/4, `octa303_repro.py` cases: −2.7 → **−24.2**, −5.1 → **−29.1**,
+  −6.6 → **−27.7**, −3.7 → **−11.0** dB (the clip bypassed altogether, Zac's diagnosis: −20.8, −30.6,
+  −17.9, −14.1); what is left at fs/4 is the resonance passing through it: the strongest line above
+  5 kHz now follows the linear ladder's sweep (15 → 7 kHz) in every 6 ms window instead of sitting at
+  11 025 Hz for three of them. Worst case in his grid (RES 110–127, ENV 120–127): −24.9 → −39.8 dB. On a
+  96-note grid (CUT 20/64/100/127 × RES 0/64/110/127 × ENV 0/64/120 × ACC 0/127), 65 notes are within
+  −60 dB of v7.1 (the VCA's extra bit); the notes that change are the high CUT + RES + ENV ones, in their
+  first ~45 ms (level ±2.3 dB there), the rest of the note within 0.1 dB and the same brightness.
+- ✅ **The VCA's room** (simulator). The multiply is now `(o >> 7) · (amp >> 1) >> 6` (was `(o >> 6) · amp >> 8`),
+  and `AMP_MAX` counts SETUP's ACCV: before, ACCV above 64 on an open accented note **wrapped the 32-bit
+  multiply** (found while checking #1011; CUT 80 RES 0 ENV 127 ACC 127 ACCV 127: full-scale jumps, a
+  crack, in v7.0–v7.1). `VCA_LIM` 3 878 080 → 10 154 880: on a grid of CUT 0/80/127 × RES 0/10/127 ×
+  ENV 0/127 × ACC 0/127 at ACCV 64 and 127, DRIV 0 and 127, saw and square, nothing clips and the
+  loudest peak is −4.1 dB under it; only dEVILish's self-oscillating modes or OVDR far up can reach it.
+- 🟡 **Not changed, open** (2, 4, 5): they are the fit's choices, and moving one moves the others (Zac:
+  the two high-passes trade against each other on single notes). A Python-only experiment, the
+  circuit's high-pass layout (VCO → VCF 0.7 Hz, one 92 Hz high-pass shared by the loop and the output,
+  KO / KD re-solved) plus an ENV MOD depth that ignores RES, was rendered for the author to listen to;
+  it is not in the engine. A refit on Din Sync's set with the circuit topology is the next step.
+- Not on the unit yet. `test_octa303` gains `bit_exact_v73_top_clip_accv` (the eased clip with and
+  without dEVILish's per-sample FM, WHST's plain clip, ACCV 127 through the wider VCA).
 
 ### v7.1 (23 Oct 2026): the sites, read from the user's 1.40C
 
@@ -209,6 +252,10 @@ instruction differently from the chip.
   row, and `o3_type` gives the row from the signature (🟡 from the code; not run across two images).
 - The first 15–40 ms of an accented note are still ~1 dB further from the 303 than the 303 is from
   itself.
+- #1011, points 2, 4 and 5 (v7.3 above): the high-pass layout, ENV MOD by RES, the accent's peak and
+  its discharge by RES; a refit with the circuit topology.
+- dEVILish's WHST / SELF still lock to fs/4 when their oscillation is swept to the top (v7.3 leaves
+  them as they were); 2× oversampling of the ladder above ~fs/8 would cure both modes.
 
 ## Credits and sources
 
