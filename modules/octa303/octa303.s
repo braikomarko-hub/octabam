@@ -1153,9 +1153,17 @@ o3_gate:
         sub.l   %d0,%d3
         mvz.b   TICKB,%d4               | k
         moveq   #0,%d5                  | d5 bit 0 = the sequencer moved (a tick) since the last frame,
-        move.l  S_IDLE(%a3),%d0         | bit 1 = v7.4: it had been standing still (a restart)
+        move.l  S_FPT(%a3),%d0          | bit 1 = v7.4: it had been standing still (a restart): no move
+        beq     .Lg_r0                  | for 2 * fpt + 2 frames (two ticks), or GATE_IDLE before a
+        add.l   %d0,%d0                 | tick was measured
+        addq.l  #2,%d0
         cmp.l   #GATE_IDLE,%d0
-        blt     .Lg_rs
+        ble     .Lg_r1
+.Lg_r0:
+        move.l  #GATE_IDLE,%d0
+.Lg_r1:
+        cmp.l   S_IDLE(%a3),%d0
+        bgt     .Lg_rs
         moveq   #2,%d5
 .Lg_rs:
         cmp.l   S_LSTEP(%a3),%d3

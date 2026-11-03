@@ -40,7 +40,10 @@ GATE_TPS0 = 6                           # ticks a step before one has been measu
 # v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent): after a stop the sequencer's first
 # moves (the position reset, the first tick) can come a frame apart; they measured "1 frame a tick" and the gate
 # shut the first note ~1.5 ms after it began.  The frames-a-tick measure now skips the first GATE_FSKIP intervals
-# after a stop (it keeps the last tempo's until then); a stop's own length is not measured either.
+# after a stop (it keeps the last tempo's until then); a stop's own length is not measured either.  A stop is no
+# sequencer move for two ticks' frames (2 fpt + 2), or GATE_IDLE before a tick was measured.  Measured under the
+# port (1.40C, MKI, 120 BPM, 3 Nov 2026): PLAY writes the step word and tick 0, and the first tick (1) follows
+# 18.7 samples later -- the next frame; every PLAY alike (after power-on, one STOP, two STOPs).
 GATE_FSKIP = 2
 
 # ---------------------------------------------------------------- TB-303 engine

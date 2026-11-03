@@ -275,7 +275,8 @@ def gate_frame(st, seq):
     if not 1 <= L <= 64: L = 16
     s = s % L
     moved = s != st.lstep or k != st.ltick
-    restart = st.idle >= T.GATE_IDLE                   # v7.4: the sequencer was standing still before this frame
+    lim = 2 * st.fpt + 2 if st.fpt else T.GATE_IDLE  # v7.4: the sequencer was standing still before this frame
+    restart = st.idle >= min(lim, T.GATE_IDLE)        # (a STOP: no move for two ticks' frames, or GATE_IDLE)
     if s != st.lstep:                                  # a new step: the last one's ticks
         if st.kmax >= 1: st.tps = st.kmax + 1
         st.kmax = 0; st.idle = 0

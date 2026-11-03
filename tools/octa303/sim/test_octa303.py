@@ -448,12 +448,12 @@ check('gate_state_machine_bit_exact', bad is None, bad or 'random states and inp
 # v7.4 (Discord, 2 Nov 2026): GATE 303's first note after PLAY.  A stopped sequencer, then PLAY in the orders the
 # position reset and the first tick could reach the gate (a pair one or two frames apart, the START with either):
 # the first note stays open 3.5 ticks, as every other (before: ~1.5 ms in the paired orders: silent).
-def _first_open(moves, start_at, stopped=(15, 5), fpt=57):
+def _first_open(moves, start_at, stopped=(15, 5), fpt=57, stop=3000):
     st = R.Track(); st.latched = 1; st.gsel = 1
     for s_ in range(14, 16):
         for k_ in range(6):
             for _ in range(fpt): R.gate_frame(st, (127, s_, k_, 0, 16))
-    for _ in range(3000): R.gate_frame(st, (127,) + stopped + (0, 16))
+    for _ in range(stop): R.gate_frame(st, (127,) + stopped + (0, 16))
     cur = stopped; mv = dict((m_[0], m_[1:]) for m_ in moves)
     for fr in range(1200):
         if fr in mv: cur = mv[fr]
@@ -463,7 +463,10 @@ def _first_open(moves, start_at, stopped=(15, 5), fpt=57):
     return None
 _ticks = lambda t0, k0: [(t0 + 57 * i, 0, k0 + i) for i in range(5)]
 _fo = [_first_open([(0, 0, 0)] + _ticks(1, 1), 1), _first_open([(0, 0, 0)] + _ticks(2, 1), 0),
-       _first_open([(0, 0, 0)] + _ticks(1, 1), 0), _first_open(_ticks(0, 0), 0), _first_open(_ticks(0, 0), 57)]
+       _first_open([(0, 0, 0)] + _ticks(1, 1), 0), _first_open(_ticks(0, 0), 0), _first_open(_ticks(0, 0), 57),
+       # as measured under the port (3 Nov): stopped, the step word 0 and the last tick (5); PLAY writes step word 1
+       # and tick 0, the tick 1 a frame later; after a long stop and after a short one (200 frames, under GATE_IDLE)
+       _first_open([(0, 1, 0)] + _ticks(1, 1), 0, stopped=(0, 5)), _first_open([(0, 1, 0)] + _ticks(1, 1), 0, stopped=(0, 5), stop=200)]
 check('gate_first_note_after_play', all(f is not None and 195 <= f <= 205 for f in _fo), 'open frames %s (3.5 ticks = 199)' % _fo)
 
 PATG = [(0, 1, 0), (12, 0, 1), (7, 0, 0), (None, 0, 0), (0, 0, 1), (3, 1, 1), (5, 0, 0), (0, 0, 0)] * 2
