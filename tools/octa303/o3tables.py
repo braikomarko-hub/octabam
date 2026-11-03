@@ -38,7 +38,9 @@ GATE_K = q15(onepole(0.003))            # the gate's edges, 3 ms (no click), at 
 GATE_IDLE = 2048                        # frames (0.74 s) without a step/tick change = the sequencer stopped
 GATE_TPS0 = 6                           # ticks a step before one has been measured (1x)
 # v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent).  Measured under the port (1.40C, MKI,
-# 120 BPM, 3 Nov 2026): STOP writes the transport word 0x800065b8 = 0 and the step word 0; PLAY writes the step word
+# 120 BPM, 3 Nov 2026): the STOP there wrote the transport word 0x800065b8 = 0 and the step word 0 (STEM_REC.md: 0 =
+# stopped and rewound, 2 = stopped by the STOP key with the position kept; the gate takes anything but 1 as stopped,
+# v7.5 also the first move a fresh state sees, the first PLAY after boot); PLAY writes the step word
 # and tick 0, transport 1, and the first tick (1) one frame later, on every PLAY.  The gate measured that frame as a
 # tick and shut the first note ~1.5 ms after it began.  Now a STOP is the transport word, a move while stopped is no
 # tick, and after a PLAY the first GATE_FSKIP intervals are skipped (the last tempo's frames a tick stand meanwhile).
@@ -61,90 +63,97 @@ TB_SLIDE = q15(onepole(SLIDE_TAU))      # 303 slide: ~68 ms to 95 % (v6.3: 21 ms
 # -> -3.4/-3.1/-3.1 dB/ms (303: -3.4/-3.0/-3.1), its spectrum 6.1 -> 1.0 dB, bands 4.73 -> 4.68, peaks 2.30
 # -> 2.29 dB; tinyloops' knobs come out at CUT 52 RES 112 ENV 111 ACC 125 (the photo: RES 85-90 %).  Level:
 # v6.8's -2 dB at mid knobs (the accents are louder against the notes, as on Din Sync; ceiling -0.9 dBFS).
+# v7.5 (3 Nov 2026): refitted with the circuit's layout and v7.3's accent stage (modules/octa303/README.md, v7.5);
+# tinyloops' knobs come out at CUT 45 RES 106 ENV 116 (the edges of the photo's reading).  Keys no longer read:
+# acc_dec (the accent decays as DECAY at 0), gc0-gc3 / gall (TB_GCOMP is one gain with the VCA pair), shi0-shi4
+# (ENV MOD by ENV only); prehp 0 = no coupling high-pass (C17/R62's 0.72 Hz: a 3/32768 coefficient).
 CAL = {
-    'cut0':      190.904,
-    'cut1':      223.911,
-    'cut2':      417.993,
-    'cut3':      914.838,
-    'cut4':      1446.95,
-    'slo0':      0.642997,
-    'slo1':      0.764815,
-    'slo2':      1.20609,
-    'slo3':      3.05027,
-    'slo4':      4.07984,
+    'cut0':      200.380681,
+    'cut1':      207.870182,
+    'cut2':      384.611499,
+    'cut3':      933.96024,
+    'cut4':      1476.593396,
+    'slo0':      0.812647,
+    'slo1':      0.967584,
+    'slo2':      1.526414,
+    'slo3':      3.593055,
+    'slo4':      5.178854,
     'shi0':      0.838333,
     'shi1':      0.675048,
     'shi2':      1.5677,
     'shi3':      3.46185,
     'shi4':      4.88259,
-    'km0':       0.0722092,
-    'km1':       0.39515,
-    'km2':       0.412628,
-    'km3':       0.596876,
-    'km4':       0.817852,
-    'km5':       0.864409,
-    'ud0':       0.473728,
-    'ud1':       0.45,
-    'ud2':       0.26127,
-    'ud3':       0,
-    'ud4':       0.521166,
-    'ud5':       0.754574,
+    'km0':       0.156055,
+    'km1':       0.334523,
+    'km2':       0.389917,
+    'km3':       0.632997,
+    'km4':       0.722581,
+    'km5':       0.876872,
+    'ud0':       0.440745,
+    'ud1':       0.448714,
+    'ud2':       0.475983,
+    'ud3':       0.573122,
+    'ud4':       0.543348,
+    'ud5':       0.631082,
     'gc0':       0.853566,
     'gc1':       1.38368,
     'gc2':       1.72866,
     'gc3':       2.2254,
-    'dec0':      0.0843294,
-    'dec1':      0.180131,
-    'dec2':      0.618953,
-    'dec3':      1.76538,
-    'dec4':      2.34939,
-    'acc0':      0.104631,
-    'acc1':      0.309067,
-    'acc2':      1.0104,
-    'acc3':      1.46856,
-    'kr0':       0.975876,
-    'kr1':       0.8,
-    'kr2':       1.02538,
-    'kr3':       1.12766,
-    'kr4':       1.1469,
-    'lg0':       0.306474,
-    'lg1':       0.327793,
-    'lg2':       0.448971,
-    'lg3':       0.708251,
-    'lg4':       1.90264,
-    'swk0':      0.797365,
-    'swk1':      0.370416,
-    'swk2':      0.845848,
+    'dec0':      0.156576,
+    'dec1':      0.193965,
+    'dec2':      0.526315,
+    'dec3':      1.686528,
+    'dec4':      2.459161,
+    'acc0':      0.044659,
+    'acc1':      0.477945,
+    'acc2':      1.064755,
+    'acc3':      1.762599,
+    'kr0':       0.714306,
+    'kr1':       0.846787,
+    'kr2':       0.994304,
+    'kr3':       1.076561,
+    'kr4':       1.114392,
+    'lg0':       0.40435,
+    'lg1':       0.387774,
+    'lg2':       0.478544,
+    'lg3':       0.735454,
+    'lg4':       1.614853,
+    'swk0':      0.701374,
+    'swk1':      0.350694,
+    'swk2':      0.961395,
     'swk3':      1.0,
     'chk0':      1.0,
     'chk1':      1.0,
     'chk2':      1.03938,
     'chk3':      1.06649,
     'chk4':      1.0,
-    'off_a':     0.00461511,
-    'off_b':     0.304783,
+    'off_a':     0.004615,
+    'off_b':     0.343376,
     'acc_dec':   0.130431,
-    'meg_att':   0.0003,
-    'ach0':      0.059672,
-    'ach1':      0,
-    'dis':       0.126172,
-    'swd':       0.312903,
-    'swc':       0.620224,
-    'sweep_st':  76.085,
-    'accvca_gain': 0.789405,
-    'accvca_tau': 0.0012376,
-    'prehp':     148.7,
-    'fbhp':      45.2607,
+    'meg_att':   0.000205,
+    'ach0':      0.075859,
+    'ach1':      0.012585,
+    'dis':       0.17081,
+    'swd':       0.22966,
+    'swc':       0.513431,
+    'sweep_st':  75.96479,
+    'accvca_gain': 0.813727,
+    'accvca_tau': 0.001095,
+    'prehp':     0.0,
+    'fbhp':      107.5,
     'dchp':      8.84257,
     'c1r':       2.3481,
-    'ksq':       0.576456,
-    'sq_c2':     0.533233,
-    'veg_tau':   1.38888,
-    'satk':      0.00032028,
+    'ksq':       0.530941,
+    'sq_c2':     0.539828,
+    'veg_tau':   1.510026,
+    'satk':      0.00048,
     'smax':      12531.6,
     'osat_db':   -0.889752,
-    'sqlp':      3115.48,
-    'gall':      3.7383}
+    'sqlp':      3436.633981,
+    'gall':      3.7383,
+    'vpair':     1,
+    'vgain':     2.661822,
+    'env_flat':  1}
 KNOT_RAW = (0, 32, 64, 95, 127)                 # 0/25/50/75/100 percent of the pots
 def pchip(xs, ys, x):
     """Monotone piecewise-cubic Hermite (Fritsch-Carlson, scipy's PchipInterpolator rules)."""
@@ -171,7 +180,7 @@ TB_FBHP = q15(onepole_hz(CAL['fbhp']))     # highpass inside the resonance loop 
 TB_DCHP = q15(onepole_hz(CAL['dchp']))     # output coupling (v6.5f: 24 Hz)
 TB_MEG_ATT = q15(onepole(CAL['meg_att']))  # MEG attack (v6.5f: 3 ms)
 TB_ACC_VCA = q15(onepole(CAL['accvca_tau']))   # accent VCA path (v6.5f: 47k * 0.033uF = 1.55 ms)
-TB_MEG_ACC = q30(math.exp(-CS / (FS * CAL['acc_dec'] / math.log(10))))  # accent MEG decay (v6.5f: 0.2 s, Whittle)
+TB_MEG_ACC = q30(math.exp(-CS / (FS * CAL['acc_dec'] / math.log(10))))  # accent MEG decay (v6.5f: 0.2 s, Whittle; v7.4: replaced below)
 _DEC = [math.exp(v) for v in _curve([math.log(CAL['dec%d' % i]) for i in range(5)])]   # -20 dB time by DECAY raw
 DEC_T_MIN, DEC_T_MAX = _DEC[0], _DEC[127]
 TB_MEG = [q30(math.exp(-CS / (FS * t / math.log(10)))) for t in _DEC]
@@ -272,7 +281,22 @@ OSAT_LIM = 4 * ((2 ** 31 - 1) // OSAT_IN) - 4                                   
 # v7.3: with SETUP's ACCV (v7.0) the accent path's gain goes to (TB_ACCVCA_GAIN * 127) >> 6, twice the 303's:
 # v7.0-v7.1 sized AMP_MAX with the 303's gain only, so ACCV > 64 on an open accented note could wrap the VCA
 # multiply (found while checking #1011: CUT 80 RES 0 ENV 127 ACC 127 ACCV 127).
+# ---------------------------------------------------------------- v7.4: the 303's circuit (claude/TB303_circuito_fonti.md)
+# The Roland service notes' main board (= the x0xb0x netlist): the VCA input pair R121 220k / C21 10 nF (72 Hz) and
+# R122 100k / C22 10 nF (156 Hz) from the RES wiper; ENV MOD's depth by ENV only; the accent's decay as DECAY at 0.
+# v7.5: the accent stage is v7.3's (TB_ACH / TB_DIS / TB_SWDIRECT / TB_SWCAP / ACC_AMT / TB_ACC_VCA, fitted again
+# with the rest on Din Sync + tinyloops).  v7.4's network solved from the schematic (D24 / R46 / VR4b / C13 / R72)
+# fitted Din Sync but not tinyloops' accents in a row, and with tinyloops in its fit it lost the lines (fit G).
+VCA_PAIR = int(CAL.get('vpair', 1))
+VP_HP1 = q15(onepole_hz(1 / (2 * math.pi * 222.2e3 * 0.01e-6))) if VCA_PAIR else 0
+VP_HP2 = q15(onepole_hz(1 / (2 * math.pi * 102.2e3 * 0.01e-6))) if VCA_PAIR else 0
+VP_W2 = [int(round(2.2 * r / 127.0 * 4096)) if VCA_PAIR else 0 for r in range(128)]
+TB_MEG_ACC = TB_MEG[0]                                              # v7.4: an accent decays as DECAY at 0 (IC12 shorts the pot)
 AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * ((TB_ACCVCA_GAIN * 127) >> 6)) >> 15) + 64
+if VCA_PAIR:                                                        # the level by RES comes from the pair: one gain
+    TB_GCOMP = [int(round(4096 * CAL.get('vgain', 0.21)))] * 128
+if CAL.get('env_flat', 0):                                          # v7.4: ENV MOD's depth does not depend on RES (VR4b
+    TB_SHI = list(TB_SLO)                                           # goes only to the accent sweep)
 # v7.3 (Zac Kyoti, sambanks/octabam#1011): the plain 303 did reach the old limit (RES near 0 with the filter open
 # or accented: +3.4 dB over it, hard-clipped).  The VCA multiply is now (o >> 7) * (amp >> 1) >> 6: one bit off
 # the ladder's output and one off the VCA level (Q14, ~-96 dB steps), four times the room; with AMP_MAX now

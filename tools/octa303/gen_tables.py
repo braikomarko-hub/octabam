@@ -18,7 +18,7 @@ CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', '
           'DF_FM_MUL', 'DF_GIN_Q15', 'DF_SLOW_G', 'DF_FAST_G', 'DF_DIS_SLOW', 'DF_ENVX_MUL',
           'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM']
 
-TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R]),
+TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R, T.VP_HP1, T.VP_HP2]),
           ('O3_INC_TAB', T.INC_TAB), ('O3_TB_MEG', T.TB_MEG), ('O3_TB_ACH', T.TB_ACH),
           ('O3_TB_SWDIRECT', T.TB_SWDIRECT), ('O3_TB_SWCAP', T.TB_SWCAP), ('O3_TB_CUT', T.TB_CUT),
           ('O3_TB_OFF', T.TB_OFF), ('O3_TB_SLO', T.TB_SLO), ('O3_TB_SHI', T.TB_SHI),
@@ -30,7 +30,8 @@ TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIS
           ('O3_DF_ACH_FAST', T.DF_ACH_FAST),
           ('O3_LADDER_B', R.LB), ('O3_LADDER_K', R.LK), ('O3_KF', T.KF), ('O3_LG', T.LG),
           ('O3_TB_UD', T.TB_UD), ('O3_KD', T.KD), ('O3_DRV_IN', T.DRV_IN), ('O3_DRV_LIM', T.DRV_LIM),
-          ('O3_CL_G', T.CL_G), ('O3_CL_INV', T.CL_INV), ('O3_CL_LIM', T.CL_LIM)]
+          ('O3_CL_G', T.CL_G), ('O3_CL_INV', T.CL_INV), ('O3_CL_LIM', T.CL_LIM),
+          ('O3_VP_W2', T.VP_W2)]
 
 def consts_block():
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]

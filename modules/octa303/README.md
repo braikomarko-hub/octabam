@@ -50,7 +50,7 @@ The older form still works and is unchanged: a FLEX track whose sample is named 
 | 1 | CUT | 0..127 | cutoff, the 303's CUTOFF FREQ law |
 | 2 | RES | 0..127 | resonance (never self-oscillates without Devil Fish SWP; v7.3, ACID: no fs/4 whistle at the top, #1011) |
 | 3 | ENV | 0..127 | ENV MOD (audio taper, as the Roland service notes) |
-| 4 | DEC | 0..127 | DECAY, ~0.13..2.4 s (✅ recovered from the Din Sync set) |
+| 4 | DEC | 0..127 | DECAY, 0.157..2.46 s to 10 % (v7.5: the service notes' parts; ✅ the Din Sync fit agrees) |
 | 5 | ACC | 0..127 | the ACCENT knob, applied on the notes that carry an ACC lock |
 
 A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
@@ -72,11 +72,11 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
   OCTA303 track it lets the stock renderer write the header (PTCH/RATE neutralised, the carrier's
   positions pinned) and then writes the 303's samples into it; every other track is stock. AMP, FX1
   and FX2 stay stock, after the voice.
-- **The engine** (per sample, Q-format integer): PolyBLEP saw / square (duty by pitch), coupling
-  high-pass, 4-pole diode ladder with the 303's unequal first stage, feedback through a loop
-  high-pass, resonance law `k = K(f) × law(RES) − decay(RES) × KD(f)` solved from a linear
-  model of the ladder, MEG / accent-sweep capacitor / VCA envelopes at control rate, RC slide,
-  output coupling and a soft output ceiling.
+- **The engine** (per sample, Q-format integer): PolyBLEP saw / square (duty by pitch), 4-pole
+  diode ladder with the 303's unequal first stage, one high-pass after it shared by the feedback and
+  the output (v7.5, the circuit's), resonance law `k = K(f) × law(RES) − decay(RES) × KD(f)` solved
+  from a linear model of the ladder, the VCA's input pair (v7.5), MEG / accent-sweep capacitor / VCA
+  envelopes at control rate, RC slide, output coupling and a soft output ceiling.
 - **The machine row** (v7.0) uses the seams that repeat98 measured for `analog-bassdrum`: the same
   fifteen detours and six pokes, without its engine pool. A track is stored as FLEX and signed
   `'T','B',1` in its NEIGHBOR PLAYBACK bytes (`Part + 0x3c + 30·track`, unused by NEIGHBOR). Its
@@ -106,18 +106,19 @@ tinyloops "drops" (the resonant ring on each saw reset): ring decay 3.4 / 3.1 / 
 303's 3.4 / 3.0 / 3.1; frequency error 0.062 octaves. Fitted from sound alone, the calibration places
 tinyloops' RES at 112/127; the photo of the knobs reads 85–90 %.
 
-Accent (v6.8, Din Sync set A5, peak / energy in the first 4–40 ms, relative to the plain note):
+Accent (Din Sync set A5, saw, peak / energy in the first 4–40 ms, relative to the plain note; all three measured
+the same way on 3 Nov 2026, the engines through `ref303.py`; v6.8's table: `git show 1024283:modules/octa303/README.md`):
 
-| ACCENT | TB-303 | OCTA303 |
-|---|---|---|
-| 25 % | +0.6 / +0.1 dB | +0.4 / +0.4 dB |
-| 50 % | +4.9 / +5.8 dB | +6.9 / +5.4 dB |
-| 75 % | +15.3 / +13.8 dB | +16.3 / +12.8 dB |
-| 100 % | +15.6 / +16.3 dB | +20.1 / +16.8 dB |
+| ACCENT | TB-303 | v7.3 | v7.5 |
+|---|---|---|---|
+| 25 % | +0.6 / −0.5 dB | +2.5 / +1.9 dB | +0.7 / +0.5 dB |
+| 50 % | +4.9 / +5.6 dB | +6.2 / +4.8 dB | +6.4 / +5.2 dB |
+| 75 % | +15.3 / +13.0 dB | +17.2 / +13.2 dB | +13.3 / +10.9 dB |
+| 100 % | +15.6 / +16.7 dB | +22.4 / +17.5 dB | +20.0 / +16.6 dB |
 
 ### The code (✅)
 
-- `tools/octa303/sim/test_octa303.py`: 109/109 with `modules/devilish` (v7.3; v7.1: 108/108; 92/92 before, 89/89 without it:
+- `tools/octa303/sim/test_octa303.py`: 111/111 with `modules/devilish` (v7.4–v7.5; v7.3: 109/109; v7.1: 108/108; 92/92 before, 89/89 without it:
   three checks read dEVILish's manifest, one checks OCTA303's own `DEVIL_ID`). `octa303.s` executed
   from its source text in a ColdFire simulator equals the Python model `ref303.py` sample for sample:
   both carriers, accents, slides, split frames, extreme knobs, Devil Fish on FX1/FX2 (read from the DSP
@@ -184,6 +185,75 @@ defects; the three that are calibration choices stay as fitted until they can be
 - Not on the unit yet. `test_octa303` gains `bit_exact_v73_top_clip_accv` (the eased clip with and
   without dEVILish's per-sample FM, WHST's plain clip, ACCV 127 through the wider VCA).
 
+### v7.4 (3 Nov 2026): GATE 303's first note after PLAY
+
+Reported on Discord (misterairplane, Tom de Guerre): with SETUP's GATE 303 the first trig after PLAY
+was silent. Measured under the port (1.40C, MKI): at PLAY the firmware writes the step word
+(`0x800065b2`, which holds the step *after* the one playing) as 1 and the tick (`0x800065b6`) as 0,
+then tick 1 a frame later; the STOP there wrote the transport word (`0x800065b8`, 1 = running) 0 and the
+step word 0 (`docs/firmware/STEM_REC.md`: the STOP key writes 2 and keeps the position; the gate takes
+anything but 1 as stopped). v7.0–v7.3 measured the step length from the first two moves and took PLAY's first move for a
+step, so the first gate closed at once. v7.4 reads the transport word: no measurement while stopped,
+two tick intervals skipped after a restart, and the slide test looks at the step playing
+(`cur = (s − 1) mod L`), not the next one; the first move a fresh state sees (the first PLAY after boot)
+counts as a PLAY too (v7.5, from the review). Under the port the first note after PLAY sounds in every
+case (203 frames), and a slide ties on its own step. `test_octa303` adds
+`gate_first_note_after_play` (the measured PLAY order) and `gate_slide_on_the_next_step`.
+
+### v7.5 (3 Nov 2026): the circuit's layout, refitted; v7.3's accent stage
+
+#1011's points 2, 4 and 5, after the Roland service notes (main board: the x0xb0x netlist's values).
+
+| | v7.3 | v7.5 |
+|---|---|---|
+| VCO → VCF coupling | 149 Hz high-pass | none (C17/R62's corner is 0.72 Hz: left out) |
+| loop and output high-pass | 45 Hz in the loop only | one ~107 Hz high-pass (C25/C27 into the Q21 pair), shared by the feedback and the output |
+| VCA input | a fitted gain by RES | the pair R121 220k / C21 10 nF (72 Hz) + R122 100k / C22 10 nF (156 Hz) weighted 2.2 × RES |
+| ENV MOD depth | grew with RES | by ENV MOD only (VR4b goes to the accent network, not the envelope) |
+| DECAY | 0.08–2.35 s (fitted) | 0.157–2.46 s to 10 % (service notes: "MIN 200 ms, MAX 2.5 s"; C62 1 µF × 68k..1.068M) |
+| accent decay | 0.13 s (fitted) | DECAY at its minimum (the service notes: the accent shorts the pot) |
+| accent stage | direct path + capacitor (fitted) | the same code, refitted |
+
+The accent stage was first rebuilt from the schematic too (D24, R46 47k, VR4b 50k, C13 1 µF, R72 100k,
+solved per RES position: v7.4's draft "F"). It fitted Din Sync's isolated notes, but on tinyloops'
+accents in a row (each note 112 ms after the last, so C13 builds up) its resonance sat 1.5–2 octaves
+under the 303's in the first 15 ms; fitted with tinyloops in the objective it lost the lines. v7.3's
+accent stage, refitted with everything else, matches both, so v7.5 keeps it.
+
+Fitted (CMA-ES, two stages: the accent stage, then every number) on Din Sync's 400 notes and tinyloops'
+accents in a row together. Measured the same way for every version (third-octave cells × 7 windows,
+4 ms–1.2 s, the first two windows phase-averaged; tinyloops' ring frequency by zero crossings at
+1 / 7 / 14 / 28 / 57 ms, each version at its best knobs inside the ranges read from tinyloops' photo):
+
+| | v7.3 | v7.4 draft (F) | **v7.5** | the 303 against itself |
+|---|---|---|---|---|
+| Din Sync cells (dB) | 2.55 | 2.42 | **2.40** | 1.90 |
+| Din Sync brightness (oct) | 0.171 | 0.162 | 0.169 | 0.182 |
+| Din Sync accent peak (dB, RMS) | 2.09 | 1.70 | 1.76 | — |
+| tinyloops ring (oct, RMS) | 0.130 | 1.69 | **0.078** | — |
+
+The table is the float twin the fit runs on. Through the integer engines (`ref303.py`, one VCO phase, the
+first two windows not phase-averaged), v7.3 / F / v7.5: cells 2.75 / 2.72 / 2.66 dB (from 40 ms on: 2.09 /
+1.83 / 1.94: v7.5 gives back a little of F's sustain for its attack), brightness 0.175 / 0.172 / 0.173 oct,
+accent peak 2.14 / 1.91 / 1.77 dB.
+
+tinyloops through the integer engine (Hz at 1 / 7 / 14 / 28 / 57 ms): the 303 5812 / 5075 / 4307 / 2187 / 1050;
+v7.3 5775 / 5075 / 4200 / 2689 / 1084; v7.5 5990 / 5685 / 4487 / 2156 / 1149. The fit puts tinyloops' knobs
+at CUT 45, RES 106, ENV 116 (the edges of what the photo reads).
+
+The "the 303 against itself" column: 18 settings Din Sync recorded twice (316 pairs). Before v7.5 the
+tinyloops term in the fit measured ungated notes with the recording's onset detector, which put its
+windows in the wrong place; fixed (the 303's gate on the model's notes, the same detector), the float
+twin and the engine now agree (v7.3: 5298 / 4664 / 3969 / 2667 / 1121 against 5292 / 4688 / 4009 / 2667 / 1131).
+
+🟡 Three videos of a real TB-303 with the pattern drawn on screen (Circus Bells, Stakker Humanoid,
+Modjo) were used for listening only: one accent in all three patterns, damaged stretches in the
+downloads, a ~5 kHz notch in every clip, knobs readable to ±10 %. One check from them: the plain notes
+of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on v7.5's GATE 303 at 127 BPM.
+
+The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
+square), v7.3 3,198 / 3,543 (simulator counts).
+
 ### v7.1 (23 Oct 2026): the sites, read from the user's 1.40C
 
 - ✅ The LFO PMTR formatter `0x4003bf64` (LFO page descriptor `0x400d37be`, slot 6's formatter)
@@ -234,10 +304,10 @@ defects; the three that are calibration choices stay as fitted until they can be
 
 ## Inferred
 
-- 🟡 **ColdFire cost.** ~3,200 instructions per 16-sample frame per voice (saw), ~3,500 (square),
-  ~4,700 with Devil Fish FM + MUFF (simulator instruction counts). At ~1.77 cycles an instruction
-  (`waveload`'s hardware calibration) that is ~6 % of the 363 µs frame per voice, ~10 % with Devil
-  Fish. Falsified by CF METER on the unit.
+- 🟡 **ColdFire cost.** v7.5: ~3,600 instructions per 16-sample frame per voice (saw), ~3,900
+  (square); v7.3 ~3,200 / ~3,500, ~4,700 with Devil Fish FM + MUFF (simulator instruction counts).
+  At ~1.77 cycles an instruction (`waveload`'s hardware calibration) that is ~7 % of the 363 µs frame
+  per voice, ~11 % with Devil Fish. Falsified by CF METER on the unit.
 - 🟡 The signature bytes (NEIGHBOR's first three PLAYBACK bytes) are read by no stock code while the
   track is FLEX; `analog-bassdrum` relies on the same assumption. Falsified by a signed track
   losing its signature on a stock path (save, load, copy/paste Part, reload).
@@ -253,8 +323,8 @@ defects; the three that are calibration choices stay as fitted until they can be
   row, and `o3_type` gives the row from the signature (🟡 from the code; not run across two images).
 - The first 15–40 ms of an accented note are still ~1 dB further from the 303 than the 303 is from
   itself.
-- #1011, points 2, 4 and 5 (v7.3 above): the high-pass layout, ENV MOD by RES, the accent's peak and
-  its discharge by RES; a refit with the circuit topology.
+- #1011, point 5 in part (v7.5 above): at ACCENT 100 % the accented note's first 40 ms still peak
+  +20.0 dB over the plain note where the 303 peaks +15.6 dB (the energy is right: +16.6 / +16.7 dB).
 - dEVILish's WHST / SELF still lock to fs/4 when their oscillation is swept to the top (v7.3 leaves
   them as they were); 2× oversampling of the ladder above ~fs/8 would cure both modes.
 

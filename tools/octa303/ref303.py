@@ -1,4 +1,4 @@
-"""OCTA303 v7.3 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
+"""OCTA303 v7.5 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
 
 One engine (TB-303).  Every helper is one assembly idiom.  sim/test_octa303.py runs the assembly
 source in cfsim and requires its output to be BIT-IDENTICAL to this model.
@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs'
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -128,22 +128,29 @@ def ctrl(st):
         if st.vatt > T.ONE30 - 64: st.vatt = T.ONE30
     cut, res, env = st.cut, st.res, st.env
     vin = mul30(st.megs, st.accamt) if (st.accd and st.swp) else 0     # SWP 0: no sweep circuit
+    # v7.5: the accent stage is v7.3's again (the direct path plus the capacitor that builds over accents in a row,
+    # fitted on Din Sync and tinyloops); v7.4's network from the schematic alone could not make tinyloops' accents
+    # in a row (claude/OCTA303_v75_ibrido.md).  The rest of the voice stays v7.4's circuit.
     if st.spd == 2:                                                    # SPD NORM: the 303
         if vin > st.cap:
             st.cap += mulq15(vin - st.cap, T.TB_ACH[res])
         st.cap -= mulq15(st.cap, T.TB_DIS)
-        capterm = st.cap
-    elif st.spd == 3:                                                  # SLOW
+        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(st.cap, T.TB_SWCAP[res])
+        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    elif st.spd == 3:                                                  # SLOW (dEVILish): as v7.3
         if vin > st.cap:
             st.cap += mulq15(vin - st.cap, T.DF_ACH_SLOW[res])
         st.cap -= mulq15(st.cap, T.DF_DIS_SLOW)
-        capterm = st.cap * T.DF_SLOW_G
-    else:                                                              # FAST: the change, never below 0
+        if st.cap > 0x3FFFFFFF: st.cap = 0x3FFFFFFF                     # v7.5: cap * DF_SLOW_G must fit 32 bits (review)
+        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(chk(st.cap * T.DF_SLOW_G, 'slowcap'), T.TB_SWCAP[res])
+        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    else:                                                              # FAST (dEVILish): as v7.3
         if vin > st.cap:
             st.cap += mulq15(vin - st.cap, T.DF_ACH_FAST[res])
         st.cap -= mulq15(st.cap, T.TB_DIS)
         capterm = ((vin - st.cap) >> 4) * T.DF_FAST_G if vin > st.cap else 0
-    sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(capterm, T.TB_SWCAP[res])
+        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(capterm, T.TB_SWCAP[res])
+        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
     if st.envx:                                                        # ENVX: x3, from none
         S = (((T.TB_SLO[127] + (((T.TB_SHI[127] - T.TB_SLO[127]) * res * 258) >> 15)) * T.DF_ENVX_MUL) * env) // 127
     else:
@@ -154,7 +161,7 @@ def ctrl(st):
     st.cutb += mulq15((base << 8) - st.cutb, T.SMOOTH_K)               # v7.0: ~1 ms glides, no steps
     st.envs += mulq15((S << 8) - st.envs, T.SMOOTH_K)
     base, S = st.cutb >> 8, st.envs >> 8
-    s = base + ((((st.megs >> 15) - T.TB_OFF[cut]) * S) >> 15) + (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    s = base + ((((st.megs >> 15) - T.TB_OFF[cut]) * S) >> 15) + swq8
     s = clamp(s, 0, T.S_MAX - 1)
     if st.trkhz:
         s = trck(s, (st.pcur >> 8) - T.P_CENTER, st.trkhz)            # TRCK
@@ -168,8 +175,9 @@ def ctrl(st):
     g0 = T.TB_GCOMP[0]
     st.gcomp = ((g0 + (((T.TB_GCOMP[res] - g0) * st.ocomp) >> 12)) * st.ogain) >> 12   # OVDR comp
     st.gcomp = (st.gcomp * T.LG[i]) >> 12                             # v6.7: LG, the level by frequency
-    st.accvca += mulq15(vin - st.accvca, T.TB_ACC_VCA)
+    st.w2 = (T.VP_W2[res] * st.ocomp) >> 12                            # v7.4: the VCA pair's RES path (OVDR swamps it)
     v = st.veg if st.vatt >= T.ONE30 else mul30(st.veg, st.vatt)        # SATK (none: v6.1 exactly)
+    st.accvca += mulq15(vin - st.accvca, T.TB_ACC_VCA)
     tgt = (v >> 16) + mulq15(st.accvca >> 16, st.accvg)                # Q14; v7.0: ACCV
     if st.gmode:                                                       # v6.5: the 303's gate
         st.glvl += mulq15((32767 if st.gate else 0) - st.glvl, T.GATE_K)
@@ -213,7 +221,12 @@ def sample(st):
     st.y2 += fm(st.y1 - 2 * st.y2 + st.y3, st.b, 7, 8, 'l2')
     st.y3 += fm(st.y2 - 2 * st.y3 + y4, st.b, 7, 8, 'l3')
     st.y4 = y4 + fm(st.y3 - 2 * y4, st.b, 7, 8, 'l4')
-    o = fm(st.y4, st.gcomp, 6, 6, 'gc')
+    # v7.4: the output is the loop's high-pass (the circuit has one, C25/C27 into Q21, for both), then the VCA's
+    # input pair: R121/C21 (72 Hz) from it, R122/C22 (156 Hz) from the RES wiper (weight 2.2 x RES)
+    st.vp1 += fm(fb - st.vp1, T.VP_HP1, 4, 11, 'vp1')
+    st.vp2 += fm(fb - st.vp2, T.VP_HP2, 4, 11, 'vp2')
+    x = (fb - st.vp1) + ((((fb - st.vp2) >> 6) * st.w2) >> 6)
+    o = fm(x, st.gcomp, 6, 6, 'gc')
     o = clamp(o, -T.VCA_LIM, T.VCA_LIM)              # v6.9: the VCA multiply never wraps
     st.amp += st.ampstep
     if st.amp < 0: st.amp = 0
@@ -272,7 +285,8 @@ def gate_frame(st, seq):
     the step-word gate closed ~1/3 of a step after the note).  Half a step = tps ticks counted
     twice (gend = tps, +2 tps a tie)."""
     hold, s, k, mask, L = seq[:5]
-    run = seq[5] if len(seq) > 5 else 1                # v7.4: the transport word (0x800065b8), 1 = running
+    run = 1 if (seq[5] if len(seq) > 5 else 1) == 1 else 0   # v7.4: the transport word (0x800065b8): 1 = running;
+                                                       # 0 stopped and rewound, 2 stopped by the STOP key (STEM_REC.md)
     if not 1 <= L <= 64: L = 16
     s = s % L
     moved = s != st.lstep or k != st.ltick
@@ -289,7 +303,8 @@ def gate_frame(st, seq):
     if moved and st.gel < 4096: st.gel += 1            # ticks since the START
     f = min(st.fcnt + 1, 4095)                         # v7.0: the frames a tick, measured
     if moved and run:                                  # v7.4: a move while stopped (STOP resets the step word) is no tick
-        if st.stopd or restart:                        # PLAY: the position reset and the first tick come a frame apart
+        if st.stopd or restart or not st.fseen:        # PLAY (v7.5: also the first move a fresh state sees, the first
+                                                       # PLAY after boot): the position reset and the first tick come a frame apart
             st.stopd = 0; st.fskip = T.GATE_FSKIP      # (measured under the port): neither interval is a tick, and
             st.gel = 0; st.gelf = 0                    # the last note's clock restarts (no 1-frame snap before the START)
         if st.fskip: st.fskip -= 1
