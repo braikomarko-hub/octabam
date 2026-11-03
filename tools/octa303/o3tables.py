@@ -37,13 +37,11 @@ GATE_HOLD_INF = 127
 GATE_K = q15(onepole(0.003))            # the gate's edges, 3 ms (no click), at the control rate
 GATE_IDLE = 2048                        # frames (0.74 s) without a step/tick change = the sequencer stopped
 GATE_TPS0 = 6                           # ticks a step before one has been measured (1x)
-# v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent): after a stop the sequencer's first
-# moves (the position reset, the first tick) can come a frame apart; they measured "1 frame a tick" and the gate
-# shut the first note ~1.5 ms after it began.  The frames-a-tick measure now skips the first GATE_FSKIP intervals
-# after a stop (it keeps the last tempo's until then); a stop's own length is not measured either.  A stop is no
-# sequencer move for two ticks' frames (2 fpt + 2), or GATE_IDLE before a tick was measured.  Measured under the
-# port (1.40C, MKI, 120 BPM, 3 Nov 2026): PLAY writes the step word and tick 0, and the first tick (1) follows
-# 18.7 samples later -- the next frame; every PLAY alike (after power-on, one STOP, two STOPs).
+# v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent).  Measured under the port (1.40C, MKI,
+# 120 BPM, 3 Nov 2026): STOP writes the transport word 0x800065b8 = 0 and the step word 0; PLAY writes the step word
+# and tick 0, transport 1, and the first tick (1) one frame later, on every PLAY.  The gate measured that frame as a
+# tick and shut the first note ~1.5 ms after it began.  Now a STOP is the transport word, a move while stopped is no
+# tick, and after a PLAY the first GATE_FSKIP intervals are skipped (the last tempo's frames a tick stand meanwhile).
 GATE_FSKIP = 2
 
 # ---------------------------------------------------------------- TB-303 engine

@@ -77,6 +77,7 @@
         .set    MACH_OFF,       0x8eda2         | Part + 0x8eda2 + track: the machine (1 = FLEX)
         .set    STEPW,          0x800065b2      | v6.5: the sequencer's step word (u16; Euclacid's LIVE, poly.s po_clock)
         .set    TICKB,          0x800065b6      | its tick byte (0..5 a step at 1x)
+        .set    TRANSPORT,      0x800065b8      | v7.4: 1 = the sequencer running (STEM_REC.md; measured under the port)
         .set    PAT_IDX,        0x100b14d0      | the current pattern in the bank (poly.s, hardware-proven)
         .set    PAT_STRIDE,     0x8ed8          | bank blob + pattern * 0x8ed8 (STEP_LOCKS.md 1)
         .set    TRK_STRIDE,     0x91a           | + track * 0x91a: the track record (masks at +0, +8, +16; length +0x50)
@@ -195,6 +196,7 @@
         .set    S_CLI,372                       | v7.3: 1/g (Q12)
         .set    S_CLL,376                       | v7.3: the clamp before * g (+-sqrt2 / g)
         .set    S_FSKIP,380                     | v7.4: gate: tick intervals still to skip after a stop
+        .set    S_STOPD,384                     | v7.4: gate: a STOP seen (transport word 0)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -1153,19 +1155,19 @@ o3_gate:
         sub.l   %d0,%d3
         mvz.b   TICKB,%d4               | k
         moveq   #0,%d5                  | d5 bit 0 = the sequencer moved (a tick) since the last frame,
-        move.l  S_FPT(%a3),%d0          | bit 1 = v7.4: it had been standing still (a restart): no move
-        beq     .Lg_r0                  | for 2 * fpt + 2 frames (two ticks), or GATE_IDLE before a
-        add.l   %d0,%d0                 | tick was measured
-        addq.l  #2,%d0
-        cmp.l   #GATE_IDLE,%d0
-        ble     .Lg_r1
-.Lg_r0:
-        move.l  #GATE_IDLE,%d0
-.Lg_r1:
-        cmp.l   S_IDLE(%a3),%d0
-        bgt     .Lg_rs
+        move.l  S_IDLE(%a3),%d0         | bit 1 = it stood still GATE_IDLE frames (a restart),
+        cmp.l   #GATE_IDLE,%d0          | bit 2 = v7.4: the transport word reads running (1)
+        blt     .Lg_rs
         moveq   #2,%d5
 .Lg_rs:
+        moveq   #1,%d0
+        cmp.l   TRANSPORT,%d0
+        bne     .Lg_stp
+        addq.l  #4,%d5
+        bra     .Lg_rn
+.Lg_stp:
+        move.l  %d0,S_STOPD(%a3)        | v7.4: a STOP seen: the next move while running is a PLAY
+.Lg_rn:
         cmp.l   S_LSTEP(%a3),%d3
         bne     .Lg_mv
         cmp.l   S_LTICK(%a3),%d4
@@ -1221,10 +1223,18 @@ o3_gate:
 .Lg_f1:
         btst    #0,%d5
         beq     .Lg_f3
-        btst    #1,%d5                  | v7.4: PLAY after a stop: skip the first GATE_FSKIP intervals
-        beq     .Lg_sk                  | (the position reset and the first tick can come a frame apart)
+        btst    #2,%d5                  | v7.4: a move while stopped (STOP resets the step word) is no tick
+        beq     .Lg_f2
+        tst.l   S_STOPD(%a3)            | PLAY after a stop (or GATE_IDLE still): the position reset and
+        bne     .Lg_rst                 | the first tick come a frame apart (measured under the port):
+        btst    #1,%d5                  | skip GATE_FSKIP intervals, and restart the last note's clock
+        beq     .Lg_sk                  | (no 1-frame snap before the START)
+.Lg_rst:
+        clr.l   S_STOPD(%a3)
         moveq   #GATE_FSKIP,%d1
         move.l  %d1,S_FSKIP(%a3)
+        clr.l   S_GEL(%a3)
+        clr.l   S_GELF(%a3)
 .Lg_sk:
         move.l  S_FSKIP(%a3),%d1
         beq     .Lg_sk0
@@ -1261,18 +1271,24 @@ o3_gate:
         moveq   #6,%d1
         divs.l  %d1,%d0
         move.l  %d0,S_GEND(%a3)
+        move.l  %d3,%d1                 | v7.4: the step word holds the NEXT step (measured under the
+        subq.l  #1,%d1                  | port): the note's step cur = (s - 1) mod L
+        bpl     .Lg_cur
+        move.l  %d6,%d1
+        subq.l  #1,%d1
+.Lg_cur:
         move.l  %d4,%d0                 | the note's step: past half a step, the next one's
         add.l   %d0,%d0
         cmp.l   S_TPS(%a3),%d0
         blt     .Lg_gs0
-        move.l  %d3,%d0
+        move.l  %d1,%d0
         addq.l  #1,%d0
         cmp.l   %d6,%d0
         blt     .Lg_gs
         moveq   #0,%d0
         bra     .Lg_gs
 .Lg_gs0:
-        move.l  %d3,%d0
+        move.l  %d1,%d0
 .Lg_gs:
         move.l  %d0,S_GSTEP(%a3)
 .Lg_nn:

@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs'
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -264,19 +264,20 @@ def set_setup(st, setup, df):
 
 def gate_frame(st, seq):
     """v6.5, once a frame (the frame's last call) on a 303 track: seq = (hold, step, tick, slides,
-    length) as the unit reads them -- the track's AMP HOLD from the live lane, the sequencer's step
+    length[, running]) as the unit reads them -- the track's AMP HOLD from the live lane, the sequencer's step
     word and tick byte, the OR of the track record's trigless-trig and trigless-lock masks (bit s =
     step s), the track's length.
     v6.5d: the gate is timed from the note's START, in ticks (gel), not from the step word: on the
     unit a START reaches the renderer about a tick after the step word moves (measured, 12 Oct 2026:
     the step-word gate closed ~1/3 of a step after the note).  Half a step = tps ticks counted
     twice (gend = tps, +2 tps a tie)."""
-    hold, s, k, mask, L = seq
+    hold, s, k, mask, L = seq[:5]
+    run = seq[5] if len(seq) > 5 else 1                # v7.4: the transport word (0x800065b8), 1 = running
     if not 1 <= L <= 64: L = 16
     s = s % L
     moved = s != st.lstep or k != st.ltick
-    lim = 2 * st.fpt + 2 if st.fpt else T.GATE_IDLE  # v7.4: the sequencer was standing still before this frame
-    restart = st.idle >= min(lim, T.GATE_IDLE)        # (a STOP: no move for two ticks' frames, or GATE_IDLE)
+    restart = st.idle >= T.GATE_IDLE                   # standing still for GATE_IDLE frames (no transport seen)
+    if not run: st.stopd = 1                           # v7.4: a STOP seen; the next move while running is a PLAY
     if s != st.lstep:                                  # a new step: the last one's ticks
         if st.kmax >= 1: st.tps = st.kmax + 1
         st.kmax = 0; st.idle = 0
@@ -287,17 +288,20 @@ def gate_frame(st, seq):
     if st.tps == 0: st.tps = T.GATE_TPS0
     if moved and st.gel < 4096: st.gel += 1            # ticks since the START
     f = min(st.fcnt + 1, 4095)                         # v7.0: the frames a tick, measured
-    if moved:
-        if restart: st.fskip = T.GATE_FSKIP            # v7.4: PLAY after a stop: the position reset and the first
-        if st.fskip: st.fskip -= 1                     # tick can come a frame apart; neither interval is a tick
-        elif st.fseen: st.fpt = f                      # (before: "1 frame a tick", the first note shut in ~1.5 ms)
-        st.fseen = 1; f = 0
+    if moved and run:                                  # v7.4: a move while stopped (STOP resets the step word) is no tick
+        if st.stopd or restart:                        # PLAY: the position reset and the first tick come a frame apart
+            st.stopd = 0; st.fskip = T.GATE_FSKIP      # (measured under the port): neither interval is a tick, and
+            st.gel = 0; st.gelf = 0                    # the last note's clock restarts (no 1-frame snap before the START)
+        if st.fskip: st.fskip -= 1
+        elif st.fseen: st.fpt = f
+    if moved: st.fseen = 1; f = 0
     st.fcnt = f
     if st.gelf < 65535: st.gelf += 1                   # v7.0: the frames since the START
     if st.gnew:                                        # a 303 START: the note's step, the clock from 0
         st.gnew = 0; st.gate = 1; st.gel = 0; st.gelf = 0
         st.gend = (7 * st.tps + 3) // 6                # v7.0: 3.5 of the step's 6 clocks, doubled (Whittle)
-        st.gstep = (s + 1) % L if 2 * k >= st.tps else s
+        cur = (s - 1) % L                              # v7.4: the step word holds the NEXT step (measured under the
+        st.gstep = (cur + 1) % L if 2 * k >= st.tps else cur   # port: b2 = b4 + 1): the note's step is one less
     if not st.gsel:                                    # v7.0: SETUP's GATE OFF: the AMP decides
         st.gmode = 0; st.glvl = 32767; return
     st.gmode = 1
