@@ -406,10 +406,10 @@ check('no_devilish_in_remix_is_neutral', ok)
 
 # ---------------------------------------------------------------- v6.5 / v7.0: the 303's gate (SETUP's GATE)
 GF = ('gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend',
-      'gsel', 'fcnt', 'fpt', 'fseen', 'gelf')
+      'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'fskip')
 GOFF = {'gmode': 248, 'gate': 252, 'glvl': 256, 'gstep': 260, 'lstep': 264, 'ltick': 268, 'idle': 272,
         'kmax': 276, 'tps': 280, 'gnew': 284, 'gel': 288, 'gend': 292,
-        'gsel': 344, 'fcnt': 348, 'fpt': 352, 'fseen': 356, 'gelf': 360}
+        'gsel': 344, 'fcnt': 348, 'fpt': 352, 'fseen': 356, 'gelf': 360, 'fskip': 380}
 check('gate_state_offsets_are_the_sources', all(Rig().cpu.consts['S_' + f.upper()] == GOFF[f] for f in GF))
 def gate_fuzz(n, seed):
     """o3_gate run on random states and inputs == ref303.gate_frame, every field"""
@@ -426,6 +426,7 @@ def gate_fuzz(n, seed):
         st.gsel = rnd.choice([0, 1, 1]); st.fseen = rnd.randint(0, 1)
         st.fcnt = rnd.choice([0, 1, 2, 3, 4094, 4095]); st.fpt = rnd.choice([0, 0, 1, 2, 3, 7, 40])
         st.gelf = rnd.choice([0, 1, 5, 6, 7, 13, 14, 15, 65534, 65535])
+        st.fskip = rnd.choice([0, 0, 1, 2])
         step = rnd.choice([st.lstep, (st.lstep + 1) % LL, st.gstep, (st.gstep + 1) % LL, rnd.randrange(300)])
         tick = rnd.choice([st.ltick, rnd.randrange(12)])
         seq = (rnd.choice([127, 0, 64]), step, tick, rnd.getrandbits(64), L)
@@ -443,6 +444,27 @@ def gate_fuzz(n, seed):
     return None
 bad = gate_fuzz(3000 if FULL else 800, 5)
 check('gate_state_machine_bit_exact', bad is None, bad or 'random states and inputs, every field')
+
+# v7.4 (Discord, 2 Nov 2026): GATE 303's first note after PLAY.  A stopped sequencer, then PLAY in the orders the
+# position reset and the first tick could reach the gate (a pair one or two frames apart, the START with either):
+# the first note stays open 3.5 ticks, as every other (before: ~1.5 ms in the paired orders: silent).
+def _first_open(moves, start_at, stopped=(15, 5), fpt=57):
+    st = R.Track(); st.latched = 1; st.gsel = 1
+    for s_ in range(14, 16):
+        for k_ in range(6):
+            for _ in range(fpt): R.gate_frame(st, (127, s_, k_, 0, 16))
+    for _ in range(3000): R.gate_frame(st, (127,) + stopped + (0, 16))
+    cur = stopped; mv = dict((m_[0], m_[1:]) for m_ in moves)
+    for fr in range(1200):
+        if fr in mv: cur = mv[fr]
+        if fr == start_at: st.gnew = 1
+        R.gate_frame(st, (127,) + cur + (0, 16))
+        if fr > start_at and not st.gate: return fr - start_at
+    return None
+_ticks = lambda t0, k0: [(t0 + 57 * i, 0, k0 + i) for i in range(5)]
+_fo = [_first_open([(0, 0, 0)] + _ticks(1, 1), 1), _first_open([(0, 0, 0)] + _ticks(2, 1), 0),
+       _first_open([(0, 0, 0)] + _ticks(1, 1), 0), _first_open(_ticks(0, 0), 0), _first_open(_ticks(0, 0), 57)]
+check('gate_first_note_after_play', all(f is not None and 195 <= f <= 205 for f in _fo), 'open frames %s (3.5 ticks = 199)' % _fo)
 
 PATG = [(0, 1, 0), (12, 0, 1), (7, 0, 0), (None, 0, 0), (0, 0, 1), (3, 1, 1), (5, 0, 0), (0, 0, 0)] * 2
 SLIDES = sum(1 << ((i + 1) % 16) for i, p in enumerate(PATG) if p[2])

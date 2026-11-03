@@ -194,6 +194,7 @@
         .set    S_CLG,368                       | v7.3: the ladder clip's gain g (Q12), 0 = the plain soft clip
         .set    S_CLI,372                       | v7.3: 1/g (Q12)
         .set    S_CLL,376                       | v7.3: the clamp before * g (+-sqrt2 / g)
+        .set    S_FSKIP,380                     | v7.4: gate: tick intervals still to skip after a stop
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -219,6 +220,7 @@
         .set    GATE_HOLD_INF,   127
         .set    GATE_IDLE,       2048
         .set    GATE_TPS0,       6
+        .set    GATE_FSKIP,      2
         .set    ONE30,           1073741823
         .set    S_MAX,           28480
         .set    DIST_GAIN,       5
@@ -1150,13 +1152,18 @@ o3_gate:
         mulu.l  %d6,%d0
         sub.l   %d0,%d3
         mvz.b   TICKB,%d4               | k
-        moveq   #0,%d5                  | d5 = the sequencer moved (a tick) since the last frame
+        moveq   #0,%d5                  | d5 bit 0 = the sequencer moved (a tick) since the last frame,
+        move.l  S_IDLE(%a3),%d0         | bit 1 = v7.4: it had been standing still (a restart)
+        cmp.l   #GATE_IDLE,%d0
+        blt     .Lg_rs
+        moveq   #2,%d5
+.Lg_rs:
         cmp.l   S_LSTEP(%a3),%d3
         bne     .Lg_mv
         cmp.l   S_LTICK(%a3),%d4
         beq     .Lg_nmv
 .Lg_mv:
-        moveq   #1,%d5
+        addq.l  #1,%d5
 .Lg_nmv:
         cmp.l   S_LSTEP(%a3),%d3
         beq     .Lg_same
@@ -1191,7 +1198,7 @@ o3_gate:
         moveq   #GATE_TPS0,%d0
         move.l  %d0,S_TPS(%a3)
 .Lg_tps:
-        tst.l   %d5                     | v6.5d: the ticks since the START
+        btst    #0,%d5                  | v6.5d: the ticks since the START
         beq     .Lg_ne
         move.l  S_GEL(%a3),%d0
         cmp.l   #4096,%d0
@@ -1204,8 +1211,19 @@ o3_gate:
         bge     .Lg_f1
         addq.l  #1,%d0
 .Lg_f1:
-        tst.l   %d5
+        btst    #0,%d5
         beq     .Lg_f3
+        btst    #1,%d5                  | v7.4: PLAY after a stop: skip the first GATE_FSKIP intervals
+        beq     .Lg_sk                  | (the position reset and the first tick can come a frame apart)
+        moveq   #GATE_FSKIP,%d1
+        move.l  %d1,S_FSKIP(%a3)
+.Lg_sk:
+        move.l  S_FSKIP(%a3),%d1
+        beq     .Lg_sk0
+        subq.l  #1,%d1
+        move.l  %d1,S_FSKIP(%a3)
+        bra     .Lg_f2
+.Lg_sk0:
         tst.l   S_FSEEN(%a3)
         beq     .Lg_f2
         move.l  %d0,S_FPT(%a3)

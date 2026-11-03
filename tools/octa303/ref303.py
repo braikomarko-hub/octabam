@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs'
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -275,6 +275,7 @@ def gate_frame(st, seq):
     if not 1 <= L <= 64: L = 16
     s = s % L
     moved = s != st.lstep or k != st.ltick
+    restart = st.idle >= T.GATE_IDLE                   # v7.4: the sequencer was standing still before this frame
     if s != st.lstep:                                  # a new step: the last one's ticks
         if st.kmax >= 1: st.tps = st.kmax + 1
         st.kmax = 0; st.idle = 0
@@ -286,7 +287,9 @@ def gate_frame(st, seq):
     if moved and st.gel < 4096: st.gel += 1            # ticks since the START
     f = min(st.fcnt + 1, 4095)                         # v7.0: the frames a tick, measured
     if moved:
-        if st.fseen: st.fpt = f
+        if restart: st.fskip = T.GATE_FSKIP            # v7.4: PLAY after a stop: the position reset and the first
+        if st.fskip: st.fskip -= 1                     # tick can come a frame apart; neither interval is a tick
+        elif st.fseen: st.fpt = f                      # (before: "1 frame a tick", the first note shut in ~1.5 ms)
         st.fseen = 1; f = 0
     st.fcnt = f
     if st.gelf < 65535: st.gelf += 1                   # v7.0: the frames since the START

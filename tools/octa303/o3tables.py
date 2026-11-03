@@ -37,6 +37,11 @@ GATE_HOLD_INF = 127
 GATE_K = q15(onepole(0.003))            # the gate's edges, 3 ms (no click), at the control rate
 GATE_IDLE = 2048                        # frames (0.74 s) without a step/tick change = the sequencer stopped
 GATE_TPS0 = 6                           # ticks a step before one has been measured (1x)
+# v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent): after a stop the sequencer's first
+# moves (the position reset, the first tick) can come a frame apart; they measured "1 frame a tick" and the gate
+# shut the first note ~1.5 ms after it began.  The frames-a-tick measure now skips the first GATE_FSKIP intervals
+# after a stop (it keeps the last tempo's until then); a stop's own length is not measured either.
+GATE_FSKIP = 2
 
 # ---------------------------------------------------------------- TB-303 engine
 # v6.4: every 303 constant below checked against the Roland service notes' main-board schematic
