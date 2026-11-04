@@ -233,13 +233,16 @@ accents in a row together. Measured the same way for every version (third-octave
 | tinyloops ring (oct, RMS) | 0.130 | 1.69 | **0.078** | — |
 
 The table is the float twin the fit runs on. Through the integer engines (`ref303.py`), scored the same way (the
-first two windows averaged over four VCO phases), v7.5 gives 2.40 dB / 0.168 oct / 1.76 dB: the same as the twin.
+first two windows averaged over four VCO phases), v7.5 gives 2.40 dB / 0.168 oct / 1.81 dB: the same as the twin
+(the accent peak 0.05 dB higher: the twin lacks v7.3's ladder-clip operating point, see v7.6).
 (Retracted, 4 Nov 2026: an earlier paragraph here gave integer-engine numbers from one VCO phase and with Din Sync's
 accents at ACCENT 0 rendered unaccented, a bug in the check's renderer, not the engine.)
 
-tinyloops through the integer engine (Hz at 1 / 7 / 14 / 28 / 57 ms): the 303 5812 / 5075 / 4307 / 2187 / 1050;
-v7.3 5775 / 5075 / 4200 / 2689 / 1084; v7.5 5990 / 5685 / 4487 / 2156 / 1149. The fit puts tinyloops' knobs
-at CUT 45, RES 106, ENV 116 (the edges of what the photo reads).
+tinyloops (Hz at 1 / 7 / 14 / 28 / 57 ms): the 303 5812 / 5075 / 4307 / 2187 / 1050. The fit puts tinyloops' knobs
+at CUT 45, RES 106, ENV 116 (the edges of what the photo reads). (Retracted, 4 Nov 2026: integer-engine Hz given here,
+v7.3 5775 / 5075 / 4200 / 2689 / 1084 and v7.5 5990 / 5685 / 4487 / 2156 / 1149, came from a renderer with its
+steps rounded to 16 samples and no pre-roll, so the VCO's phase was not the twin's; this measure moves with that
+phase, see v7.6.)
 
 The "the 303 against itself" column: 18 settings Din Sync recorded twice (316 pairs). Before v7.5 the
 tinyloops term in the fit measured ungated notes with the recording's onset detector, which put its
@@ -280,20 +283,32 @@ rank: 200–400).
 
 | | v7.3 | v7.5 | **v7.6** | the 303 against itself |
 |---|---|---|---|---|
-| Din Sync cells (dB), float twin | 2.55 | 2.40 | 2.44 | 1.90 |
-| Din Sync cells (dB), integer engine | — | 2.40 | **2.29** | |
-| Din Sync brightness (oct), float / integer | 0.171 | 0.169 / 0.165 | **0.154** / 0.172 | 0.182 |
-| Din Sync accent peak (dB), float / integer | 2.09 | 1.76 / 1.76 | **1.67** / 1.76 | — |
-| tinyloops ring (oct, RMS) | 0.130 | 0.078 | **0.049** | — |
+| Din Sync cells (dB), float / integer | 2.55 | **2.40** / 2.40 | 2.44 / 2.44 | 1.90 |
+| Din Sync brightness (oct), float / integer | 0.171 | 0.169 / 0.168 | **0.154** / 0.155 | 0.182 |
+| Din Sync accent peak (dB), float / integer | 2.09 | 1.76 / 1.81 | **1.67** / 1.75 | — |
+| tinyloops ring (oct, RMS), mean of 8 VCO phases | — | 0.093 | **0.074** | — |
+| tinyloops ring (oct, RMS), the fit's one phase | 0.130 | 0.078 | 0.049 | — |
 | rolandclan, 16 squares (dB, best knobs) | 2.04 | 2.47 | **1.82** | — |
 | rolandclan, 14 saws (dB, best knobs) | 2.18 | 1.99 | **1.93** | — |
 
-tinyloops through the integer engine (Hz at 1 / 7 / 14 / 28 / 57 ms): the 303 5812 / 5075 / 4307 / 2187 / 1050;
-v7.6 5880 / 5258 / 4107 / 2051 / 1076.
+On Din Sync's cells alone v7.6 is 0.04 dB behind v7.5; it gains on the brightness, the accent peaks, tinyloops
+and rolandclan.
 
-🟡 The float twin and the integer engine agree within 0.1–0.3 dB from 40 ms on; in the first 15 ms the engine reads
-~2 dB above the twin in every version (v7.5 too), so the early windows (and the brightness that weighs them) rank
-v7.6 differently in the two: better in the twin, a little worse in the engine. Open: find that 2 dB.
+tinyloops measures the ring in 3 ms windows from 1 ms after each note, and a 35 Hz saw's reset lands anywhere in them:
+the same twin at 8 VCO phases gives v7.6 0.038–0.106 oct (mean 0.074), v7.5 0.060–0.138 (0.093), v7.3 at its
+default knobs 0.150–0.166 (0.157). The fit ran at one phase (0.0), where v7.6 sits near its best: that row is the
+fit's, the mean of 8 is the fair one (🟡 the fit term should average phases too). rolandclan's term starts at 40 ms
+and does not depend on the phase.
+
+The float twin against the integer engine (4 Nov 2026, the same 134 Din Sync notes, the same VCO phase): within
+0.1 dB in every window from 0 to 300 ms, the difference −33 dB (median, first 15 ms), so the twin's numbers are the
+engine's. Two things found on the way: (1) retracted, the "integer engine" row given here before (cells 2.29,
+brightness 0.172) and the "~2 dB above the twin in the first 15 ms" came from the check's renderer, whose pre-roll
+ran 17 samples short of the twin's, so every note met the VCO 17 samples later (the engine starts the note on its
+sample); (2) the twin lacks v7.3's ladder-clip operating point (`CL_G`, lighter above ladder index 383, ~5 kHz), so
+with CUT, RES and ENV all at 127 (Din Sync's E sets, 18 of the 134 notes) the engine is up to ~1.4 dB louder in the
+first 15 ms, while the sweep is up there; with the clip point off in the engine they agree within ±0.5 dB, the rest
+being the phase of a ring near 12 kHz. The twin should have it (🟡 to do; it moves only those corners).
 
 Cost: 3,996 instructions a 16-sample frame (saw; 4,540 square), v7.5 3,592 / 3,937: the OTA's soft clip on both,
 the table on the square (simulator counts).
