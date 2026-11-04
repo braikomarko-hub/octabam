@@ -81,6 +81,9 @@ def objective(args):
         t = hyb.build(p)
         r = ds2.evaluate(t, weights=OPTS['w'])
         pen = ring_penalty(t)
+        if OPTS.get('pack'):
+            import pack_term
+            ep = pack_term.err(t); r['pack'] = ep; r['total'] += OPTS['pack'] * ep
         if OPTS['tiny']:
             import tiny_fit
             et, _ = tiny_fit.err(t, int(round(p['tl_cut'])), int(round(p['tl_res'])), int(round(p['tl_env'])))
@@ -122,7 +125,7 @@ def cma(names, x0, sig, lo, hi, gens, popsize, pool, log):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('name'); ap.add_argument('--pair', type=int, default=1)
     ap.add_argument('--gens', type=int, default=120); ap.add_argument('--pop', type=int, default=16)
-    ap.add_argument('--init'); ap.add_argument('--only', default=''); ap.add_argument('--wacc', type=float, default=0.3); ap.add_argument('--sig', type=float, default=1.0); ap.add_argument('--circdec', type=int, default=0); ap.add_argument('--c1r', type=int, default=0); ap.add_argument('--fixgain', type=int, default=0); ap.add_argument('--tiny', type=float, default=0.0); ap.add_argument('--q8', type=int, default=0)
+    ap.add_argument('--init'); ap.add_argument('--only', default=''); ap.add_argument('--wacc', type=float, default=0.3); ap.add_argument('--sig', type=float, default=1.0); ap.add_argument('--circdec', type=int, default=0); ap.add_argument('--c1r', type=int, default=0); ap.add_argument('--fixgain', type=int, default=0); ap.add_argument('--tiny', type=float, default=0.0); ap.add_argument('--q8', type=int, default=0); ap.add_argument('--pack', type=float, default=0.0)
     a = ap.parse_args(); OPTS['pair'] = bool(a.pair); OPTS['w'] = (1.0, 4.0, a.wacc)
     spec = [s for s in SPEC if not (a.pair and s[0].startswith('gc')) and not (not a.pair and s[0] == 'X_gain')]
     if a.circdec:                 # Roland service notes: DECAY 200 ms .. 2.5 s to 10 %; parts: (68k .. 1.068M) x 1 uF
@@ -130,8 +133,9 @@ if __name__ == '__main__':
         BASE['dec0'] = 2.302585 * 68e3 * 1e-6; BASE['dec4'] = 2.302585 * 1.068e6 * 1e-6
     if a.c1r: OPTS['c1r'] = True
     if a.fixgain: spec = [s for s in spec if s[0] != 'X_gain']
-    OPTS['tiny'] = a.tiny
-    if a.q8: spec = [s for s in spec if s[0] not in ('ksq', 'sqlp', 'sq_c2')]   # the circuit's square replaces them
+    OPTS['tiny'] = a.tiny; OPTS['pack'] = a.pack
+    if a.q8: spec = [s for s in spec if s[0] not in (('ksq', 'sq_c2') if a.q8 == 2 else ('ksq', 'sqlp', 'sq_c2'))]   # the circuit's square replaces them (q8 2: sqlp kept, fitted)
+    if a.q8 == 2: FIXED_EXT['q8lp'] = 1.0
     else: spec = [s for s in spec if not s[0].startswith('X_q8')]
     if not a.tiny: spec = [s for s in spec if not s[0].startswith('X_tl_')]
     if a.only: spec = [s for s in spec if any(s[0].startswith(o) for o in a.only.split(','))]

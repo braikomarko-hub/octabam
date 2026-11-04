@@ -21,7 +21,7 @@ typedef struct {
            osin, osout, f_low, out_shared, ladsat, vca_hp1, vca_hp2, vca_w2, vca_mix, pre_s, nsamp, gin,
            circ, acc_d, acc_ksw, acc_gav, acc_lp, env_flat, gain, vsat;
     double AON_A[NK], AON_B[NK], AON_K[NK], AOFF_B[NK], AOFF_K[NK];   /* the accent network by RES (circ) */
-    double q8, q8scale, SQW[1024];                 /* v7.6 study: the Q8 square shaper's band-limited cycle (volts, zero mean) */
+    double q8, q8k, SQW[1024];                     /* v7.6: the Q8 square = C(phase) (SQW[0..127], saw units) + q8k * the saw */
 } Tab;
 static Tab T;
 
@@ -88,9 +88,11 @@ static double sample(St *s) {
     s->phase += s->inc; if (s->phase >= 1.0) s->phase -= 1.0;
     double x;
     if (s->wave == 0) x = (2 * s->phase - 1 - polyblep(s->phase, s->inc)) * 1048576.0;
-    else if (T.q8 > 0) {                                         /* the circuit's square: one cycle, interpolated */
-        double p = s->phase * 1024.0; int i0 = (int)p; double fr = p - i0; int i1 = (i0 + 1) & 1023;
-        x = (T.SQW[i0 & 1023] * (1 - fr) + T.SQW[i1] * fr) * T.q8scale;
+    else if (T.q8 > 0) {                                         /* the circuit's square, as the engine plays it */
+        double p = s->phase * 128.0; int i0 = (int)p; double fr = p - i0; int i1 = (i0 + 1) & 127;
+        double sawb = 2 * s->phase - 1 - polyblep(s->phase, s->inc);
+        x = ((T.SQW[i0 & 127] * (1 - fr) + T.SQW[i1] * fr) + T.q8k * sawb) * 1048576.0;
+        if (T.q8 > 1.5) { s->sql += (x - s->sql) * T.sqlp; x = s->sql; }   /* v7.6: the square's soft edges (fitted, as v6.9) */
     }
     else {
         double ph2 = s->phase - s->sqth; if (ph2 < 0) ph2 += 1.0;
@@ -116,7 +118,7 @@ static double sample(St *s) {
         o = (o - s->v1) + T.vca_w2 * (s->res / 127.0) * (o - s->v2);
         o *= T.gain * T.LG[s->li];
     } else o *= s->gcomp;
-    if (T.vsat > 0) o = T.vsat * tanh(o / T.vsat);                  /* the VCA is an OTA (IC15 BA6110): its input pair sees ~3 % of
+    if (T.vsat > 0) o = T.vsat * softclip(o / T.vsat * 1048576.0) / 1048576.0;   /* the engine's curve (u - u^3/6, |u| <= sqrt2) */                  /* the VCA is an OTA (IC15 BA6110): its input pair sees ~3 % of
                                                                       the filter (220k || 100k into 2.2k R124): tanh(Vin / 2VT) */
     s->amp += s->ampstep; if (s->amp < 0) s->amp = 0;
     o *= s->amp;

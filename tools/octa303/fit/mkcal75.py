@@ -9,6 +9,9 @@ def cal_of(path):
     cal['prehp'] = 0.0                                                   # C17/R62 0.72 Hz: flat
     cal['fbhp'] = round(d.get('X_hp', 80.0) / 2.5) * 2.5                 # the shared high-pass (the fit's 2.5 Hz grid)
     cal['vpair'] = 1; cal['vgain'] = float(d.get('X_gain', 1.0)); cal['env_flat'] = 1
+    if 'X_q8sw' in d:                                                    # v7.6: Q8's square and the VCA's OTA
+        cal['q8vlo'] = float(d['X_q8vlo']); cal['q8sw'] = float(d['X_q8sw']); cal['q8beta'] = float(d['X_q8beta'])
+        cal['ota_v'] = float(d['X_vsat'])
     return cal
 if __name__ == '__main__':
     cal = cal_of(sys.argv[1]); mkcal.write_cal(cal, *(sys.argv[2:3]))
