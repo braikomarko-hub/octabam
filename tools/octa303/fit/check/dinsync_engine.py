@@ -10,7 +10,8 @@ FS = 44100; PRE = int(0.25 * FS); NFULL = int(1.25 * FS)
 def render_int(t, note_list=None, tag='x', acc0_plain=False, phase=0.25, nsamp=None):
     note_list = note_list or ds.notes(); n = int(nsamp) if nsamp else NFULL; out = []
     for (_, wv, cut, res, env, dec, acc) in note_list:
-        st = R.Track(); w0 = [0x4000 - 12 * 256, cut << 8, res << 8, env << 8, dec << 8, 0]
+        st = R.Track(); w0 = [0x4000 + int(round(ds.DS_SEMI * 256)),   # exact: DS_SEMI is on the 1/64 grid;   # Din Sync's measured 65.62 Hz, as ds.render
+               cut << 8, res << 8, env << 8, dec << 8, 0]
         R.render_call(st, w0, True, wv, 16)
         for a in ('meg', 'veg', 'megs', 'amp', 'cap', 'accvca', 'vc', 'v34'):
             if hasattr(st, a): setattr(st, a, 0)
@@ -19,7 +20,7 @@ def render_int(t, note_list=None, tag='x', acc0_plain=False, phase=0.25, nsamp=N
         if PRE % 16: R.render_call(st, w0, False, wv, PRE % 16)
         w = list(w0); w[5] = max(acc, 0) << 8
         R.note_on(st, wv, w); st.cs = 1
-        if acc == 0: st.accd = 1
+        if acc == 0: st.accd = 1; st.vatt = R.T.ONE30   # accented at ACCENT 0: no soft attack (note_on saw a 0 word; the twin has none)
         y = []
         for i in range(n // 16): y.extend(R.render_call(st, w, False, wv, 16))
         if n % 16: y.extend(R.render_call(st, w, False, wv, n % 16))

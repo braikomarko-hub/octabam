@@ -8,7 +8,7 @@ def _rd(p):
     x = np.frombuffer(wave.open(p).readframes(10 ** 8), np.int16).astype(float); y = np.zeros(N); y[:min(N, len(x))] = x[:N]; return y
 _CR = fastscore.cells_all(np.array([_rd(p) for p in sorted(glob.glob('/root/wav20/TB-303_Bass_*.wav'))]))
 def err(t, w0=2):
-    CG = fastscore.cells_all(ds.render(t, [('x',) + k for k in _K]).astype(float))
+    CG = fastscore.cells_all(ds.render(t, [('x',) + k for k in _K], semi=-12.0).astype(float))
     e = []
     for j in range(len(_K)):
         D = CG[j, w0:, :] - _CR[j, w0:, :]; m = ~np.isnan(D)

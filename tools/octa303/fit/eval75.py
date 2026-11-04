@@ -8,7 +8,10 @@ def p_json(path):
     d = json.load(open(path)); names = [k for k in d if not k.startswith('_')]
     fit74.BASE.clear(); fit74.BASE.update(tab.base_cal()); fit74.BASE.update(DEC)
     fit74.FIXED_EXT.clear(); fit74.FIXED_EXT.update({'acc_d': 0.0, 'acc_ksw': 0.0, 'acc_gav': 0.0})
-    p = fit74.params_of([d[k] for k in names], names); p['cal'].update(DEC); return p, d
+    p = fit74.params_of([d[k] for k in names], names); p['cal'].update(DEC)
+    for k, v in d.get('_fixed', {}).items():         # 4 Nov 2026: the fit's fixed options (q8lp from --q8 2) were not
+        if k not in p: p[k] = v                       # saved, so the twin built here lacked the square's edge lowpass
+    return p, d
 def table(name, t, tl=(42, 110, 108)):
     r = ds2.evaluate(t, weights=(1.0, 4.0, 1.0)); e, f = tiny_fit.err(t, *tl); e0, f0 = tiny_fit.err(t, 42, 110, 108)
     print('%-10s cell %.3f  bright %.3f  acc %.3f | tiny %.3f %s | at 42/110/108 %.3f %s' % (

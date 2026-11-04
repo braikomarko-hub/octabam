@@ -3,7 +3,7 @@
  * tab.py), notes from argv.  Not bit-exact: it is the fitter's model; the shipped engine is ref303/octa303.s.
  *
  *   sim tab.bin notes.txt out.f32
- * notes.txt: one note per line: semi wave cut res env dec acc  (raw knobs 0..127, acc 0 = no accent)
+ * notes.txt: one note per line: semi wave cut res env dec acc  (raw knobs 0..127; acc -1 = no accent, 0..127 = accented with the ACCENT pot there)
  * out.f32: NSAMP float samples per note (s16 scale), notes back to back.
  */
 #include <stdio.h>
@@ -33,6 +33,7 @@ static double softclip(double y) {         /* S20: u - u^3/6, clamped at sqrt2 *
 static double blep(double t) { return t; }
 
 typedef struct {
+    double clg;                                   /* v7.3's ladder-clip operating point (4 Nov 2026: was missing) */
     double phase, inc, sqth, meg, megs, veg, vatt, accamt, cap, accvca, amp, ampstep, hp, sql, fb, y1, y2, y3, y4,
            dc, b, c1, k, gcomp, hpo, v1, v2;
     double vc, v34; int li;
@@ -70,6 +71,7 @@ static void ctrl(St *s) {
     double k = T.LK[i] * T.KMUL[s->res] * T.KF[i] - T.UD[s->res] * T.KD[i];
     s->k = k > 0 ? k : 0;
     s->gcomp = T.GCOMP[s->res] * T.LG[i]; s->li = i;
+    s->clg = i <= 383 ? 1.0 : (i >= 431 ? 0.5 : 1.0 - 0.5 * (i - 383) / 48.0);   /* o3tables CL_I0/CL_I1/CL_GMIN (ACID) */
     double tgt;
     double v = s->vatt >= 1.0 ? s->veg : s->veg * s->vatt;
     if (T.circ) tgt = v + vin;
@@ -107,7 +109,7 @@ static double sample(St *s) {
     double f = y4 - s->fb;
     if (f > 8388608.0) f = 8388608.0; else if (f < -8388608.0) f = -8388608.0;
     double u = x - f * s->k;
-    double y0 = T.ladsat > 0 ? softclip(u * T.ladsat) / T.ladsat : u;   /* ladsat 1 = the engine's clip */
+    double y0 = T.ladsat > 0 ? softclip(u * T.ladsat * s->clg) / (T.ladsat * s->clg) : u;   /* ladsat 1 = the engine's clip */
     s->y1 += (y0 - s->y1 + s->y2) * s->c1;
     s->y2 += (s->y1 - 2 * s->y2 + s->y3) * s->b;
     s->y3 += (s->y2 - 2 * s->y3 + y4) * s->b;

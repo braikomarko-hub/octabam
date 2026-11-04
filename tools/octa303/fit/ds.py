@@ -2,6 +2,8 @@
 import os, numpy as np, subprocess, pickle, tempfile
 import score, tab
 HERE = os.path.dirname(os.path.abspath(__file__)); RAW = os.path.join(HERE, 'dinsync_zip'); FS = 44100
+DS_SEMI = round((-12 + 12 * np.log2(65.62 / 65.4064)) * 64) / 64   # 4 Nov 2026: Din Sync plays 65.62 Hz (measured, 24
+# notes: 65.61-65.64), not C2; on the engine's pitch grid (inc_of_p keeps 1/64 semitone): 65.643 Hz
 N = int(1.25 * FS)
 
 def notes():
@@ -30,13 +32,14 @@ def ref():
             R['audio'].append(v.astype(np.float32))
     pickle.dump(R, open(p, 'wb')); return R
 
-def render(t, note_list=None, tag='x', acc0_plain=False, phase=0.25, nsamp=None):
+def render(t, note_list=None, tag='x', acc0_plain=False, phase=0.25, nsamp=None, semi=None):
+    semi = DS_SEMI if semi is None else semi             # rolandclan passes -12 (C2)
     note_list = note_list or notes()
     if acc0_plain: note_list = [n[:6] + ((-1 if n[6] == 0 else n[6]),) for n in note_list]   # v7.3: ACC 0 = no accent
     d = tempfile.mkdtemp(prefix='ds_', dir='/tmp/claude-0')
     if nsamp: t = dict(t); t['nsamp'] = float(nsamp)
     tab.write(t, d + '/t.bin')
-    open(d + '/n.txt', 'w').write(''.join(('-12 %d %d %d %d %d %d ' % n[1:]) + ('%.4f\n' % phase) for n in note_list))
+    open(d + '/n.txt', 'w').write(''.join(('%.6f %d %d %d %d %d %d ' % ((semi,) + tuple(n[1:]))) + ('%.4f\n' % phase) for n in note_list))
     subprocess.run([os.path.join(HERE, 'sim'), d + '/t.bin', d + '/n.txt', d + '/o.f32'], check=True)
     y = np.fromfile(d + '/o.f32', np.float32).reshape(len(note_list), -1)
     for f in os.listdir(d): os.remove(os.path.join(d, f))

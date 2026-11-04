@@ -16,7 +16,7 @@ for (semi, wv, cut, res, env, dec, acc) in json.load(open(sys.argv[2])):
     if PRE % 16: R.render_call(st, w0, False, wv, PRE % 16)            # (4 Nov 2026: was PRE//16 - 1 blocks, 17 samples short)
     w = list(w0); w[5] = max(acc, 0) << 8
     R.note_on(st, wv, w); st.cs = 1
-    if acc == 0: st.accd = 1                          # accented at ACCENT 0 (Din Sync's A sets): the flag, no amount
+    if acc == 0: st.accd = 1; st.vatt = R.T.ONE30   # accented at ACCENT 0: no soft attack (note_on saw a 0 word; the twin has none)                          # accented at ACCENT 0 (Din Sync's A sets): the flag, no amount
     y = []
     for i in range(N // 16): y.extend(R.render_call(st, w, False, wv, 16))
     out.append((np.array(y, dtype=np.uint32).view(np.int32) >> 16).astype(np.float32))

@@ -133,6 +133,7 @@ if __name__ == '__main__':
         BASE['dec0'] = 2.302585 * 68e3 * 1e-6; BASE['dec4'] = 2.302585 * 1.068e6 * 1e-6
     if a.c1r: OPTS['c1r'] = True
     if a.fixgain: spec = [s for s in spec if s[0] != 'X_gain']
+    if a.tiny: sys.exit('--tiny: the tinyloops term (tiny_fit, 35.42 Hz) is superseded and its replacement is not settled (4 Nov 2026)')
     OPTS['tiny'] = a.tiny; OPTS['pack'] = a.pack
     if a.q8: spec = [s for s in spec if s[0] not in (('ksq', 'sq_c2') if a.q8 == 2 else ('ksq', 'sqlp', 'sq_c2'))]   # the circuit's square replaces them (q8 2: sqlp kept, fitted)
     if a.q8 == 2: FIXED_EXT['q8lp'] = 1.0
@@ -141,7 +142,10 @@ if __name__ == '__main__':
     if a.only: spec = [s for s in spec if any(s[0].startswith(o) for o in a.only.split(','))]
     init = json.load(open(a.init)) if a.init else {}
     names = [s[0] for s in spec]; x0 = [init.get(s[0], s[1]) for s in spec]
-    fixed = {k: v for k, v in init.items() if k not in names}
+    for k, v in init.get('_fixed', {}).items():      # 4 Nov 2026: a resumed fit keeps the options it was run with (q8lp)
+        if k not in FIXED_EXT: FIXED_EXT[k] = v
+    if init.get('_fixed', {}).get('q8lp') and a.q8 != 2: sys.exit('init was fitted with --q8 2 (q8lp): pass --q8 2')
+    fixed = {k: v for k, v in init.items() if k not in names and not k.startswith('_')}   # not _score/_detail/_fixed
     if fixed:
         for k, v in fixed.items():
             if k.startswith('X_'): FIXED_EXT[k[2:]] = v
@@ -153,5 +157,6 @@ if __name__ == '__main__':
         f0 = objective((np.array(x0), names)); log.write('start %.4f %s\n' % (f0[0], {k: round(v, 3) for k, v in f0[1].items() if not isinstance(v, (list, dict, np.ndarray))})); log.flush()
         best = cma(names, x0, [s[2] * a.sig for s in spec], [s[3] for s in spec], [s[4] for s in spec], a.gens, a.pop, pool, log)
     out = dict(init); out.update(dict(zip(names, best[1]))); out['_score'] = best[0]; out['_detail'] = {k: v for k, v in best[2].items() if isinstance(v, float)}
+    out['_fixed'] = {k: v for k, v in FIXED_EXT.items()}          # 4 Nov 2026: q8lp etc., read back by eval75.p_json
     json.dump(out, open('fit_%s.json' % a.name, 'w'), indent=1)
     print('done', a.name, best[0])

@@ -10,7 +10,8 @@ yf = ds.render(t, notes, phase=PH).astype(float)
 sys.modules.pop('o3tables', None); sys.modules.pop('ref303', None); sys.path.insert(0, '/root/sam/tools/octa303'); import ref303 as R; R.CHECK = False
 yi = []
 for (_, wv, cut, res, env, dec, acc) in notes:
-    st = R.Track(); w0 = [0x4000 - 12 * 256, cut << 8, res << 8, env << 8, dec << 8, 0]
+    st = R.Track(); w0 = [0x4000 + int(round(ds.DS_SEMI * 256)),   # exact: DS_SEMI is on the 1/64 grid;   # Din Sync's measured 65.62 Hz, as ds.render
+               cut << 8, res << 8, env << 8, dec << 8, 0]
     R.render_call(st, w0, True, wv, 16)
     for a in ('meg', 'veg', 'megs', 'amp', 'cap', 'accvca', 'vc', 'v34'):
         if hasattr(st, a): setattr(st, a, 0)
@@ -19,7 +20,7 @@ for (_, wv, cut, res, env, dec, acc) in notes:
     if PRE % 16: R.render_call(st, w0, False, wv, PRE % 16)          # exactly PRE samples from the phase set, as sim.c
     w = list(w0); w[5] = max(acc, 0) << 8
     R.note_on(st, wv, w); st.cs = 1
-    if acc == 0: st.accd = 1
+    if acc == 0: st.accd = 1; st.vatt = R.T.ONE30   # accented at ACCENT 0: no soft attack (note_on saw a 0 word; the twin has none)
     y = []
     for i in range(N // 16): y.extend(R.render_call(st, w, False, wv, 16))
     yi.append((np.array(y, dtype=np.uint32).view(np.int32) >> 16).astype(float))

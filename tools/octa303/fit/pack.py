@@ -20,12 +20,14 @@ def model(name):
     if name == 'v7.3': return tab.build(None)
     if name == 'F':
         pf = hyb.p_of(hyb.F); pf['cal'].update(eval75.DEC); return tab.build74(pf)
-    p, _ = eval75.p_json(name if name.endswith('.json') else '/root/fit/fit_H2_all.json'); return hyb.build(p)
+    p, _ = eval75.p_json(name if name.endswith('.json') else '/root/fit/fit_H2_all.json')
+    if 'H7' in name or 'H8' in name: p['q8lp'] = 1.0
+    return hyb.build(p)
 KN = dict(cut=(0, 20, 40, 60, 80, 100, 127), res=(0, 32, 64, 96, 127), env=(0, 32, 64, 96, 127), dec=(0, 32, 64, 96, 127))
 def render(t, knobs):                                       # knobs: (wv, cut, res, env, dec, acc)
     out = []
     for i in range(0, len(knobs), 400):
-        out.append(fastscore.cells_all(ds.render(t, [('x',) + k for k in knobs[i:i + 400]]).astype(float)))
+        out.append(fastscore.cells_all(ds.render(t, [('x',) + k for k in knobs[i:i + 400]], semi=-12.0).astype(float)))
     return np.concatenate(out)
 res = {}
 for name in sys.argv[1:]:

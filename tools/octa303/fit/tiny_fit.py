@@ -1,4 +1,6 @@
-"""tinyloops as a fit term: 140 accented 35.42 Hz notes, 112 ms apart, through sim.c's seq mode; the ringing's
+"""SUPERSEDED 4 Nov 2026 by /root/fit2/tiny2.py: the recording plays 35.703 Hz in 4941-sample steps (measured), not
+35.42 Hz; at 4.000 cycles a step every real note meets the saw at one phase, which tiny2 matches.
+tinyloops as a fit term: 140 accented 35.42 Hz notes, 112 ms apart, through sim.c's seq mode; the ringing's
 frequency at 1/7/14/28/57 ms against the recording (octaves)."""
 import os, sys, subprocess, tempfile, numpy as np
 sys.path.insert(0, '/root/exp'); import ringtrack as RT
@@ -8,7 +10,7 @@ REAL = np.array([5812., 5075., 4307., 2187., 1050.])
 def render(t, cut, res, env, dec=13, acc=127, n=60):
     d = tempfile.mkdtemp(prefix='tl_', dir='/tmp/claude-0'); t = dict(t); t['nsamp'] = float(STEP)
     tab.write(t, d + '/t.bin')
-    # sim.c takes an integer semitone; the fractional pitch goes in as the nearest semitone (-23: 34.6 Hz, 2 % off)
+    # (sim.c takes the fractional semitone as given)
     open(d + '/n.txt', 'w').write(''.join('%.4f 0 %d %d %d %d %d 0.0\n' % (SEMI, cut, res, env, dec, acc) for _ in range(n)))
     subprocess.run(['/root/fit/sim', d + '/t.bin', d + '/n.txt', d + '/o.f32', 'seq'], check=True)
     y = np.fromfile(d + '/o.f32', np.float32).astype(float)
