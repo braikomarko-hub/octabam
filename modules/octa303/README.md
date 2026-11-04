@@ -228,9 +228,9 @@ accents in a row together. Measured the same way for every version (third-octave
 | | v7.3 | v7.4 draft (F) | **v7.5** | the 303 against itself |
 |---|---|---|---|---|
 | Din Sync cells (dB) | 2.55 | 2.42 | **2.40** | 1.90 |
-| Din Sync brightness (oct) | 0.171 | 0.162 | 0.169 | 0.182 |
+| Din Sync brightness (oct) | 0.171 | 0.162 | 0.169 | 0.092 (0.182 retracted: see v7.6) |
 | Din Sync accent peak (dB, RMS) | 2.09 | 1.70 | 1.76 | — |
-| tinyloops ring (oct, RMS) | 0.130 | 1.69 | **0.078** | — |
+| tinyloops ring (oct, RMS), retracted (see v7.6) | ~~0.130~~ | ~~1.69~~ | ~~0.078~~ | — |
 
 The table is the float twin the fit runs on. Through the integer engines (`ref303.py`), scored the same way (the
 first two windows averaged over four VCO phases), v7.5 gives 2.40 dB / 0.168 oct / 1.81 dB: the same as the twin
@@ -277,38 +277,45 @@ netlist):
 
 Fitted (CMA-ES) on Din Sync's 400 notes, tinyloops' accents in a row and, for the first time, a second real
 303: rolandclan's 30 one-shots (https://www.rolandclan.com/library/tb-303, 2006, knobs unknown: each sample at
-the knobs that match it best). Fitted on Din Sync alone, the square drifted from rolandclan's (2.40–2.50 dB);
-with both, it fits both. Q8's numbers come out physical: the saw swings 4.39–9.96 V, hFE 329 (the 2SA733's P
+the knobs that match it best). Q8's numbers come out physical: the saw swings 4.39–9.96 V, hFE 329 (the 2SA733's P
 rank: 200–400).
+
+Measured again on 4 Nov 2026 after an audit of the measuring tools (two independent reviews; what changed is
+below). The float twin, now with the engine's ladder-clip point, equals the integer engine (cells within 0.002 dB,
+brightness 0.002 oct, accent 0.02 dB; first 15 ms of the notes −40 dB apart, median):
 
 | | v7.3 | v7.5 | **v7.6** | the 303 against itself |
 |---|---|---|---|---|
-| Din Sync cells (dB), float / integer | 2.55 | **2.40** / 2.40 | 2.44 / 2.44 | 1.90 |
-| Din Sync brightness (oct), float / integer | 0.171 | 0.169 / 0.168 | **0.154** / 0.155 | 0.182 |
-| Din Sync accent peak (dB), float / integer | 2.09 | 1.76 / 1.81 | **1.67** / 1.75 | — |
-| tinyloops ring (oct, RMS), mean of 8 VCO phases | — | 0.093 | **0.074** | — |
-| tinyloops ring (oct, RMS), the fit's one phase | 0.130 | 0.078 | 0.049 | — |
-| rolandclan, 16 squares (dB, best knobs) | 2.04 | 2.47 | **1.82** | — |
-| rolandclan, 14 saws (dB, best knobs) | 2.18 | 1.99 | **1.93** | — |
+| Din Sync cells (dB), all windows | 2.53 | **2.40** | 2.44 | 1.90 |
+| Din Sync cells (dB), from 40 ms | 2.02 | **1.86** | 1.95 | 0.81 |
+| Din Sync brightness (oct) | 0.179 | 0.170 | **0.156** | 0.092 |
+| Din Sync accent step (dB, mean of 8 VCO phases) | 2.12 | **1.70** | 1.71 | ~0.40 |
+| rolandclan, 30 one-shots (dB from 40 ms, best knobs) | 1.73 | 2.05 | **1.54** | — |
+| … 16 squares / 14 saws | 1.80 / 1.64 | 2.36 / 1.70 | **1.55 / 1.54** | — |
 
-On Din Sync's cells alone v7.6 is 0.04 dB behind v7.5; it gains on the brightness, the accent peaks, tinyloops
-and rolandclan.
-
-tinyloops measures the ring in 3 ms windows from 1 ms after each note, and a 35 Hz saw's reset lands anywhere in them:
-the same twin at 8 VCO phases gives v7.6 0.038–0.106 oct (mean 0.074), v7.5 0.060–0.138 (0.093), v7.3 at its
-default knobs 0.150–0.166 (0.157). The fit ran at one phase (0.0), where v7.6 sits near its best: that row is the
-fit's, the mean of 8 is the fair one (🟡 the fit term should average phases too). rolandclan's term starts at 40 ms
-and does not depend on the phase.
-
-The float twin against the integer engine (4 Nov 2026, the same 134 Din Sync notes, the same VCO phase): within
-0.1 dB in every window from 0 to 300 ms, the difference −33 dB (median, first 15 ms), so the twin's numbers are the
-engine's. Two things found on the way: (1) retracted, the "integer engine" row given here before (cells 2.29,
-brightness 0.172) and the "~2 dB above the twin in the first 15 ms" came from the check's renderer, whose pre-roll
-ran 17 samples short of the twin's, so every note met the VCO 17 samples later (the engine starts the note on its
-sample); (2) the twin lacks v7.3's ladder-clip operating point (`CL_G`, lighter above ladder index 383, ~5 kHz), so
-with CUT, RES and ENV all at 127 (Din Sync's E sets, 18 of the 134 notes) the engine is up to ~1.4 dB louder in the
-first 15 ms, while the sweep is up there; with the clip point off in the engine they agree within ±0.5 dB, the rest
-being the phase of a ring near 12 kHz. The twin should have it (🟡 to do; it moves only those corners).
+What the audit changed, and what it retracts:
+- **The 303 against itself**, scored as the model is (the 316 repeat pairs, the common mask): brightness 0.092,
+  not 0.182 (that used each side's own mask); cells from 40 ms 0.81 dB. The first two windows depend on the
+  VCO's phase, random in the recordings, and make most of the 1.90. The model is not at the 303's floor:
+  ~1.1 dB of cells from 40 ms and ~0.06 oct of brightness remain.
+- **tinyloops** (retracted: every tinyloops number given for v7.3–v7.6, 0.130 / 0.078 / 0.049 and the 8-phase
+  0.157 / 0.093 / 0.074): the recording plays 35.70 Hz in 4,941-sample steps (measured; the term assumed
+  35.42 Hz), 4.000 cycles a step, so every real note meets the saw at one phase, and the tracker's onset lands on
+  a saw reset some time after the note starts. That time cannot be read from the recording reliably (two ways
+  tried: the fundamental's phase, the energy's trough before the onset); played at 35.70 Hz the twin's error
+  runs 0.04–0.64 oct with the start phase alone, more than the versions differ. 🟡 No tinyloops number stands
+  until a measure that does not hang on that phase exists; v7.5's accent stage was chosen on the old one.
+- **Din Sync's pitch** is 65.62 Hz (measured, 24 notes, 65.61–65.64), not C2: the model plays 65.643 Hz (the
+  engine's 1/64-semitone grid). rolandclan's samples are C2 (±0.13 st, one −0.30) and stay there.
+- **The accent step** is the mean over 8 VCO phases (it was one phase, 0.25, the luckiest of 8 for v7.6:
+  1.668 there).
+- **rolandclan**: the knob search started from one grid point and stopped in local minima (knobs found for
+  another model beat it on 11 of 30 samples, by up to 1.1 dB); it now starts from the 4 best grid points and every
+  knob set any search found. The fit term used knobs searched for an older model.
+- **The twin**: v7.3's ladder-clip operating point was missing (only CUT, RES, ENV all near 127 felt it, up to
+  1.4 dB in the first 15 ms); the fit's square-edge lowpass was not read back by the report script.
+- Retracted from 4 Nov morning: the "integer engine" row (cells 2.29, brightness 0.172) and "~2 dB above the twin
+  in the first 15 ms": the check's renderer ran its pre-roll 17 samples short.
 
 Cost: 3,996 instructions a 16-sample frame (saw; 4,540 square), v7.5 3,592 / 3,937: the OTA's soft clip on both,
 the table on the square (simulator counts).
