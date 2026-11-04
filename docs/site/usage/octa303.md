@@ -1,8 +1,8 @@
 A circuit-modelled Roland TB-303 voice, one per track, as a
 machine of its own: **OCTA-303**. It needs no sample, gives up no stock
 effect, and its model follows the TB-303's circuit (Roland's service notes)
-fitted to recordings of a real TB-303 (Din Sync's x0xb0x reference set and
-tinyloops' accents).
+fitted to recordings of two real TB-303s (Din Sync's x0xb0x reference set,
+tinyloops' accents, rolandclan's one-shots).
 
 ## Access
 

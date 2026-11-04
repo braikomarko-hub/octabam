@@ -80,9 +80,9 @@ MODULE = Module(
          "an octave, a new slide takes the note it slides from. v7.3: no fs/4 whistle at the top of the "
          "filter, the VCA no longer clips or wraps (Zac Kyoti, #1011). v7.4: GATE 303's first note after PLAY "
          "sounds. v7.5: the circuit's high-pass and VCA layout (Roland service notes), refitted on Din Sync and "
-         "tinyloops."),
+         "tinyloops. v7.6: the square from Q8's circuit, the VCA's OTA, fitted on two real 303s."),
     proof=Proof.HARDWARE,
-    proof_note=("v7.4's gate under the port (1.40C, the first note after PLAY, slides on their step) and v7.5's voice in the simulator, bit-exact; v7.3's engine fixes (#1011) in the simulator only; none yet on a unit. v7.1 on the author's MKI, image O3V71 (BUILD A0, remix octa303), 23 Oct 2026: held trig + UP / DOWN an octave (several trigs at once, C5 stays), FUNC + TRIG's slide tied into the previous note, then turned to another note and an octave up, a FLEX track's TRIG + UP stock, LFO SETUP's names, save / power-cycle / reload; v7.0 on the author's MKI, image ACIDV70 (BUILD 87, remix acidtrack), 19 Oct 2026: the OCTA-303 "
+    proof_note=("v7.6's voice in the simulator, bit-exact; v7.4's gate under the port (1.40C, the first note after PLAY, slides on their step) and v7.5's voice in the simulator, bit-exact; v7.3's engine fixes (#1011) in the simulator only; none yet on a unit. v7.1 on the author's MKI, image O3V71 (BUILD A0, remix octa303), 23 Oct 2026: held trig + UP / DOWN an octave (several trigs at once, C5 stays), FUNC + TRIG's slide tied into the previous note, then turned to another note and an octave up, a FLEX track's TRIG + UP stock, LFO SETUP's names, save / power-cycle / reload; v7.0 on the author's MKI, image ACIDV70 (BUILD 87, remix acidtrack), 19 Oct 2026: the OCTA-303 "
                 "machine chosen from the list, its SETUP page, save / power-cycle / reload, the 303 gate; "
                 "v6.3-v6.9 played for hours (two or three tracks, with dEVILish and DisTorX). The engine is "
                 "bit-exact against tools/octa303/ref303.py (test_octa303); the panel under the port in "

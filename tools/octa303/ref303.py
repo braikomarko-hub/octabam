@@ -1,4 +1,4 @@
-"""OCTA303 v7.5 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
+"""OCTA303 v7.6 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
 
 One engine (TB-303).  Every helper is one assembly idiom.  sim/test_octa303.py runs the assembly
 source in cfsim and requires its output to be BIT-IDENTICAL to this model.
@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs'
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqi', 'ud', 'sqk', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2', 'sql')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -118,7 +118,8 @@ def ladder_clip(st, u):
 def ctrl(st):
     st.pcur += mulq15((st.ptgt << 8) - st.pcur, st.slide)              # SLID
     st.inc = inc_of_p(st.pcur >> 8)
-    st.sqth = T.SQ_TH[st.pcur >> 16]                                   # v6.6: the square's duty by pitch
+    st.sqi = st.pcur >> 16                                             # v7.6: the square's cycle (Q8) by semitone
+    st.sqk = T.SQK[st.sqi]
     st.meg = mul30(st.meg, st.adec if st.accd else T.TB_MEG[st.dec])    # ADEC
     st.megs += mulq15(st.meg - st.megs, T.TB_MEG_ATT)
     d = st.veg - st.vsus                                               # VDEC (the final level may move
@@ -197,13 +198,16 @@ def sample(st):
         x = (ph >> 11) - (1 << 20)
         x -= blep(ph, inc) << 5
     else:
-        th = st.sqth                                 # v6.6: high while ph < th (duty by pitch)
-        x = (1 << 20) if ph < th else -(1 << 20)
-        x += blep(ph, inc) << 5
-        x -= blep((ph - th) & M32, inc) << 5
-        x = fm(x, T.TB_KSQ, 7, 8, 'sq')
-        st.sql += fm(x - st.sql, T.TB_SQLP, 4, 11, 'sqlp')   # v6.9: the 303's square has soft edges
-        x = st.sql
+        # v7.6: Q8's square (o3q8.py): the cycle's smooth part from a table (128 points, linear) plus its one hard
+        # edge, at the saw's reset, as sqk times the saw (with the saw's polyBLEP)
+        s_ = (ph >> 11) - (1 << 20)
+        s_ -= blep(ph, inc) << 5
+        row = T.SQC[st.sqi]; i = ph >> 25; fr = (ph >> 10) & 0x7FFF
+        c0 = row[i]; c1 = row[(i + 1) & 127]
+        x = ((c0 + (chk((c1 - c0) * fr, 'sqi') >> 15)) << 5) + fm(s_, st.sqk, 7, 8, 'sqk')
+        st.sql += fm(clamp(x - st.sql, -T.SQL_DLIM, T.SQL_DLIM), T.TB_SQLP, 4, 11, 'sqlp')   # softer edges than Q8's alone;
+                                                     # v7.6 review: the step clamped so the multiply fits 32 bits
+        x = st.sql                                           # (fitted, as v6.9; claude/OCTA303_v76_Q8_studio.md)
     st.hp += fm(x - st.hp, T.TB_PREHP, 4, 11, 'prehp')
     if st.ginq15:                                    # OVDR up to normal: v6.1's product, exactly
         x = fm(x - st.hp, st.gin, 7, 8, 'gin')
@@ -227,6 +231,10 @@ def sample(st):
     st.vp2 += fm(fb - st.vp2, T.VP_HP2, 4, 11, 'vp2')
     x = (fb - st.vp1) + ((((fb - st.vp2) >> 6) * st.w2) >> 6)
     o = fm(x, st.gcomp, 6, 6, 'gc')
+    # v7.6: the VCA is an OTA (IC15 BA6110); its input sees ~3 % of the filter (220k || 100k into R124 2.2k), in the
+    # pair's tanh region: OTA_V * softclip(o / OTA_V), the engine's soft clip
+    o = clamp(o, -T.OTA_LIM, T.OTA_LIM)
+    o = fm(softclip(fm(o, T.OTA_IN, 4, 8, 'otai')), T.OTA_OUT, 4, 11, 'otao')
     o = clamp(o, -T.VCA_LIM, T.VCA_LIM)              # v6.9: the VCA multiply never wraps
     st.amp += st.ampstep
     if st.amp < 0: st.amp = 0

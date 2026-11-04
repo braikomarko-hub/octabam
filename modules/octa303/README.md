@@ -72,10 +72,10 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
   OCTA303 track it lets the stock renderer write the header (PTCH/RATE neutralised, the carrier's
   positions pinned) and then writes the 303's samples into it; every other track is stock. AMP, FX1
   and FX2 stay stock, after the voice.
-- **The engine** (per sample, Q-format integer): PolyBLEP saw / square (duty by pitch), 4-pole
+- **The engine** (per sample, Q-format integer): PolyBLEP saw, the square from Q8's circuit (v7.6), 4-pole
   diode ladder with the 303's unequal first stage, one high-pass after it shared by the feedback and
   the output (v7.5, the circuit's), resonance law `k = K(f) × law(RES) − decay(RES) × KD(f)` solved
-  from a linear model of the ladder, the VCA's input pair (v7.5), MEG / accent-sweep capacitor / VCA
+  from a linear model of the ladder, the VCA's input pair (v7.5) and its OTA (v7.6), MEG / accent-sweep capacitor / VCA
   envelopes at control rate, RC slide, output coupling and a soft output ceiling.
 - **The machine row** (v7.0) uses the seams that repeat98 measured for `analog-bassdrum`: the same
   fifteen detours and six pokes, without its engine pool. A track is stored as FLEX and signed
@@ -118,7 +118,7 @@ the same way on 3 Nov 2026, the engines through `ref303.py`; v6.8's table: `git 
 
 ### The code (✅)
 
-- `tools/octa303/sim/test_octa303.py`: 111/111 with `modules/devilish` (v7.4–v7.5; v7.3: 109/109; v7.1: 108/108; 92/92 before, 89/89 without it:
+- `tools/octa303/sim/test_octa303.py`: 114/114 with `modules/devilish` (v7.6; v7.4–v7.5: 112/112; v7.3: 109/109; v7.1: 108/108; 92/92 before, 89/89 without it:
   three checks read dEVILish's manifest, one checks OCTA303's own `DEVIL_ID`). `octa303.s` executed
   from its source text in a ColdFire simulator equals the Python model `ref303.py` sample for sample:
   both carriers, accents, slides, split frames, extreme knobs, Devil Fish on FX1/FX2 (read from the DSP
@@ -232,10 +232,10 @@ accents in a row together. Measured the same way for every version (third-octave
 | Din Sync accent peak (dB, RMS) | 2.09 | 1.70 | 1.76 | — |
 | tinyloops ring (oct, RMS) | 0.130 | 1.69 | **0.078** | — |
 
-The table is the float twin the fit runs on. Through the integer engines (`ref303.py`, one VCO phase, the
-first two windows not phase-averaged), v7.3 / F / v7.5: cells 2.75 / 2.72 / 2.66 dB (from 40 ms on: 2.09 /
-1.83 / 1.94: v7.5 gives back a little of F's sustain for its attack), brightness 0.175 / 0.172 / 0.173 oct,
-accent peak 2.14 / 1.91 / 1.77 dB.
+The table is the float twin the fit runs on. Through the integer engines (`ref303.py`), scored the same way (the
+first two windows averaged over four VCO phases), v7.5 gives 2.40 dB / 0.168 oct / 1.76 dB: the same as the twin.
+(Retracted, 4 Nov 2026: an earlier paragraph here gave integer-engine numbers from one VCO phase and with Din Sync's
+accents at ACCENT 0 rendered unaccented, a bug in the check's renderer, not the engine.)
 
 tinyloops through the integer engine (Hz at 1 / 7 / 14 / 28 / 57 ms): the 303 5812 / 5075 / 4307 / 2187 / 1050;
 v7.3 5775 / 5075 / 4200 / 2689 / 1084; v7.5 5990 / 5685 / 4487 / 2156 / 1149. The fit puts tinyloops' knobs
@@ -253,6 +253,50 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
+
+### v7.6 (4 Nov 2026): Q8's square and the VCA's OTA, fitted on two real 303s
+
+Two parts of the circuit the voice did not have, from the Roland service notes' main board (= the x0xb0x
+netlist):
+
+- **Q8, the square shaper.** The saw (Q28's source) drives a 2SA733 PNP through R35 100k and a speed-up path
+  C10 0.01 µF + R34 10k; the emitter sits on R45 22k to +12 V with C11 1 µF to ground, the collector on R36
+  10k to +5.333 V. `tools/octa303/o3q8.py` solves it as a circuit (the base-emitter exponential, hFE,
+  saturation) and takes its steady-state cycle at each semitone: the top droops as C11 discharges (more on
+  low notes), one edge is sharp (the saw's reset), the other falls slowly, and the duty follows the pitch
+  without a table of its own: the high part 60 % of the cycle at C1, 53 % at C3, 34 % at C5 (Whittle measured
+  71 % low to 45 % high: the same direction, a lower level; 🟡 not reconciled). The engine plays it as a smooth part (128
+  points a cycle, band-limited per semitone) plus `SQK` times the saw, so the one hard edge has the saw's
+  polyBLEP: its aliasing is the saw's (−36 to −47 dB, C1–C5), each row band-limited at its top. The 303's square edges are softer than the
+  circuit alone gives; the v6.9 one-pole stays on it, refitted (~6 kHz). It replaces `SQ_TH`, `TB_KSQ`.
+- **IC15 BA6110, the VCA**, is an OTA: its input pair gets ~3 % of the filter (R121 220k ‖ R122 100k into
+  R124 2.2k), enough to round the peaks: `OTA_V · softclip(o / OTA_V)` before the VCA.
+
+Fitted (CMA-ES) on Din Sync's 400 notes, tinyloops' accents in a row and, for the first time, a second real
+303: rolandclan's 30 one-shots (https://www.rolandclan.com/library/tb-303, 2006, knobs unknown: each sample at
+the knobs that match it best). Fitted on Din Sync alone, the square drifted from rolandclan's (2.40–2.50 dB);
+with both, it fits both. Q8's numbers come out physical: the saw swings 4.39–9.96 V, hFE 329 (the 2SA733's P
+rank: 200–400).
+
+| | v7.3 | v7.5 | **v7.6** | the 303 against itself |
+|---|---|---|---|---|
+| Din Sync cells (dB), float twin | 2.55 | 2.40 | 2.44 | 1.90 |
+| Din Sync cells (dB), integer engine | — | 2.40 | **2.29** | |
+| Din Sync brightness (oct), float / integer | 0.171 | 0.169 / 0.165 | **0.154** / 0.172 | 0.182 |
+| Din Sync accent peak (dB), float / integer | 2.09 | 1.76 / 1.76 | **1.67** / 1.76 | — |
+| tinyloops ring (oct, RMS) | 0.130 | 0.078 | **0.049** | — |
+| rolandclan, 16 squares (dB, best knobs) | 2.04 | 2.47 | **1.82** | — |
+| rolandclan, 14 saws (dB, best knobs) | 2.18 | 1.99 | **1.93** | — |
+
+tinyloops through the integer engine (Hz at 1 / 7 / 14 / 28 / 57 ms): the 303 5812 / 5075 / 4307 / 2187 / 1050;
+v7.6 5880 / 5258 / 4107 / 2051 / 1076.
+
+🟡 The float twin and the integer engine agree within 0.1–0.3 dB from 40 ms on; in the first 15 ms the engine reads
+~2 dB above the twin in every version (v7.5 too), so the early windows (and the brightness that weighs them) rank
+v7.6 differently in the two: better in the twin, a little worse in the engine. Open: find that 2 dB.
+
+Cost: 3,996 instructions a 16-sample frame (saw; 4,540 square), v7.5 3,592 / 3,937: the OTA's soft clip on both,
+the table on the square (simulator counts).
 
 ### v7.1 (23 Oct 2026): the sites, read from the user's 1.40C
 
@@ -304,10 +348,10 @@ square), v7.3 3,198 / 3,543 (simulator counts).
 
 ## Inferred
 
-- 🟡 **ColdFire cost.** v7.5: ~3,600 instructions per 16-sample frame per voice (saw), ~3,900
-  (square); v7.3 ~3,200 / ~3,500, ~4,700 with Devil Fish FM + MUFF (simulator instruction counts).
-  At ~1.77 cycles an instruction (`waveload`'s hardware calibration) that is ~7 % of the 363 µs frame
-  per voice, ~11 % with Devil Fish. Falsified by CF METER on the unit.
+- 🟡 **ColdFire cost.** v7.6: ~4,000 instructions per 16-sample frame per voice (saw), ~4,500
+  (square); v7.5 ~3,600 / ~3,900; v7.3 ~3,200 / ~3,500, ~4,700 with Devil Fish FM + MUFF (simulator
+  instruction counts). At ~1.77 cycles an instruction (`waveload`'s hardware calibration) that is ~8 %
+  of the 363 µs frame per voice. Falsified by CF METER on the unit.
 - 🟡 The signature bytes (NEIGHBOR's first three PLAYBACK bytes) are read by no stock code while the
   track is FLEX; `analog-bassdrum` relies on the same assumption. Falsified by a signed track
   losing its signature on a stock path (save, load, copy/paste Part, reload).

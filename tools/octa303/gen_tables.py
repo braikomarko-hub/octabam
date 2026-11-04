@@ -13,7 +13,7 @@ sys.path.insert(0, HERE)
 import o3tables as T, ref303 as R
 SRC = os.path.normpath(os.path.join(HERE, '..', '..', 'modules', 'octa303', 'octa303.s'))
 
-CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', 'GATE_K', 'GATE_HOLD_INF', 'GATE_IDLE', 'GATE_TPS0', 'GATE_FSKIP', 'ONE30', 'S_MAX', 'DIST_GAIN', 'DIST_BIAS',
+CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', 'GATE_K', 'GATE_HOLD_INF', 'GATE_IDLE', 'GATE_TPS0', 'GATE_FSKIP', 'OTA_IN', 'OTA_OUT', 'OTA_LIM', 'SQL_DLIM', 'ONE30', 'S_MAX', 'DIST_GAIN', 'DIST_BIAS',
           'TB_MEG_ATT', 'TB_ACC_VCA', 'TB_DIS', 'TB_SWEEP_ST', 'TB_ACCVCA_GAIN',
           'DF_FM_MUL', 'DF_GIN_Q15', 'DF_SLOW_G', 'DF_FAST_G', 'DF_DIS_SLOW', 'DF_ENVX_MUL',
           'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM']
@@ -22,7 +22,7 @@ TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIS
           ('O3_INC_TAB', T.INC_TAB), ('O3_TB_MEG', T.TB_MEG), ('O3_TB_ACH', T.TB_ACH),
           ('O3_TB_SWDIRECT', T.TB_SWDIRECT), ('O3_TB_SWCAP', T.TB_SWCAP), ('O3_TB_CUT', T.TB_CUT),
           ('O3_TB_OFF', T.TB_OFF), ('O3_TB_SLO', T.TB_SLO), ('O3_TB_SHI', T.TB_SHI),
-          ('O3_TB_KMUL', T.TB_KMUL), ('O3_TB_GCOMP', T.TB_GCOMP), ('O3_SQ_TH', T.SQ_TH), ('O3_ACC_AMT', T.ACC_AMT),
+          ('O3_TB_KMUL', T.TB_KMUL), ('O3_TB_GCOMP', T.TB_GCOMP), ('O3_ACC_AMT', T.ACC_AMT),
           ('O3_DF_GIN', T.DF_GIN), ('O3_DF_OCOMP', T.DF_OCOMP), ('O3_DF_OGAIN', T.DF_OGAIN),
           ('O3_DF_TRK_HZ', T.DF_TRK_HZ), ('O3_DF_VEG', T.DF_VEG), ('O3_DF_VSUS', T.DF_VSUS),
           ('O3_DF_SLIDE', T.DF_SLIDE), ('O3_DF_ADEC', T.DF_ADEC), ('O3_DF_SATK', T.DF_SATK),
@@ -31,7 +31,8 @@ TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIS
           ('O3_LADDER_B', R.LB), ('O3_LADDER_K', R.LK), ('O3_KF', T.KF), ('O3_LG', T.LG),
           ('O3_TB_UD', T.TB_UD), ('O3_KD', T.KD), ('O3_DRV_IN', T.DRV_IN), ('O3_DRV_LIM', T.DRV_LIM),
           ('O3_CL_G', T.CL_G), ('O3_CL_INV', T.CL_INV), ('O3_CL_LIM', T.CL_LIM),
-          ('O3_VP_W2', T.VP_W2)]
+          ('O3_VP_W2', T.VP_W2), ('O3_SQK', T.SQK)]
+SHORTS = [('O3_SQC', T.SQC_FLAT)]                 # v7.6: Q8's square cycles, 128 semitones x 128 points (Q15)
 
 def consts_block():
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]
@@ -45,6 +46,10 @@ def tables_block():
         L.append('%s:' % name)
         for i in range(0, len(vals), 8):
             L.append('        .long   ' + ', '.join(str(v) for v in vals[i:i + 8]))
+    for name, vals in SHORTS:
+        L.append('        .align  4'); L.append('%s:' % name)
+        for i in range(0, len(vals), 16):
+            L.append('        .short  ' + ', '.join(str(v) for v in vals[i:i + 16]))
     return '\n'.join(L)
 
 def render(src):

@@ -90,7 +90,7 @@ dfx = []
 EXT = ((0,) * 12, (127,) * 12, (127, 127, 127, 127, 127, 0, 127, 1, 0, 2, 1, 1),
        (0, 127, 127, 0, 127, 127, 0, 2, 2, 1, 0, 1), (127, 127, 0, 127, 0, 50, 64, 0, 1, 0, 0, 0),
        (100, 127, 0, 96, 127, 50, 0, 1, 1, 0, 0, 0), T.DF_NEUTRAL)
-for fn in ('TB303.WAV', 'TB303D.WAV'):
+for fn in ('TB303.WAV', 'TB303D.WAV', 'TB303SQ.WAV', 'tb303sqd.wav'):   # v7.6 (review): the square into the OTA too
     for df in EXT:
         for slot in (1, 2):
             sc = [(W(12, 0, 127, 127, 0, 127), 0, fn, True, df, slot)] + [(W(12, 0, 127, 127, 0, 127), None, fn, True, df, slot)] * (40 if FULL else 12)
@@ -173,6 +173,22 @@ _sl = [(W(0, 64, 64, 64, 64, 127), 0 if f % 50 == 0 else None, 'TB303.WAV', True
        for f in range(600)]
 _A, _B, _mm = run(_sl)
 check('bit_exact_v75_slow_accent_run', _mm is None, 'SPD SLOW, ACC 127, an accent every 50 frames, 600 frames')
+# v7.6: Q8's square through its tables: a slide over four octaves (every semitone's row, the edge's polyBLEP),
+# accented, with dEVILish's OVDR up (the VCA's OTA in its curve) and plain
+_sw = []
+for f in range(420):
+    tune = -24 + (f * 48) // 420
+    _sw.append((W(tune, 90, 100, 100, 50, 127), 0 if f == 0 else None, 'TB303SQ.WAV', True, (110, 0, 0, 64, 0, 64, 0, 0, 1, 0, 0, 0) if f >= 210 else None, 1))
+_A, _B, _mm = run(_sw)
+check('bit_exact_v76_square_sweep_ota', _mm is None, 'SQR slid C1..C5, ACC 127, OVDR 110 on the second half, 420 frames')
+# v7.6 (review): the edge rows (the pitch's clamps, rows 28 and 100) and a square after a saw (the edge lowpass's state
+# left from the last square, at the lowest row, against a new note's first sample: the step is clamped)
+_ed = [(W(-36, 60, 110, 100, 40, 127), 0 if f == 0 else None, 'TB303SQ.WAV', True) for f in range(60)]
+_ed += [(W(-36, 60, 110, 100, 40, 0), 0 if f == 0 else None, 'TB303.WAV', True) for f in range(30)]
+_ed += [(W(-36, 127, 0, 127, 40, 127), 0 if f == 0 else None, 'TB303SQ.WAV', True) for f in range(40)]
+_ed += [(W(36, 127, 127, 127, 40, 127), 0 if f == 0 else None, 'TB303SQ.WAV', True) for f in range(60)]
+_A, _B, _mm = run(_ed)
+check('bit_exact_v76_square_edge_rows', _mm is None, 'SQR at the pitch clamps, saw between, 190 frames')
 
 # ---------------------------------------------------------------- integration
 rig = Rig(); feed = sample_feed(1)
@@ -231,7 +247,7 @@ def level(fn, acc):
     return max(abs(x) for x in out), (sum(x * x for x in out) / len(out)) ** .5
 for nm, fn in NAMES.items():
     pk, rms = level(fn, 0); pka, rmsa = level(fn, 127)
-    check('audible_bounded_' + nm, 1000 < rms and pk < 32767, 'peak %d rms %.0f' % (pk, rms))
+    check('audible_bounded_' + nm, 800 < rms and pk < 32767, 'peak %d rms %.0f' % (pk, rms))   # v7.6: 800 (the refit: saw and square both ~0.6 dB under v7.5 here; the OTA ~0.1-0.2 dB of it)
     if 'dist' not in nm: check('accent_louder_' + nm, rmsa > rms * 1.05, 'rms %.0f -> %.0f' % (rms, rmsa))
 
 # ---------------------------------------------------------------- o3_retrig (detour 0x4000c634)

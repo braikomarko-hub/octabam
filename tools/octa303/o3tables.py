@@ -68,59 +68,59 @@ TB_SLIDE = q15(onepole(SLIDE_TAU))      # 303 slide: ~68 ms to 95 % (v6.3: 21 ms
 # acc_dec (the accent decays as DECAY at 0), gc0-gc3 / gall (TB_GCOMP is one gain with the VCA pair), shi0-shi4
 # (ENV MOD by ENV only); prehp 0 = no coupling high-pass (C17/R62's 0.72 Hz: a 3/32768 coefficient).
 CAL = {
-    'cut0':      200.380681,
-    'cut1':      207.870182,
-    'cut2':      384.611499,
-    'cut3':      933.96024,
-    'cut4':      1476.593396,
-    'slo0':      0.812647,
-    'slo1':      0.967584,
-    'slo2':      1.526414,
-    'slo3':      3.593055,
-    'slo4':      5.178854,
+    'cut0':      180.76655,
+    'cut1':      193.113571,
+    'cut2':      361.810767,
+    'cut3':      934.495996,
+    'cut4':      1434.30551,
+    'slo0':      0.782576,
+    'slo1':      1.026058,
+    'slo2':      1.478667,
+    'slo3':      3.739739,
+    'slo4':      5.363241,
     'shi0':      0.838333,
     'shi1':      0.675048,
     'shi2':      1.5677,
     'shi3':      3.46185,
     'shi4':      4.88259,
-    'km0':       0.156055,
-    'km1':       0.334523,
-    'km2':       0.389917,
-    'km3':       0.632997,
-    'km4':       0.722581,
-    'km5':       0.876872,
-    'ud0':       0.440745,
-    'ud1':       0.448714,
-    'ud2':       0.475983,
-    'ud3':       0.573122,
-    'ud4':       0.543348,
-    'ud5':       0.631082,
+    'km0':       0.156557,
+    'km1':       0.328305,
+    'km2':       0.451095,
+    'km3':       0.626595,
+    'km4':       0.793532,
+    'km5':       0.853925,
+    'ud0':       0.465638,
+    'ud1':       0.363693,
+    'ud2':       0.501183,
+    'ud3':       0.564881,
+    'ud4':       0.600483,
+    'ud5':       0.619066,
     'gc0':       0.853566,
     'gc1':       1.38368,
     'gc2':       1.72866,
     'gc3':       2.2254,
     'dec0':      0.156576,
-    'dec1':      0.193965,
-    'dec2':      0.526315,
-    'dec3':      1.686528,
+    'dec1':      0.18973,
+    'dec2':      0.598289,
+    'dec3':      1.73498,
     'dec4':      2.459161,
-    'acc0':      0.044659,
-    'acc1':      0.477945,
-    'acc2':      1.064755,
-    'acc3':      1.762599,
-    'kr0':       0.714306,
-    'kr1':       0.846787,
-    'kr2':       0.994304,
-    'kr3':       1.076561,
-    'kr4':       1.114392,
-    'lg0':       0.40435,
-    'lg1':       0.387774,
-    'lg2':       0.478544,
-    'lg3':       0.735454,
-    'lg4':       1.614853,
-    'swk0':      0.701374,
-    'swk1':      0.350694,
-    'swk2':      0.961395,
+    'acc0':      0.012298,
+    'acc1':      0.512746,
+    'acc2':      1.154899,
+    'acc3':      1.858586,
+    'kr0':       0.717345,
+    'kr1':       0.920449,
+    'kr2':       1.017055,
+    'kr3':       1.132693,
+    'kr4':       1.140055,
+    'lg0':       0.467025,
+    'lg1':       0.417879,
+    'lg2':       0.488168,
+    'lg3':       0.635857,
+    'lg4':       1.650117,
+    'swk0':      0.698501,
+    'swk1':      0.349962,
+    'swk2':      0.967627,
     'swk3':      1.0,
     'chk0':      1.0,
     'chk1':      1.0,
@@ -128,32 +128,36 @@ CAL = {
     'chk3':      1.06649,
     'chk4':      1.0,
     'off_a':     0.004615,
-    'off_b':     0.343376,
+    'off_b':     0.357223,
     'acc_dec':   0.130431,
-    'meg_att':   0.000205,
-    'ach0':      0.075859,
-    'ach1':      0.012585,
-    'dis':       0.17081,
-    'swd':       0.22966,
-    'swc':       0.513431,
-    'sweep_st':  75.96479,
-    'accvca_gain': 0.813727,
-    'accvca_tau': 0.001095,
+    'meg_att':   0.000586,
+    'ach0':      0.074035,
+    'ach1':      0.015727,
+    'dis':       0.155329,
+    'swd':       0.177708,
+    'swc':       0.531882,
+    'sweep_st':  72.98452,
+    'accvca_gain': 0.790284,
+    'accvca_tau': 0.00136,
     'prehp':     0.0,
-    'fbhp':      107.5,
+    'fbhp':      115.0,
     'dchp':      8.84257,
     'c1r':       2.3481,
     'ksq':       0.530941,
     'sq_c2':     0.539828,
-    'veg_tau':   1.510026,
-    'satk':      0.00048,
+    'veg_tau':   1.642356,
+    'satk':      0.000462,
     'smax':      12531.6,
-    'osat_db':   -0.889752,
-    'sqlp':      3436.633981,
+    'osat_db':   -0.798006,
+    'sqlp':      5995.791472,
     'gall':      3.7383,
     'vpair':     1,
-    'vgain':     2.661822,
-    'env_flat':  1}
+    'vgain':     2.636705,
+    'env_flat':  1,
+    'q8vlo':     4.393768,
+    'q8sw':      5.56205,
+    'q8beta':    329.033868,
+    'ota_v':     5.818058}
 KNOT_RAW = (0, 32, 64, 95, 127)                 # 0/25/50/75/100 percent of the pots
 def pchip(xs, ys, x):
     """Monotone piecewise-cubic Hermite (Fritsch-Carlson, scipy's PchipInterpolator rules)."""
@@ -210,7 +214,7 @@ TB_UD = [int(round(min(60.0, max(0.0, v)) * 1024)) for v in _rcurve([0.0] + [CAL
 TB_GCOMP = [int(round(4096 * 1.3 * CAL['gall'] * math.exp(v))) for v in _curve([0.0] + [math.log(CAL['gc%d' % i]) for i in range(4)])]
 ACC_AMT = [int(round(max(0.0, v) * 127 * 8454660)) for v in _curve([0.0] + [CAL['acc%d' % i] for i in range(4)])]   # Q30
 TB_C1R = int(round(CAL['c1r'] * 4096))     # ladder: first stage = b * C1R (Q12); the schematic's smaller bottom cap
-TB_KSQ = int(round(CAL['ksq'] * 32768))    # square level (v6.6: 27853)
+TB_KSQ = int(round(CAL['ksq'] * 32768))    # square level (v6.6: 27853); v7.6: unused (O3_K's slot kept)
 TB_SQLP = q15(onepole_hz(CAL['sqlp']))   # v6.9: the square's soft edges (Din Sync: ~3-9 dB under the saw's harmonics above 1.4 kHz)
 TB_SATK = q30(1.0 - math.exp(-CS / (FS * CAL['satk'])))   # the 303's own attack on non-accented notes (DF_SATK[0])
 VEG_TAU = CAL['veg_tau']                   # the VCA decay (DF_VEG at VDEC 64; v6.6: 1.23 s, Open303)
@@ -267,7 +271,7 @@ def _ladder_cache():
     return d
 
 # the square's duty (high part) moves with the pitch (Whittle: 45 % high .. 71 % low): sq_c2 at C2, -3.5 % an octave
-SQ_TH = [int(round(min(0.71, max(0.45, CAL['sq_c2'] - 0.035 * (i - 52) / 12.0)) * 2 ** 32)) & 0xFFFFFFFF for i in range(128)]
+# v7.6: SQ_TH (the square's duty by pitch, sq_c2) and TB_KSQ's use are gone: Q8's circuit gives both (o3q8.py)
 # v6.8: the 303's output stage saturates softly: on Din Sync every accented note peaks at ~0.35-0.39 of full
 # scale whatever the knobs (A5, D1, E1, E5), the normal notes below.  Out = OSAT_OUT * softclip(OSAT_IN * y):
 # unity for small signals, a soft ceiling of osat_db dBFS (softclip's top, 988783 in S20, reached at sqrt2).
@@ -287,6 +291,34 @@ OSAT_LIM = 4 * ((2 ** 31 - 1) // OSAT_IN) - 4                                   
 # v7.5: the accent stage is v7.3's (TB_ACH / TB_DIS / TB_SWDIRECT / TB_SWCAP / ACC_AMT / TB_ACC_VCA, fitted again
 # with the rest on Din Sync + tinyloops).  v7.4's network solved from the schematic (D24 / R46 / VR4b / C13 / R72)
 # fitted Din Sync but not tinyloops' accents in a row, and with tinyloops in its fit it lost the lines (fit G).
+# ---------------------------------------------------------------- v7.6: Q8, the square (claude/OCTA303_v76_Q8_studio.md)
+# The square shaper solved as its circuit (o3q8.py) at each semitone; the saw's swing (q8vlo .. q8vlo + q8sw volts)
+# and Q8's hFE fitted (Din Sync + tinyloops).  Cached: ~1 s a semitone in Python.
+def _q8_tables():
+    import json, os, hashlib, tempfile, o3q8
+    here = os.path.dirname(os.path.abspath(globals().get('__file__', 'o3tables.py')))
+    src = hashlib.sha256(open(os.path.join(here, 'o3q8.py'), 'rb').read()).hexdigest()   # the generator itself
+    key = [F_LOW, CAL['q8vlo'], CAL['q8vlo'] + CAL['q8sw'], CAL['q8beta'], o3q8.NPT, Q8_LO, Q8_HI, src]
+    p = os.path.join(here, 'q8_cache.json')
+    try:
+        d = json.load(open(p))
+        if d.get('key') == key: return d['SQC'], d['SQK']
+    except (OSError, ValueError):
+        pass                                                        # missing or half-written: rebuild (~70 s)
+    SQC, SQK = o3q8.tables(F_LOW, key[1], key[2], key[3], Q8_LO, Q8_HI)
+    fd, tmp = tempfile.mkstemp(dir=here, suffix='.tmp')
+    with os.fdopen(fd, 'w') as f: json.dump({'key': key, 'SQC': SQC, 'SQK': SQK}, f)
+    os.replace(tmp, p)                                              # atomic: parallel builds never read half a file
+    return SQC, SQK
+Q8_LO, Q8_HI = P_LO >> 8, P_HI >> 8                                 # every semitone the pitch can reach
+SQC, SQK = _q8_tables()                                             # SQC[semitone][128] Q15, SQK[semitone] Q15
+SQC_FLAT = [v for row in SQC for v in row]
+# v7.6: the VCA's OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V), OTA_V = 10^ota_v in the ladder's units
+OTA_V = 10 ** CAL['ota_v']
+OTA_IN = int(round(2 ** 32 / OTA_V))                                # u = (o >> 4) * OTA_IN >> 8 = o * 2^20 / OTA_V
+OTA_OUT = int(round(OTA_V / 2 ** 20 * 32768))                       # back: (y >> 4) * OTA_OUT >> 11
+OTA_LIM = int(1.4142 * OTA_V)                                       # softclip's clamp, so the product fits 32 bits
+SQL_DLIM = 1800000                                                  # the square's edge lowpass step: (d >> 4) * TB_SQLP < 2^31
 VCA_PAIR = int(CAL.get('vpair', 1))
 VP_HP1 = q15(onepole_hz(1 / (2 * math.pi * 222.2e3 * 0.01e-6))) if VCA_PAIR else 0
 VP_HP2 = q15(onepole_hz(1 / (2 * math.pi * 102.2e3 * 0.01e-6))) if VCA_PAIR else 0
