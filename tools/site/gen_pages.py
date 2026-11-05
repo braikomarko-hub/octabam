@@ -76,6 +76,7 @@ def _label(m) -> str:
         "bbd": "BBD delay",
         "blackpyramids-303": "BlackPyramids 303",
         "character-txtr": "Character TXTR",
+        "db666": "dB666",
         "devilish": "dEVILish",
         "dlcopy": "Effect loader (copier)",
         "dlpump": "Effect loader (sender)",
