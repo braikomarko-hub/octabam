@@ -63,7 +63,7 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 | 7 | GATE | OFF, 303 | OFF | OFF: the AMP page shapes the note. 303: the 303's own gate, 3.5 of the step's 6 clocks (Whittle), tied into a slide |
 | 8 | FINE | −64..+63 | 0 | fine tune, ±½ semitone |
 | 9 | SLID | 0..127 | 0 | slide time (0 = the 303's RC; `devilish`'s SLID wins when it is on the track) |
-| 10 | DRIV | 0..127 | 0 | drive into the output stage's soft ceiling, up to +18 dB |
+| 10 | DRIV | 0..127 | 0 | v7.7: at 0 the output is the 303's (the BA662A pin-6 ceiling only); above 0 a digital drive, up to +18 dB, into a soft ceiling at −0.80 dBFS |
 | 11 | ACCV | 0..127 | 64 | accent loudness (64 = the calibrated 303) |
 
 ## How it works
@@ -256,6 +256,22 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
+
+### v7.7 (5 Nov 2026): the BA662A's pin-6 ceiling replaces the digital output ceiling
+
+The VCA's OTA (IC15) drives its output, pin 6, into (R127 + R129) ∥ R128 = 52.5 kΩ from the 5.333 V
+reference: the voltage is the control current × 52.5 kΩ and cannot leave the supply. Only the strong
+accents reach it (a normal note at full drive is 2.52 V). v7.7 puts that knee after the VCA multiply,
+o / (1 + (o/L)⁴)^¼ as a 257-point table, L = 3.95 V (fitted on Din Sync with the exam notes held out,
+range 3.8–5.0 V), and removes the fitted digital output ceiling. Every other number is the clean refit
+P2K2. Measured on the twin (training | exam, the exam notes never seen by the fit): accent step 1.673 | 1.662
+→ 1.591 | 1.409 dB; the five strong exam accents +1.94 → +0.97 dB too loud (a second run from the other
+base: +2.12 → +1.56); cells from 40 ms unchanged (1.735 | 1.736 → 1.732 | 1.732). Engine = twin
+(control 8) and assembly = engine bit for bit (114/114). Cost ~+0.5 % (simulator counts).
+
+**DRIV** (SETUP): at 0 nothing else touches the output. Above 0 it is still v7.6's digital drive (up to
++18 dB into a soft ceiling, now a declared −0.80 dBFS as in v7.6); it is not part of the 303. Moving
+DRIV to the physical knee (drive into pin 6) is for later.
 
 ### v7.6 (4 Nov 2026): Q8's square and the VCA's OTA, fitted on two real 303s
 

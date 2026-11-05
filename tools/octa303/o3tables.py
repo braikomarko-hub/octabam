@@ -277,7 +277,12 @@ def _ladder_cache():
 # scale whatever the knobs (A5, D1, E1, E5), the normal notes below.  Out = OSAT_OUT * softclip(OSAT_IN * y):
 # unity for small signals, a soft ceiling of osat_db dBFS (softclip's top, 988783 in S20, reached at sqrt2).
 SOFTCLIP_TOP = 988783
-OSAT_OUT = int(round(10 ** (CAL['osat_db'] / 20.0) * 32767 * 64 * 512 / (SOFTCLIP_TOP >> 6)))   # fm(.., 6, 9)
+# v7.7: with the pin-6 ceiling (P6_ON) this stage runs only when SETUP's DRIV is moved; its ceiling is then a declared
+# constant, -0.80 dBFS as in v7.6, not the osat_db of a fit (T6B removed that stage from the fit). The physical form,
+# DRIV into the pin-6 knee, is for later (claude/OCTA303_blocco2_vca.md sec. 17).
+DRV_CEIL_DB = -0.80
+_OSAT_DB = DRV_CEIL_DB if CAL.get('p6v', 0.0) > 0 else CAL['osat_db']
+OSAT_OUT = int(round(10 ** (_OSAT_DB / 20.0) * 32767 * 64 * 512 / (SOFTCLIP_TOP >> 6)))   # fm(.., 6, 9)
 OSAT_IN = int(round(2 ** 25 / OSAT_OUT))                                                    # fm(.., 2, 8)
 OSAT_LIM = 4 * ((2 ** 31 - 1) // OSAT_IN) - 4                                               # (y >> 2) * IN fits 32 bits
 # v6.9 (v7.3: see below for today's form): the VCA's multiply must fit 32 bits; the loudest amp is the full VCA envelope plus the
