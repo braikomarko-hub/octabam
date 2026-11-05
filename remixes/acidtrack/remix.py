@@ -10,7 +10,7 @@ REMIX = Remix(
                "OCTA303 v7.1, dEVILish, MORPH v1, DISTORX, dB666, TAPE ECHO, BRAIN) 'works perfectly'; ACIDV68..ACIDV71 "
                "(October 2026): hours of live use with two or three OCTA-303 tracks, dEVILish, DISTORX and dB666",
     doc="aCiDtRacK: OCTA303 + dEVILish + MORPH (track + UP/DOWN: the scene morph by itself) + DISTORX (BOSS SD-1 + Pro Co RAT + Turbo RAT) + dB666 (side-chain from any track) + FET76 (the UREI 1176LN limiter, for the master after dB666) + AtoMizer (granular delay after the Red Panda Particle, FX2, loaded on demand; dry on T8's FX2) + LOAD METER + USB AUDIO OUT MASTER + BRAIN (switch remixes from the card) + KITS (255 Kits per project: each pattern plays its own Kit); DARK REV the one reverb.",
-    modules=('OCTA303', 'DEVILISH', 'MORPH', 'STORE', 'KITS', 'USB', 'BRAIN', 'MEMORY', 'FILTER', 'DJ EQ',
+    modules=('OCTA303', 'STROJ', 'DEVILISH', 'MORPH', 'STORE', 'KITS', 'USB', 'BRAIN', 'MEMORY', 'FILTER', 'DJ EQ',
              'COMB FILTER', 'COMPRESSOR', 'LO-FI', 'DELAY', 'DARK REV', 'DISTORX', 'DB666', 'FET76',
              'ATOMIZER', 'LOAD METER', 'DLPUMP', 'DLCOPY'),
     fx1=('FILTER', 'DJ EQ', 'COMB FILTER', 'COMPRESSOR', 'LO-FI', 'DEVILISH', 'DISTORX', 'DB666'),
