@@ -1366,6 +1366,11 @@ o3_chrom:
         lea     64-12(%a2),%a2          | a 303: raw = 64 + (idx - 12) = 52 + idx (semitones)
         bra     .Lch_out
 .Lch_stock:
+        .if     HK_MACHINE_ROWS
+        .if     MC_HAS_CHROM            | beside a machine with its own NOTE (modules/hooks, CHROM):
+        jmp     MC_NEXT_CHROM           | not ours, the next one's, entered as at the site
+        .endif
+        .endif
         .if     HK_CHROM_PITCH          | beside SCALE QUANTIZER (modules/hooks, chrom_pitch):
         jmp     qz_chrom                | every other track is its, with the stock lea in it
         .else
@@ -1813,6 +1818,13 @@ o3_lfo_name:
         jmp     0x4003c058
 .Llf_flex:
         move.l  (%sp)+,%d1
+        .if     HK_MACHINE_ROWS
+        .if     MC_HAS_LFO              | beside a machine with its own names (modules/hooks, LFO):
+        adda.l  %d1,%a0                 | not ours, the next one's, entered as at the site
+        adda.l  #0x22,%a0               | (a0 = Part + 0x8eda2 + track again)
+        jmp     MC_NEXT_LFO
+        .endif
+        .endif
         moveq   #1,%d0
 .Llf_stock:
         lea     PB_TABLE,%a0            | displaced

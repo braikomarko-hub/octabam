@@ -201,6 +201,7 @@ MACHINE_ROWS = (
     ("ANALOG BD", "ab_row_type"),
     ("OCTA303", "o3_type"),
     ("CX OSC", "fm_type"),
+    ("STROJ", "sj_row_type"),           # last: every list without it keeps its rows (modules/stroj)
 )
 # PB_TABLE (0x400d5f38) has slots 0..6 and a spare zero word at 0x400d5f54 that
 # no code reads; the FX1 table starts at 0x400d5f58: three rows at most.
@@ -224,7 +225,16 @@ MACHINES = {
                    SRC_COMMIT="fm_src_commit", SRC_COMMIT2="fm_src_commit2",
                    VALIDATE="fm_validate", RENDER="sy_render", PAGE="pg_resolve", RETRIG="po_retrig",
                    publish="fm_publish", title="fm_name"),
+    "STROJ": dict(TYPE="sj_row_type", NAME="sj_machine_name", MAIN_COMMIT="sj_main_commit",
+                  SRC_COMMIT="sj_src_commit", SRC_COMMIT2="sj_src_commit2",
+                  VALIDATE="sj_validate", RENDER="stroj_render", PAGE="sj_page", RETRIG="sj_retrig",
+                  LFO="sj_lfo_name", CHROM="sj_chrom", publish="sj_publish", title="sj_title"),
 }
+# LFO SETUP's destination names (0x4003bff0) and the CHROMATIC key -> pitch (0x4004fc58): the
+# machines whose page names or NOTE differ from FLEX's.  None for the others.
+for _k in ("ANALOG BD", "CX OSC"):
+    MACHINES[_k].update(LFO=None, CHROM=None)
+MACHINES["OCTA303"].update(LFO="o3_lfo_name", CHROM="o3_chrom")
 # The hooks whose chain is not the row order. CX OSC heads the render chain:
 # its page code and SCALE QUANTIZER find its records in the words before the
 # renderer the FLEX kind entry names (`movea.l 0x400d6438,%a0 ; movea.l
@@ -232,13 +242,14 @@ MACHINES = {
 # calls stock's 0x40004008 itself, so it is the last. CX OSC's STATIC entry
 # chains the same way: OCTA303 claims a voice only by a FLEX signature or a
 # TB303* sample's settings record (o3_marker), and stock renders the rest.
-MC_ORDER = {"RENDER": ("CX OSC", "OCTA303", "ANALOG BD"),
-            "PAGE": ("OCTA303", "CX OSC"), "RETRIG": ("OCTA303", "CX OSC")}
+# STROJ's renderer calls the next itself (as OCTA303's): before ANALOG BD's, which calls stock.
+MC_ORDER = {"RENDER": ("CX OSC", "OCTA303", "STROJ", "ANALOG BD"),
+            "PAGE": ("OCTA303", "STROJ", "CX OSC"), "RETRIG": ("OCTA303", "STROJ", "CX OSC")}
 MC_CHAINED = ("TYPE", "NAME", "MAIN_COMMIT", "SRC_COMMIT", "SRC_COMMIT2", "VALIDATE",
-              "RENDER", "PAGE", "RETRIG")
+              "RENDER", "PAGE", "RETRIG", "LFO", "CHROM")
 # The row chain's head-owned sites, and the machines that claim each (CX OSC
 # has no second name lookup and commits at 0x40079816).
-_ALL3, _AO = ("ANALOG BD", "OCTA303", "CX OSC"), ("ANALOG BD", "OCTA303")
+_ALL3, _AO = ("ANALOG BD", "OCTA303", "CX OSC", "STROJ"), ("ANALOG BD", "OCTA303", "STROJ")
 MC_HEAD_SITES = {
     0x400334D8: _ALL3, 0x4003C928: _ALL3, 0x4003D718: _ALL3, 0x4004C36A: _AO,
     0x4003C980: _ALL3, 0x400585DC: _ALL3, 0x4005221E: _ALL3, 0x40078886: _ALL3,
@@ -249,6 +260,8 @@ MC_HEAD_SITES = {
 MC_KIND_FLEX = 0x400D6438               # the FLEX kind entry: the render chain's head
 MC_PAGE_SITE = 0x40031ECE               # the PLAYBACK page resolver (CX OSC: PLACE=DRAM's)
 MC_RETRIG_SITE = 0x4000C634
+MC_LFO_SITE = 0x4003BFF0                # LFO SETUP's PLAYBACK names (OCTA303, STROJ)
+MC_CHROM_SITE = 0x4004FC58              # CHROMATIC key -> pitch (OCTA303, STROJ)
 MC_CX_COMMIT = 0x40079816               # CX OSC's machine-window commit, never a head
 # The list's count and bound sites, HOOKS's for any number of rows: each
 # machine's own six-row pokes (CX OSC: detours, and five cursor clamps).
@@ -325,7 +338,8 @@ def _mc_overrides(modules):
         out += [Override(site, k) for k in on]
     if "CX OSC" in on:
         out += [Override(site, "CX OSC") for site in MC_CLAMPS + (MC_CX_COMMIT,)]
-    for hook, site in (("RENDER", MC_KIND_FLEX), ("PAGE", MC_PAGE_SITE), ("RETRIG", MC_RETRIG_SITE)):
+    for hook, site in (("RENDER", MC_KIND_FLEX), ("PAGE", MC_PAGE_SITE), ("RETRIG", MC_RETRIG_SITE),
+                       ("LFO", MC_LFO_SITE), ("CHROM", MC_CHROM_SITE)):
         out += [Override(site, k) for k in _chain(hook, modules)[1:]]
     return out
 
