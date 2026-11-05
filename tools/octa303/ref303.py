@@ -239,6 +239,13 @@ def sample(st):
     st.amp += st.ampstep
     if st.amp < 0: st.amp = 0
     o = fm(o, st.amp >> 1, 7, 6, 'amp')              # v7.3: four times the room (#1011; v6.9-v7.1: amp, 6, 8)
+    if T.P6_ON:                                      # v7.7: the BA662A's pin 6 hits the supply (o3tables P6_*)
+        a = min(-o if o < 0 else o, T.P6_AMAX)       # beyond P6_AMAX the table is flat anyway
+        t = ((a >> 6) * T.P6_K) >> 2
+        i = t >> 16
+        if i >= 256: v = T.P6_F[256]
+        else: v = T.P6_F[i] + (((T.P6_F[i + 1] - T.P6_F[i]) * ((t & 0xFFFF) >> 1)) >> 15)
+        o = -v if o < 0 else v
     if st.muff:                                      # MUFF: the bass passes, the rest is clipped
         st.mlo += fm(clamp(o - st.mlo, -T.DF_MUFF_DLIM, T.DF_MUFF_DLIM), T.DF_MUFF_LP, 4, 11, 'mlo')   # v7.3: fits 32 bits
         h = o - st.mlo
@@ -254,6 +261,8 @@ def sample(st):
         st.tone += fm(o - st.tone, T.DIST_TONE, 7, 8, 'tone')
         o = st.tone
     st.dc += fm(o - st.dc, T.TB_DCHP, 4, 11, 'dc')
+    if T.P6_ON and st.osin == T.OSAT_IN:             # v7.7: no digital ceiling (DRIV, when moved, still drives it)
+        return clamp(o - st.dc, -(1 << 24), 1 << 24)
     y = clamp(o - st.dc, -st.oslim, st.oslim)                     # v6.8: the output stage's soft ceiling
     y = softclip(fm(y, st.osin, 2, 8, 'osi'))                     # v7.0: DRIV pushes into it
     return fm(y, T.OSAT_OUT, 6, 9, 'oso')
