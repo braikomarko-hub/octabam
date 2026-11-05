@@ -35,6 +35,7 @@ Each carries one module, or one combination, for that module's gates: `make chec
 | [`events-clients`](events-clients/README.md) | EVENTS with EUCLID in both FX slots, PLOCKS P2, USB MAIN/CUE and LOAD METER. | `make check`: Tested on radiohagen's MKII (25 Oct 2026): controlled trig undo, CONTINUE and 600-second audio capture. |
 | [`events-empty`](events-empty/README.md) | EVENTS with no clients: no event hooks or dispatcher code. | `make check`: Empty EVENTS selection: stock boundaries checked in the built image. |
 | [`ext-probe`](ext-probe/README.md) | octabam's core and stock effects (EQUALIZER's id is the probe's) with EXTPROBE on FX1: the highest window word a reverb writes. | `make check` |
+| [`fet76`](fet76/README.md) | FET76 (a model of the UREI 1176LN FET limiter) on FX1 and FX2, beside the stock effects but CHORUS, SPATIALIZER, PLATE REV and SPRING REV. | `make check`: verify_fet76 (dsp_host, bit-exact against the fixed-point model); not yet on a unit |
 | [`free-loop`](free-loop/README.md) | stock effects with FREE LOOP: a loop pedal per track, the first free loop sets the tempo. | `make check` |
 | [`gateverb`](gateverb/README.md) | GATE VERB alone: the fixture of its render gate. | local render: `verify_gateverb`; not flashed |
 | [`hooks`](hooks/README.md) | MORPH, REC_TRIG_MUTE and REC THRESHOLD together (HOOKS bridges the [TRACK] key layer and the status icons) with STORE and the stock effects. | port-gated: verify_hooks: the bridged chain and table under Unicorn, and this image's sites |

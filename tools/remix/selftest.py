@@ -1041,6 +1041,7 @@ def main():
              "hooks-machines": ("SPRING REV",),   # ANALOG BD's voices in SPRING's words, as analog-bassdrum
              "hooks-machines-all": ("SPRING REV",),   # the same, with CX OSC
              "hooks-machines-cx": (),   # OCTA303 + CX OSC: ColdFire, no DSP words
+             "stroj": (), "stroj-303": (),   # STROJ (+ OCTA303): ColdFire, no DSP words, on the 14 stock effects
              "analog-bassdrum": ("SPRING REV",),
               "blackpyramids-303": ("SPRING REV",),   # its DSP voice in SPRING's words, as ANALOG BD's
              "sidechain-compressor": ("SPRING REV",), "kyoti-mute-sidechain": ("SPRING REV",),   # its DSP section in SPRING's words
