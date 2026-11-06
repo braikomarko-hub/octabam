@@ -4,6 +4,12 @@ effect, and its model follows the TB-303's circuit (Roland's service notes)
 fitted to recordings of two real TB-303s (Din Sync's x0xb0x reference set,
 tinyloops' accents, rolandclan's one-shots).
 
+## Limit
+
+A Part holds at most two OCTA-303 tracks. Choosing OCTA-303 for a third shows `MAX 2 OCTA-303` and the track
+becomes plain FLEX, and a project that has more loses the extra machines when it loads (they become FLEX). Each playing machine takes a large share of the processor, and with more the panel stops
+answering while the audio keeps playing.
+
 ## Access
 
 Double-tap the [TRACK] key to open the machine list, choose **OCTA-303**

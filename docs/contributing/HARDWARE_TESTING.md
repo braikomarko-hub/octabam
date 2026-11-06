@@ -117,6 +117,19 @@ about 0.03 point.
 - **Results so far.** The stock effects' per-slot costs are in
   [HARDWARE_MATRIX.md](HARDWARE_MATRIX.md), "Tests not yet run", item 1.
 
+**ColdFire cost of a ColdFire module.** `tools/hw/ot_cfmatrix.py` writes a project of
+layouts whose cost is ColdFire work: OCTA-303 voices (a `TB303` sample name, or a signed
+machine), trig density, PTCH locks, VARISPEED (TSTR = VARI) and stations on FX1.
+`plan` lists a set (`--set cost` or `--set diag`), `proj SRC DEST` writes it
+(`--only-layout N` fills every slot with one layout, for the port, which plays A01), and
+`run DEST LABEL` steps the layouts over USB MIDI and records only LOAD METER's ColdFire
+share, longest run and both DSP cores. It needs no USB audio device.
+`ot_matrix.py run` on the same project adds the audio detectors but needs the device.
+The ColdFire share depends on whether a host is reading the unit's USB audio:
+BASE (8 FLEX tracks, a hit on step 1) read 29.9 % with nothing reading the stream and
+67.7 % with a capture open, TRACKS PRE, on one MKII (2 Nov 2026). Compare layouts
+within one state.
+
 ## Stress sequences
 
 `python3 tools/hw/ot_fuzz.py gen <seed> <out.json> --profile mix --minutes 10 --layouts <n>`
@@ -154,6 +167,17 @@ replays sequences under the ColdFire port with no unit.
   `out/hw/fuzz/<label>/failure.json` with the operation index, the last 40
   operations and the unit's state. `run <seq.json> <label> --until <index>`
   replays up to it. Power-cycle the unit after a failure.
+- A freeze that comes at random: `freeze_watch.py` beside the unit for as long
+  as it takes, with CLOCK SEND and TRANSPORT SEND on in the project. It adds
+  nothing to the image: `probe` shows what the unit answers (GET_STATUS, LOAD
+  METER when the image has it, USB audio's counters) and which triggers that
+  arms. At a trigger it samples `--post` seconds more and writes
+  `out/hw/freeze/freeze_<time>.json`: the `--pre` seconds before, the seconds
+  after, and which part stopped (the sequencer alone, the audio engine, or the
+  whole unit with USB). A reboot, USB DISK MODE or a STOP is logged, not
+  counted. `--when` adds a trigger of your own; `--audio` keeps the unit's
+  USB audio for the window (it starts USB audio's producer: a cost to the
+  frame interrupt). Run `freeze_watch.py selftest` after changing it.
 - Read LOAD METER after a stop before concluding the unit froze: a stopped
   count (`load_meter.healthy()`) is a frozen frame engine; a healthy count with
   silent audio is a different cause.

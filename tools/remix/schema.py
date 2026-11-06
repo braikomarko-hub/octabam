@@ -815,6 +815,12 @@ class FormatterReg:
     # On a Linked unit (Linked.registers_formatter): the formatter's entry
     # symbol in that unit; `offset` is added to it.
     symbol: str = ""
+    # A formatter that WRAPS the slot's declared one (Param.formatter_word):
+    # the build writes it over the A word after the raw descriptor words, and
+    # keeps the slot's widget (B) and 0x12a. The wrapper tail-jumps to the
+    # declared formatter, which it names as a Linked.defsym. DRAM units only.
+    # DLPUMP's dl_keyfmt over SIDECHAIN_COMPRESSOR's KEY (issue #934).
+    wraps: bool = False
 
 
 @dataclass(frozen=True)
@@ -1281,10 +1287,12 @@ class Linked:
             reference_shape(self.label, self.reference)
 
     def reference_for(self, modules) -> tuple[int, str] | None:
-        """(address, sha256) of the author's build for this selection."""
+        """(address, sha256) of the author's build, if this selection has one."""
         if self.reference is None:
             return None
         ref = self.reference(modules) if callable(self.reference) else self.reference
+        if ref is None:
+            return None
         return reference_shape(self.label, ref)
 
 

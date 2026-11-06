@@ -43,6 +43,7 @@ link cannot find stops the build. A client declares `requires=("STORE",)`.
 | PERSISTENT BUFFERS (`pbf`) | loadall_post, loadmask_post, pstore_pre, preload_post |
 | MORPH (`mrp`) | loadall_post, loadmask_post, newproj, bankw_post, pstore_pre/post, preload_post |
 | FREE LOOP (`fl`) | loadall_post, loadmask_post, newproj, bankw_post, pstore_pre/post, preload_post |
+| SCALES (`sc`) | loadall_pre, loadmask_pre, newproj, bankw_post, pstore_pre/post, preload_post, partclear |
 
 ## Caller census
 
@@ -88,7 +89,7 @@ LEVEL scrolls the list; YES answers; NO closes it without an answer, leaving the
 entries listed and asking no more until the next load. No answer touches the
 card: the callbacks run in the UI task and the save in the engine task (a file
 copy called through the port's `--call` never returned). Client ids: 0 PLOCKS P2
-(argument = the bank), 1 KITS, 2 MIDI SCENES, 3 PERSISTENT BUFFERS, 4 MORPH, 5 FREE LOOP. PLOCKS P2 used
+(argument = the bank), 1 KITS, 2 MIDI SCENES, 3 PERSISTENT BUFFERS, 4 MORPH, 5 FREE LOOP, 6 SCALES. PLOCKS P2 used
 to read a refused `p2lkNN.work` as empty and overwrite it at the next bank write.
 
 ## Measured
@@ -137,6 +138,47 @@ files. A module that only reacts to transport or editor gestures uses EVENTS.
 5. Test the client alone and alongside existing clients, including native
    save/reload/clear, interrupted replacement and disabled behavior. Declare
    the client gate in its own manifest.
+6. A client that uses a MIDI SETUP byte adds it to the table below in the
+   same PR, merged or not yet.
+
+### The MIDI SETUP record's bytes
+
+Each MIDI track's setup record is 36 bytes at Part `+0x4e2 + 36*t`
+(layout: [MIDI tracks](../../docs/firmware/MIDI_TRACKS.md) section 1). The
+table says which module uses which byte, so that two modules never pick the
+same one; it lists modules not yet merged too. The "unused" bytes are
+unused by stock's pages; the record has no byte left that no module uses.
+
+| byte | offset | stock | module | state |
+| --- | --- | --- | --- | --- |
+| 0-2 | `+0x00..0x02` | CHAN, BANK, PROG | — | stock |
+| 3 | `+0x03` | unused (NOTE SETUP slot D) | MIDI FOLLOW: source | #824 |
+| 4 | `+0x04` | SBNK | — | stock |
+| 5 | `+0x05` | unused (NOTE SETUP slot F) | MIDI HARMONY: OFF / NOTE / CHORD | radiohagen's repo |
+| 6-11 | `+0x06..0x0b` | LFO PMTR, WAVE | — | stock |
+| 12 | `+0x0c` | unused (ARP SETUP slot A) | the shared flags byte, owned by STORE: MIDI FOLLOW mode / response (bits 0-1), MIDI LOOPBACK DEST (bits 2-3) | #824; merged |
+| 13 | `+0x0d` | unused (ARP SETUP slot B) | MIDI FOLLOW: remembered fixed octave | #824 |
+| 14 | `+0x0e` | ARP LEN | — | stock |
+| 15 | `+0x0f` | unused (ARP SETUP slot D) | MIDI FOLLOW: remembered relative octave | #824 |
+| 16 | `+0x10` | unused (ARP SETUP slot E) | MIDI HARMONY: VOIC / SPRD / ROOT | radiohagen's repo |
+| 17 | `+0x11` | ARP KEY | MIDI SCALES and SCALES write it (values 25-84 past stock's 0-24); MIDI FOLLOW, MIDI HARMONY and SCALES read it (`store_part_midi_key`) | merged; SCALES PR |
+| 18 | `+0x12` | unused (CTRL1 SETUP slot A) | MIDI HARMONY: CHRD (bits 0-2), SIZE (bits 3-4) | radiohagen's repo |
+| 19 | `+0x13` | unused (CTRL1 SETUP slot B) | MIDI HARMONY: DEG, 0-83 | radiohagen's repo |
+| 20-29 | `+0x14..0x1d` | CC1..CC10 numbers | — | stock |
+| 30-35 | `+0x1e..0x23` | LFO MULT, TRIG | — | stock |
+
+Measured on stock 1.40C for `+0x12` (SCALES, 30 Oct 2026, under the port):
+the load keeps the byte (a value past 127 loads as 127), SAVE PROJECT
+writes it back, and CTRL1 SETUP's YES (`0x4003fe14`) writes back the value
+its window read when it opened (`0x40059620`), so a value no page shows
+survives a CTRL1 SETUP edit. `+0x13`, the same window's other slot, is
+inferred to behave the same and is not measured. The other unused bytes
+were not measured by SCALES; MIDI FOLLOW's and MIDI HARMONY's gates cover
+theirs. An unused byte can still be rewritten on a save
+([trap](../../docs/contributing/TRAPS.md#trap-unused-bytes)): mark, load,
+save and diff before taking one. Byte numbers: radiohagen's MIDI HARMONY
+`KITS.md`; the pages' empty slots: SCALES, read from the pages drawn under
+the port.
 
 Current clients read the native MIDI SETUP window; the general byte API also
 supports declared non-MIDI Part windows. A synthetic regression exercises two
@@ -161,6 +203,14 @@ bank file's serialized header. No raw writable pointer is returned.
 | `store_part_midi_read` | d0 = MIDI track, d1 = context, d2 = SETUP byte 0–35 | layout adapter for the general read API |
 | `store_part_midi_write` | same, d3 = value 0–127 | layout adapter for the general write API |
 | `store_part_midi_key` | d0 = MIDI track, d1 = context | read-only KEY byte; no writable permission is added |
+
+The MIDI readers share the general reader's register frame. Valid track/field
+pairs already prove the Part bounds; context, registered-window and snapshot
+checks still use the shared service. The ordinary MIDI read and KEY paths take
+44 and 42 executed instructions respectively with the current MIDI window,
+down from 48 and 53 before this optimization (`verify_store_part` checks the
+ceilings). These are instruction counts under the CPU harness, not hardware
+cycle or utilization measurements.
 
 Native replacement and setting writes use the native single UI-writer path;
 playback/interrupt readers may interrupt it. This API does not serialize
@@ -192,6 +242,9 @@ cannot veto the native operation. Read-only `store_part_snapshot_bank` and
 for companion snapshots; only STORE may write them. Bulk copies spanning
 multiple native banks are outside this contract.
 
+When a composition selects no companion callback, the build omits its setup
+and replacement walk. STORE's shared APIs and publication rules stay available.
+
 The cold resident gates use stock copy/init before the runtime is loaded.
 The original post-loader activation point publishes the DRAM targets. The
 new names and generic windows do not remove this cold-start protection.
@@ -212,9 +265,12 @@ The `verify_store_part*` gates cover context bounds, write permissions, CS1 and
 dirty state, cold-entry ABI, real copy/clear publication, replacement counters,
 boot integrity and non-MIDI windows. Removing epoch publication and corrupting
 the cold-entry register save are rejected by negative controls. Functional
-checks are emulator evidence. Earlier hardware reports for STORE's side-file
-service and MIDI Loopback remain scoped to their recorded images; **the STORE
-native Part extension still needs hardware testing**.
+checks are emulator evidence. On an Octatrack MKII (29 October 2026,
+MFOL29U / BUILD FA), Follow's native OCT setting passed Part save/reload and
+project save/power-cycle persistence; post-reboot USB MIDI pitches matched the
+saved OCT 4 value. This is limited native Part hardware coverage, not validation
+of every client or replacement operation. Earlier hardware reports for STORE's
+side-file service and MIDI Loopback remain scoped to their recorded images.
 
 Audio latches are `0x8000182a` / `0x80001832`; MIDI latches are
 `0x8000666e` / `0x80006676` (published by the MIDI step routine at

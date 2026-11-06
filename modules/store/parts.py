@@ -18,6 +18,9 @@ PART_CLIENTS = {
     'MIDI LOOPBACK': (((MIDI_BASE, MIDI_SIZE),), midi_fields(12)),
     'MIDI HARMONY': (((MIDI_BASE, MIDI_SIZE),), midi_fields(5, 16, 18, 19)),
     'MIDI SRAM': ((), ()),
+    # Reads each MIDI track's KEY (store_part_midi_key) and the engines' Part
+    # contexts; writes no native byte (its scale IDs live in scales.work).
+    'SCALES': (((MIDI_BASE, MIDI_SIZE),), ()),
 }
 # Optional companions extend replacement handling without owning native hooks.
 # snapshot_pre gets d0=bank address before publication; replace_pre gets
@@ -85,7 +88,9 @@ def part_inc(modules, remix=None):
         packed += size
     out += ['.endm']
     for event, clients in PART_CALLBACKS.items():
-        out += [f'.macro STORE_PART_{event.upper()}']
+        present = int(any(key in modules for key, _ in clients))
+        out += [f'.set STORE_PART_HAS_{event.upper()},{present}',
+                f'.macro STORE_PART_{event.upper()}']
         for key,symbol in clients:
             if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',symbol):
                 raise ValueError(f'invalid STORE Part callback {symbol}')
@@ -141,4 +146,4 @@ def additions(modules):
                 pokes=(Poke(0x400d4082,bytes.fromhex('00000001'),bytes.fromhex('00000010'),'native MIDI SETUP shared flags range'),) if flags else (),
                 claims=Claims(part_window=tuple((MIDI_BASE+36*t+12,1,'shared MIDI SETUP flags') for t in range(8))) if flags else Claims(),
                 gates=tuple(Gate(f'tools/verify/verify_store_part{suffix}.py',stage='image',venv=True)
-                            for suffix in ('','_copy','_boot','_activation','_selection')))
+                            for suffix in ('','_copy','_boot','_activation','_settings','_selection')))
