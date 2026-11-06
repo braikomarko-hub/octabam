@@ -158,7 +158,9 @@ CAL = {
     'q8sw':      5.635355,
     'q8beta':    265.609259,
     'ota_v':     5.752357,
-    'p6v':       3.951449}
+    'p6v':       3.951449,
+    'r122w':     0.16,       # v7.7 C2c: the RES wiper feeding R122 (VCA pair) follows an S track (logistic width)
+    'r122rl':    50.0}       # ... loaded by ~50 kohm (R67 + Q18 || R99, R122); claude/OCTA303_blocco2_vca.md sec. 22-23
 KNOT_RAW = (0, 32, 64, 95, 127)                 # 0/25/50/75/100 percent of the pots
 def pchip(xs, ys, x):
     """Monotone piecewise-cubic Hermite (Fritsch-Carlson, scipy's PchipInterpolator rules)."""
@@ -328,7 +330,16 @@ SQL_DLIM = 1800000                                                  # the square
 VCA_PAIR = int(CAL.get('vpair', 1))
 VP_HP1 = q15(onepole_hz(1 / (2 * math.pi * 222.2e3 * 0.01e-6))) if VCA_PAIR else 0
 VP_HP2 = q15(onepole_hz(1 / (2 * math.pi * 102.2e3 * 0.01e-6))) if VCA_PAIR else 0
-VP_W2 = [int(round(2.2 * r / 127.0 * 4096)) if VCA_PAIR else 0 for r in range(128)]
+def _smap(x, w):                    # v7.7 (C2c): normalised logistic S track of width w (taccuino 3.C); w 0 = linear (B)
+    if w <= 0: return x
+    lo, hi = 1 / (1 + math.exp(0.5 / w)), 1 / (1 + math.exp(-0.5 / w))
+    return (1 / (1 + math.exp(-(x - 0.5) / w)) - lo) / (hi - lo)
+def _r122(r):                        # the R122 branch's wiper ratio: S track, 50k pot, wiper loaded by r122rl kohm (twin sim.c)
+    ra = _smap(r / 127.0, CAL.get('r122w', 0.0)); RL = CAL.get('r122rl', 0.0)
+    if RL > 0:
+        Rb = ra * 50.0; Rp = Rb * RL / (Rb + RL + 1e-12); ra = Rp / ((1 - ra) * 50.0 + Rp + 1e-12)
+    return ra
+VP_W2 = [int(round(2.2 * _r122(r) * 4096)) if VCA_PAIR else 0 for r in range(128)]
 TB_MEG_ACC = TB_MEG[0]                                              # v7.4: an accent decays as DECAY at 0 (IC12 shorts the pot)
 AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * ((TB_ACCVCA_GAIN * 127) >> 6)) >> 15) + 64
 if VCA_PAIR:                                                        # the level by RES comes from the pair: one gain
