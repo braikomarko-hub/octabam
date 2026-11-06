@@ -279,9 +279,8 @@ def _ladder_cache():
 # scale whatever the knobs (A5, D1, E1, E5), the normal notes below.  Out = OSAT_OUT * softclip(OSAT_IN * y):
 # unity for small signals, a soft ceiling of osat_db dBFS (softclip's top, 988783 in S20, reached at sqrt2).
 SOFTCLIP_TOP = 988783
-# v7.7: with the pin-6 ceiling (P6_ON) this stage runs only when SETUP's DRIV is moved; its ceiling is then a declared
-# constant, -0.80 dBFS as in v7.6, not the osat_db of a fit (T6B removed that stage from the fit). The physical form,
-# DRIV into the pin-6 knee, is for later (claude/OCTA303_blocco2_vca.md sec. 17).
+# v7.7: with the pin-6 ceiling (P6_ON) this digital stage is gone from octa303.s; OSAT_* are still emitted as constants
+# (unused) and kept for builds without p6v. DRIV is now VR8 into the output mixer: DRV_* below.
 DRV_CEIL_DB = -0.80
 _OSAT_DB = DRV_CEIL_DB if CAL.get('p6v', 0.0) > 0 else CAL['osat_db']
 OSAT_OUT = int(round(10 ** (_OSAT_DB / 20.0) * 32767 * 64 * 512 / (SOFTCLIP_TOP >> 6)))   # fm(.., 6, 9)
@@ -356,8 +355,8 @@ VCA_LIM = (((2 ** 31 - 1) // ((AMP_MAX >> 1) + 1)) << 7) - 128
 # v7.7 (5 Nov 2026, claude/OCTA303_blocco2_vca.md sec. 10-17): the BA662A's output (pin 6) cannot leave the supply. Its
 # voltage is the OTA current x 52.5 kohm (R127 + R129 || R128); a normal note fully driven (48 uA) = 2.52 V = 0.9428 OTA_V
 # in the ladder's units. Above the limit p6v (volts) a knee then flat: o / (1 + (o/L)^4)^(1/4), as a 257-point table of
-# r = |o| / L in 0..4 (64 steps per L) with linear interpolation. With it on, the digital output ceiling (OSAT) is off
-# unless SETUP's DRIV moves it.
+# r = |o| / L in 0..4 (64 steps per L) with linear interpolation. With it on, the digital output ceiling (OSAT) is off;
+# SETUP's DRIV drives the output mixer after it (DRV_*).
 P6_ON = CAL.get('p6v', 0.0) > 0
 _P6_L = CAL.get('p6v', 0.0) / (48e-6 * 52.5e3) * (2 ** 0.5 - 2 ** 1.5 / 6) * OTA_V if P6_ON else 1.0
 P6_K = int(round(2 ** 30 / _P6_L)) if P6_ON else 0                      # t = ((|o| >> 6) * P6_K) >> 2 = 64 r in Q16
@@ -390,7 +389,7 @@ CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's 
 # Six slots: WAVE (SAW SQR SAW+D SQR+D: the carrier names' four voices), GATE (OFF: the AMP decides, as v6.9;
 # 303: the 303's own gate, 3.5 of the step's 6 clocks -- Whittle's slide page -- and held through a slide),
 # FINE (+-50 cents, 64 = 0), SLID (the slide RC as dEVILish's SLID, 0 = the 303), DRIV (the output stage
-# driven, 0 = the 303 .. +18 dB into its soft ceiling), ACCV (the accent's share on the VCA, 64 = the 303).
+# past Din Sync's VR8: 0 = the recording .. +10 dB into the output mixer's saturation, DRV_*), ACCV (the accent's share on the VCA, 64 = the 303).
 # A track without the machine (a TB303* sample) plays SETUP_NEUTRAL: v6.9 sample for sample.
 SETUP_NAMES = ('WAVE', 'GATE', 'FINE', 'SLID', 'DRIV', 'ACCV')
 SETUP_NEUTRAL = (0, 0, 64, 0, 0, 64)
@@ -398,10 +397,27 @@ SETUP_COUNT = (4, 2, 128, 128, 128, 128)
 WAVE_LABELS = ('SAW', 'SQR', 'SAW+D', 'SQR+D')
 GATE_LABELS = ('OFF', '303')
 FINE_Q8 = 2                                   # Q8 semitones a FINE step: +-64 steps = +-0.5 semitone
-DRV_DB = 18.0
-DRV_IN = [int(round(OSAT_IN * 10 ** (DRV_DB * r / 127.0 / 20.0))) for r in range(128)]
-DRV_LIM = [4 * ((2 ** 31 - 1) // v) - 4 for v in DRV_IN]           # (y >> 2) * DRV_IN fits 32 bits
-assert DRV_IN[0] == OSAT_IN and DRV_LIM[0] == OSAT_LIM
+# v7.7: DRIV is the 303's own VOLUME (VR8) turned past Din Sync's position, driving the output mixer Q33/Q34 into
+# saturation (claude/OCTA303_componenti_303.md sec. 8, the researcher's recipe). After today's ceiling C (pin 6):
+# x = 10^(10 DRIV/127/20) y (0 .. +10 dB, linear in dB: the top of VR8's A track), then a soft asymmetric limit per
+# side: |x| <= K passes, beyond it K + (L - K) tanh((|x| - K)/(L - K)), K = 0.95 L; the negative side L- = 1.0 C (Q33
+# switching off: Din Sync's limited side), the positive side L+ = 1.8 L- (Q33 saturating). DRIV 0 skips the block:
+# today's sound bit for bit. Units: the VCA output after the output coupling (o - dc, before >> SHIFT_OUT).
+DRV_DB = 10.0
+DRV_G = [int(round(4096 * 10 ** (DRV_DB * r / 127.0 / 20.0))) for r in range(128)]   # Q12
+DRV_C = P6_F[256]                                                    # today's ceiling: pin 6's table at its flat end
+DRV_LN = DRV_C; DRV_KN = int(round(0.95 * DRV_LN))
+DRV_LP = int(round(1.8 * DRV_LN)); DRV_KP = int(round(0.95 * DRV_LP))
+DRV_RN = int(round(2 ** 28 / (DRV_LN - DRV_KN)))                     # t = ((|x| - K) * R) >> 6 = 64 u in Q16
+DRV_RP = int(round(2 ** 28 / (DRV_LP - DRV_KP)))
+DRV_TH = [int(round(math.tanh(j / 64.0) * 2 ** 14)) for j in range(258)]   # tanh(u), u = j/64, Q14
+DRV_YLIM = 1 << 22                                                   # y clamped here: (y >> 6) * DRV_G fits 32 bits
+DRV_G0 = DRV_G[0]
+DRV_WN, DRV_WP = DRV_LN - DRV_KN, DRV_LP - DRV_KP                    # L - K per side
+DRV_DN4, DRV_DP4 = 4 * DRV_WN, 4 * DRV_WP                            # |x| - K clamped here (tanh 4 = 0.9993)
+assert DRV_G[0] == 4096 and (DRV_YLIM >> 6) * DRV_G[127] < 2 ** 31
+assert 4 * (DRV_LN - DRV_KN) * DRV_RN < 2 ** 31 and 4 * (DRV_LP - DRV_KP) * DRV_RP < 2 ** 31   # |x| - K clamped at 4 (L - K)
+assert (DRV_LP - DRV_KP) * 2 ** 14 < 2 ** 31
 # v7.0: CUT and ENV MOD glide to a new value (a p-lock, an LFO jump) in ~1 ms instead of stepping: the
 # knobs' cutoff base and env depth, smoothed at the control rate (Q16 of the Q8-semitone domain)
 SMOOTH_K = q15(onepole(0.001))

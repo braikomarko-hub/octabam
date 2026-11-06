@@ -66,7 +66,7 @@ class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
         self.cs = 1
-        self.accvg, self.osin, self.oslim = T.TB_ACCVCA_GAIN, T.OSAT_IN, T.OSAT_LIM
+        self.accvg, self.osin, self.oslim = T.TB_ACCVCA_GAIN, T.DRV_G[0], 0   # v7.7: osin = DRIV's gain (Q12); oslim unused
 
 def note_on(st, code, w):
     st.wave, st.dist = code & 1, code >> 1
@@ -261,11 +261,25 @@ def sample(st):
         st.tone += fm(o - st.tone, T.DIST_TONE, 7, 8, 'tone')
         o = st.tone
     st.dc += fm(o - st.dc, T.TB_DCHP, 4, 11, 'dc')
-    if T.P6_ON and st.osin == T.OSAT_IN:             # v7.7: no digital ceiling (DRIV, when moved, still drives it)
+    if st.osin == T.DRV_G[0]:                         # v7.7: DRIV 0 = Din Sync's VOLUME: pin 6 is the only ceiling
         return clamp(o - st.dc, -(1 << 24), 1 << 24)
-    y = clamp(o - st.dc, -st.oslim, st.oslim)                     # v6.8: the output stage's soft ceiling
-    y = softclip(fm(y, st.osin, 2, 8, 'osi'))                     # v7.0: DRIV pushes into it
-    return fm(y, T.OSAT_OUT, 6, 9, 'oso')
+    return drive(st, o - st.dc)
+
+def drive(st, y):
+    """v7.7: DRIV = VR8 past Din Sync's position into the output mixer Q33/Q34 (o3tables DRV_*): gain, then the
+    soft asymmetric limit, K + (L - K) tanh((|x| - K)/(L - K)) beyond K, from a Q14 tanh table."""
+    y = clamp(y, -T.DRV_YLIM, T.DRV_YLIM)
+    x = ((y >> 6) * st.osin) >> 6                    # x = y * G, G Q12
+    if x < 0: a, L, K, Rr = -x, T.DRV_LN, T.DRV_KN, T.DRV_RN
+    else: a, L, K, Rr = x, T.DRV_LP, T.DRV_KP, T.DRV_RP
+    if a > K:
+        d = min(a - K, 4 * (L - K))
+        t = (d * Rr) >> 6                            # 64 u in Q16
+        i = t >> 16
+        if i >= 256: v = T.DRV_TH[256]
+        else: v = T.DRV_TH[i] + (((T.DRV_TH[i + 1] - T.DRV_TH[i]) * ((t & 0xFFFF) >> 1)) >> 15)
+        a = K + (((L - K) * v) >> 14)
+    return -a if x < 0 else a
 
 def set_df(st, df):
     """dEVILish's twelve knobs (locks applied), or None: DF_NEUTRAL, the 303 of v6.1.1."""
@@ -287,7 +301,7 @@ def set_setup(st, setup, df):
     k = [min(v, 127) for v in (setup or T.SETUP_NEUTRAL)]
     st.accvg = (T.TB_ACCVCA_GAIN * k[5]) >> 6
     st.fine = (k[2] - 64) * T.FINE_Q8
-    st.osin, st.oslim = T.DRV_IN[k[4]], T.DRV_LIM[k[4]]
+    st.osin = T.DRV_G[k[4]]                          # v7.7: DRIV = VR8 past Din Sync's position (o3tables DRV_*)
     st.gsel = 1 if k[1] >= 1 else 0                  # GATE: OFF / 303
     if df is None:
         st.slide = T.DF_SLIDE[k[3]]

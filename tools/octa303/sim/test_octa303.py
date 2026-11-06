@@ -600,6 +600,62 @@ _n = _setup_effect(0, 0)
 _eff = {nm: _setup_effect(i, v) for i, v, nm in ((0, 1, 'WAVE'), (2, 100, 'FINE'), (3, 100, 'SLID'), (4, 127, 'DRIV'), (5, 0, 'ACCV'))}
 check('machine_setup_knobs_act', _n is not None and all(a is not None and a != _n for nm, a in _eff.items() if nm != 'SLID'),
       'WAVE FINE DRIV ACCV change the sound (SLID: the next slide)')
+# ---------------------------------------------------------------- v7.7: DRIV = VR8 past Din Sync's position, into Q33/Q34
+import types as _ty
+def _drv_ops(y, g):
+    """every product of octa303.s's .Losd / DRVSAT path (= ref303.drive), for the overflow sweep"""
+    y = max(-T.DRV_YLIM, min(T.DRV_YLIM, y)); m = [(y >> 6) * g]; x = m[0] >> 6
+    K, Rr, Wd, D4 = (T.DRV_KN, T.DRV_RN, T.DRV_WN, T.DRV_DN4) if x < 0 else (T.DRV_KP, T.DRV_RP, T.DRV_WP, T.DRV_DP4)
+    d = abs(x) - K
+    if d > 0:
+        d = min(d, D4); m.append(d * Rr); t = m[-1] >> 6; i = t >> 16
+        if i >= 256: v = T.DRV_TH[256]
+        else: m.append((T.DRV_TH[i + 1] - T.DRV_TH[i]) * ((t & 0xFFFF) >> 1)); v = T.DRV_TH[i] + (m[-1] >> 15)
+        m.append(Wd * v)
+    return m
+_ovf = _n = 0; _hi = _lo = 0
+_ys = list(range(-(1 << 25), (1 << 25) + 1, 8191)) + [s * (T.DRV_YLIM + e) for s in (-1, 1) for e in (-1, 0, 1)] + [s * (1 << 25) for s in (-1, 1)]
+for g in T.DRV_G[1:]:
+    st_ = _ty.SimpleNamespace(osin=g)
+    for y in _ys:
+        for v in _drv_ops(y, g):
+            _n += 1; _ovf += not (-2 ** 31 <= v < 2 ** 31)
+        o = R.drive(st_, y); _hi = max(_hi, o); _lo = min(_lo, o)
+check('driv_no_overflow', _ovf == 0, '%d products, DRIV 1..127, y over +-2^25: every one in 32 bits' % _n)
+check('driv_ceiling_per_side', 0 < _hi <= T.DRV_LP and -T.DRV_LN <= _lo < 0,
+      'max %+d <= L+ %d, min %+d >= -L- %d' % (_hi, T.DRV_LP, _lo, T.DRV_LN))
+def _drv_scen(drv, wave, df):
+    su = (wave, 1, 64, 0, drv, 64); sc = []
+    for f in range(144 if FULL else 48):
+        k = f // 2; sq = (127, k // 6, k % 6, 0, 16); acc = 127 if (f // 12) % 2 == 0 else 0
+        sc.append((W(12 if acc else -12, 127, 127, 127, 64, acc), 0 if f % 12 == 0 else None, 'KICK.WAV', True, df, 1, sq, df, su))
+    return sc
+def _drv_never(st, y): raise AssertionError('drive() called at DRIV 0')
+_drv_keep = R.drive; R.drive = _drv_never
+try:
+    _ok0 = True
+    for wv in (0, 2):
+        for df in (None, (127,) * 12):
+            _, _, _mm0 = run(_drv_scen(0, wv, df)); _ok0 &= _mm0 is None
+except AssertionError:
+    _ok0 = False
+finally:
+    R.drive = _drv_keep
+check('driv_0_skips_the_block', _ok0 and T.DRV_G[0] == T.DRV_G0 == 4096 and T.DRV_G[1] != 4096,
+      'DRIV 0, loud accents, SAW and SAW+D, dEVILish on/off: the reference never enters drive() and the asm equals it')
+_bad = None; _pk = {}
+for drv in (1, 64, 127):
+    for wave in ((0, 1, 2, 3) if drv == 127 else (0, 2)):              # 2, 3 = the pedal voices: the positive side's knee and cap
+        for df in (None, (127,) * 12):
+            A, B, mm = run(_drv_scen(drv, wave, df))
+            if mm is not None and _bad is None: _bad = (drv, wave, df is not None, mm)
+            s = [((v & 0xFFFFFFFF) >> 16) - (65536 if v & 0x80000000 else 0) for v in A]
+            _pk[(drv, wave, df is not None)] = (max(s), min(s))
+check('bit_exact_driv_loud', _bad is None, 'DRIV 1/64 (SAW, SAW+D) and 127 (all four waves), dEVILish all 127 on/off, accents 127 at CUT/RES/ENV 127'
+      if _bad is None else 'DRIV %d wave %d dEVILish %s mismatch @%s' % _bad)
+_neg = min(v[1] for k, v in _pk.items() if k[0] == 127); _pos = max(v[0] for k, v in _pk.items() if k[0] == 127)
+check('driv_127_reaches_both_knees', _neg <= -(T.DRV_KN >> 6) and _pos >= (T.DRV_KP >> 6),
+      'DRIV 127: peaks %+d / %+d, knees -%d / +%d (the bit-exact run covers both sides)' % (_pos, _neg, T.DRV_KN >> 6, T.DRV_KP >> 6))
 _sm = run([(W(0, 40, 100, 80, 60, 0), 0, 'TB303.WAV', True, None, 1, None, None, T.SETUP_NEUTRAL)] +
           [(W(0, 40, 100, 80, 60, 0), None, 'TB303.WAV', True, None, 1, None, None, T.SETUP_NEUTRAL)] * 30)
 _ss = run([(W(0, 40, 100, 80, 60, 0), 0, 'TB303.WAV', True)] + [(W(0, 40, 100, 80, 60, 0), None, 'TB303.WAV', True)] * 30)

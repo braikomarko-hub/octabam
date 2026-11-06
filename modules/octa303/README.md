@@ -75,7 +75,7 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 | 7 | GATE | OFF, 303 | OFF | OFF: the AMP page shapes the note. 303: the 303's own gate, 3.5 of the step's 6 clocks (Whittle), tied into a slide |
 | 8 | FINE | −64..+63 | 0 | fine tune, ±½ semitone |
 | 9 | SLID | 0..127 | 0 | slide time (0 = the 303's RC; `devilish`'s SLID wins when it is on the track) |
-| 10 | DRIV | 0..127 | 0 | v7.7: at 0 the output is the 303's (the BA662A pin-6 ceiling only); above 0 a digital drive, up to +18 dB, into a soft ceiling at −0.80 dBFS |
+| 10 | DRIV | 0..127 | 0 | v7.7: the 303's VOLUME (VR8) past Din Sync's position. 0 = the recording's level (pin 6's ceiling only); above 0 up to +10 dB into the output mixer's soft, asymmetric saturation (Q33/Q34). Projects saved with DRIV > 0 sound different |
 | 11 | ACCV | 0..127 | 64 | accent loudness (64 = the calibrated 303) |
 
 ## How it works
@@ -281,9 +281,28 @@ P2K2. Measured on the twin (training | exam, the exam notes never seen by the fi
 base: +2.12 → +1.56); cells from 40 ms unchanged (1.735 | 1.736 → 1.732 | 1.732). Engine = twin
 (control 8) and assembly = engine bit for bit (114/114). Cost ~+0.5 % (simulator counts).
 
-**DRIV** (SETUP): at 0 nothing else touches the output. Above 0 it is still v7.6's digital drive (up to
-+18 dB into a soft ceiling, now a declared −0.80 dBFS as in v7.6); it is not part of the 303. Moving
-DRIV to the physical knee (drive into pin 6) is for later.
+**The R122 branch follows RES on an S track (C2c, 6 Nov 2026).** RES is VR4, a dual pot; R122 (on the VCA's
+side) hangs on VR4A's wiper. The weight of that branch per RES step is now the wiper of an S-taper track
+(logistic, w 0.16) loaded by 50 kΩ, the same law on the twin and in `o3tables.VP_W2`; nothing was fitted
+(the fitted variant, T9S, hit its range limit on the second base and did not pass). Measured on the twin
+(training | exam): cells from 40 ms 1.732 | 1.732 → 1.655 | 1.667; Zac's map 2.044 | 2.147 → 1.946 |
+2.075; accent step 1.591 | 1.409 → 1.579 | 1.422. Engine = twin within 0.0012 (control 8); in
+`octa303.s` only the 128 numbers of `O3_VP_W2` change (0 instructions).
+
+**DRIV** (SETUP) is the 303's VOLUME knob, VR8, turned past the position Din Sync's recording was made at,
+into the output mixer Q33/Q34 (`o3tables` `DRV_*`):
+
+- **DRIV 0 = Din Sync's position: the block is skipped and the sound is bit for bit the sound without it**
+  (400-voice engine render and 40 seeded scenarios with SETUP moved, same sha256 as C2c).
+- Above 0, after today's ceiling C (pin 6's asymptote): a gain 0 → +10 dB, linear in dB over 0..127, then
+  a soft asymmetric saturation per side, K + (L − K)·tanh((|x| − K)/(L − K)) above the knee K = 0.95 L,
+  the negative side L− = C and the positive side L+ = 1.8 L−. The tanh is a table of 257 points (u = 0..4,
+  64 a unit), linear between points; |x| − K is held at 4 (L − K) (tanh 4 = 0.9993).
+- Cost (simulator counts, instructions a 16-sample frame, machine track): DRIV 0 −3 against C2c; DRIV
+  64/127 +117 (mean) on a quiet note, +134…+155 (mean) and +348…+379 (worst frame) on a loud accent, still under v7.6's digital drive at the
+  same settings (its worst frame 4 654, this one 4 623). Every product fits 32 bits (swept, DRIV 1..127).
+- **Projects saved with DRIV above 0 sound different from v7.6 and earlier**: DRIV was a digital drive up to
+  +18 dB into −0.80 dBFS; it is now at most +10 dB into the mixer's ceiling. DRIV 0 is unchanged.
 
 ### v7.6 (4 Nov 2026): Q8's square and the VCA's OTA, fitted on two real 303s
 

@@ -36,7 +36,7 @@ OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 | SETUP | GATE | OFF: the AMP page shapes the note; 303: the 303's own gate, 3.5 of 6 clocks, tied into a slide |
 | SETUP | FINE | fine tune, ±½ semitone |
 | SETUP | SLID | slide time (0 = the 303's) |
-| SETUP | DRIV | drive into the output's soft ceiling, up to +18 dB |
+| SETUP | DRIV | the 303's VOLUME turned past the recording's level: up to +10 dB into the output mixer's soft saturation (0 = as recorded) |
 | SETUP | ACCV | accent loudness (64 = the calibrated 303) |
 
 ## Playing it

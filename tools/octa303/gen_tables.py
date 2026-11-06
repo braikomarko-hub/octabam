@@ -16,7 +16,7 @@ SRC = os.path.normpath(os.path.join(HERE, '..', '..', 'modules', 'octa303', 'oct
 CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', 'GATE_K', 'GATE_HOLD_INF', 'GATE_IDLE', 'GATE_TPS0', 'GATE_FSKIP', 'OTA_IN', 'OTA_OUT', 'OTA_LIM', 'SQL_DLIM', 'ONE30', 'S_MAX', 'DIST_GAIN', 'DIST_BIAS',
           'TB_MEG_ATT', 'TB_ACC_VCA', 'TB_DIS', 'TB_SWEEP_ST', 'TB_ACCVCA_GAIN',
           'DF_FM_MUL', 'DF_GIN_Q15', 'DF_SLOW_G', 'DF_FAST_G', 'DF_DIS_SLOW', 'DF_ENVX_MUL',
-          'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM',
+          'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'DRV_G0', 'DRV_YLIM', 'DRV_KN', 'DRV_KP', 'DRV_RN', 'DRV_RP', 'DRV_WN', 'DRV_WP', 'DRV_DN4', 'DRV_DP4', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM',
           'P6_K', 'P6_AMAX']
 
 TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R, T.VP_HP1, T.VP_HP2]),
@@ -30,7 +30,7 @@ TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIS
           ('O3_DF_CUTX', T.DF_CUTX), ('O3_DF_HZ', T.DF_HZ), ('O3_DF_ACH_SLOW', T.DF_ACH_SLOW),
           ('O3_DF_ACH_FAST', T.DF_ACH_FAST),
           ('O3_LADDER_B', R.LB), ('O3_LADDER_K', R.LK), ('O3_KF', T.KF), ('O3_LG', T.LG),
-          ('O3_TB_UD', T.TB_UD), ('O3_KD', T.KD), ('O3_DRV_IN', T.DRV_IN), ('O3_DRV_LIM', T.DRV_LIM),
+          ('O3_TB_UD', T.TB_UD), ('O3_KD', T.KD), ('O3_DRV_G', T.DRV_G), ('O3_DRV_TH', T.DRV_TH),
           ('O3_CL_G', T.CL_G), ('O3_CL_INV', T.CL_INV), ('O3_CL_LIM', T.CL_LIM),
           ('O3_VP_W2', T.VP_W2), ('O3_SQK', T.SQK), ('O3_P6_F', T.P6_F)]
 SHORTS = [('O3_SQC', T.SQC_FLAT)]                 # v7.6: Q8's square cycles, 128 semitones x 128 points (Q15)
