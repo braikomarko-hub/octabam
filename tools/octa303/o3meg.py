@@ -64,7 +64,8 @@ def _t10(np, e, dt=1e-4): return np.argmax(e < 0.1) * dt * 1e3
 
 def _row(np, e, dt):
     """per-frame factor vs u = -ln(level) * 127 / 7, 128 points (the study's table: the mean factor in each bin)"""
-    tf = np.arange(0, len(e) * dt, FR); ef = np.interp(tf, np.arange(len(e)) * dt, e)
+    tf = np.arange(0, (len(e) - 1) * dt, FR); ef = np.interp(tf, np.arange(len(e)) * dt, e)   # inside the run (review: past its end the
+                                                                         # factor read 1.0, a stuck tail)
     u = -np.log(np.maximum(ef[:-1], 1e-12)); f = ef[1:] / np.maximum(ef[:-1], 1e-12); F = []
     for gq in np.arange(128) / KS:
         m = (u >= gq - 0.5 / KS) & (u < gq + 0.5 / KS) & (ef[:-1] > 1e-6)

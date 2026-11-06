@@ -368,7 +368,7 @@ def _meg_tables():
     Q, s_, kv, _ = o3meg.tables(t10)
     fd, tmp = tempfile.mkstemp(dir=here, suffix='.tmp')
     with os.fdopen(fd, 'w') as f: json.dump({'key': key, 'MEG_T': Q, 'is_scale': s_, 'vr6_scale': kv}, f)
-    os.replace(tmp, p)
+    os.replace(tmp, p); os.chmod(p, 0o644)
     return Q, s_, kv
 MEG_T, MEG_IS_SCALE, MEG_VR6_SCALE = _meg_tables()
 MEG_NROW, MEG_NLEV, MEG_LPO = len(MEG_T), len(MEG_T[0]), 6

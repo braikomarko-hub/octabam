@@ -670,9 +670,12 @@ def _meg_t10(dec):                                   # ref303's own MEG (the int
 _t0, _t127 = _meg_t10(0), _meg_t10(127)
 check('meg_roland_min_max', abs(_t0 - 200.0) < 4.0 and abs(_t127 - 2500.0) < 50.0,
       'DECAY 0 (and accents) at 10 %% in %.0f ms, DECAY 127 in %.0f ms (Roland: MIN 200 ms, MAX 2.5 s)' % (_t0, _t127))
-_mono = all(0 < R.megf(m, d) < T.ONE30 for d in range(128) for m in (1, 3, 1000, 1 << 20, 1 << 25, T.ONE30 // 3, T.ONE30))
+_mono = all(0 < R.megf(m, d) < T.ONE30 for d in range(128) for m in (1, 3, 1000, 1 << 10, 1 << 15, 1 << 20, 1 << 25, T.ONE30 // 3, T.ONE30))
 _dmono = all(_meg_t10(d) <= _meg_t10(d + 8) for d in range(0, 120, 8))
 check('meg_factor_sane', _mono and _dmono, 'every factor in (0, 1) at any level and DECAY; the decay time grows with DECAY')
+_rat = [((1 << 30) - row[j + 1]) / float((1 << 30) - row[j]) for row in T.MEG_T for j in range(T.MEG_NLEV - 4)]
+check('meg_table_smooth', 0.5 < min(_rat) and max(_rat) < 1.5,
+      "each row's decay (1 - factor) moves by %.3f..%.3f a level step: no stuck tail (review: a factor of 1.0 past the run's end)" % (min(_rat), max(_rat)))
 def _twin_step(s, Tm, dt, a7, res):                  # the twin's a2_step (sim.c), floats: the circuit itself
     import math
     VT, NVT, IS = 0.02585, 1.752 * 0.02585, 2.52e-9
