@@ -1,4 +1,4 @@
-"""OCTA303 v7.6 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
+"""OCTA303 v7.8 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
 
 One engine (TB-303).  Every helper is one assembly idiom.  sim/test_octa303.py runs the assembly
 source in cfsim and requires its output to be BIT-IDENTICAL to this model.
@@ -57,7 +57,7 @@ def softclip(y):                                    # clamp to +-sqrt2, y - y^3/
     xs = y >> 8; x2 = (xs * xs) >> 12; x3 = (x2 * xs) >> 12
     return y - ((x3 * 10923) >> 8)
 FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs', 'veg',
-          'accd', 'accamt', 'accvca', 'cap', 'amp', 'ampstep', 'hp', 'y1', 'y2', 'y3', 'y4', 'fb',
+          'accd', 'acci', 'v34', 'dvc', 'y27', 'amp', 'ampstep', 'hp', 'y1', 'y2', 'y3', 'y4', 'fb',
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
@@ -66,7 +66,7 @@ class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
         self.cs = 1
-        self.accvg, self.osin, self.oslim = T.TB_ACCVCA_GAIN, T.DRV_G[0], 0   # v7.7: osin = DRIV's gain (Q12); oslim unused
+        self.accvg, self.osin, self.oslim = 64, T.DRV_G[0], 0   # v7.8: accvg = ACCV raw (64 = the 303); v7.7: osin = DRIV's gain (Q12)
 
 def note_on(st, code, w):
     st.wave, st.dist = code & 1, code >> 1
@@ -74,7 +74,7 @@ def note_on(st, code, w):
     st.pcur = clamp(p_of_word(w[0]) + st.fine, T.P_LO, T.P_HI) << 8   # v7.0: FINE
     st.cs = 1
     st.accd = 1 if acc else 0
-    st.accamt = T.ACC_AMT[acc]                      # v6.7: the ACCENT pot's law, a table (v6.6: acc * 8454660)
+    st.acci = acc                                   # v7.8: VR7's position (the circuit's tables are by ACCENT raw)
     st.meg = T.ONE30
     st.veg = T.ONE30
     st.vatt = 0 if (st.satk and not acc) else T.ONE30   # SATK: non-accented notes fade in
@@ -115,12 +115,73 @@ def ladder_clip(st, u):
     u = clamp(u, -st.cll, st.cll)
     return fm(softclip(fm(u, st.clg, 4, 8, 'clg')), st.cli, 4, 8, 'cli')
 
+def megf(m, dec):
+    """v7.8: the MEG's factor for this frame (o3meg.py): MEG_T by DECAY (33 rows, 4 apart, linear) and by level
+    (64 points, 6 an octave, linear; level coordinate from ff1 and the mantissa: o3meg.level_of_x)"""
+    n = 32 - m.bit_length()                          # ff1: m <= ONE30, so n >= 2
+    t = (1 << 32) - (m << n)                         # 2 - the mantissa, Q31: (0, 2^31]
+    x = (n - 2) * 393216 + (t >> 15) * 6             # Q16 position on the grid (6 points an octave)
+    r, w = dec >> 2, dec & 3
+    j = x >> 16
+    def lv(row):
+        if j >= T.MEG_NLEV - 1: return row[T.MEG_NLEV - 1]
+        return row[j] + mulq15(row[j + 1] - row[j], (x & 0xFFFF) >> 1)
+    f0 = lv(T.MEG_T[r])
+    if w == 0: return f0
+    return f0 + ((chk((lv(T.MEG_T[r + 1]) - f0) * w, 'megw')) >> 2)
+
+def acf(tab, v):
+    """y = i R of a diode in series with R, from AC_F or AC_F27 (32.8 mV steps, linear)"""
+    if v <= 0: return 0
+    if v > T.AC_VMAX: v = T.AC_VMAX
+    j = v >> T.AC_FSH
+    return tab[j] + (((tab[j + 1] - tab[j]) * (v & 0x7FFF)) >> 15)
+
+def accent(st, tm):
+    """v7.8 (V8A): the accent circuit, two backward-Euler sub-steps (o3tables AC_*): returns the push to the filter
+    (Q8 semitones) and the VCA's extra level I27 / I_Q31 (Q14).  tm = the MEG (Q30) into VR7, 0 on normal notes."""
+    a, res = st.acci, st.res
+    k2 = T.AC_K2[res]
+    if st.spd == 1: k2 <<= 2                         # dEVILish SPD FAST: C13 / 4 (INTERPRETED)
+    elif st.spd == 3: k2 >>= 2                       # SLOW: C13 x 4, read doubled (INTERPRETED)
+    if tm == 0 and st.v34 == 0 and st.y27 == 0 and mul30(st.dvc, k2) == 0:   # at rest: the sub-steps would change
+        dw = mul30(st.dvc, T.AC_B1[res])                                    # nothing (exact shortcut, ~1/8 the cost)
+        if st.spd == 3: dw <<= 1
+        return mul30(dw, T.AC_KSW), 0
+    r24 = T.AC_RE[a] + T.AC_RA[res]
+    inv = (1 << 29) // r24                           # divu.l: Q29 per ohm
+    qre, qrp, q72 = T.AC_RE[a] * inv, T.AC_RP[res] * inv, T.AC_R72N * inv
+    dl = ((r24 - T.AC_R0) * T.AC_KLN) >> 16          # ~ nVT ln(R24 / R0), uV
+    y24 = 0
+    for _ in range(2):
+        ve = mul30(tm, T.AC_A1[a]) + mul30(st.v34, T.AC_A2[a])      # VR7's wiper loaded by R119 to C36
+        v24 = ve - T.AC_V134 - mul30(st.dvc, T.AC_B1[res])          # D24 + R46 + VR4B towards C13
+        y24 = acf(T.AC_F, v24 + dl) if v24 > 0 else 0
+        w7 = ve - 2 * mul30(y24, qre)
+        if w7 < 0: w7 = 0
+        dd = 2 * mul30(y24, q72) - st.dvc                            # C13 (above N134) towards i24 R72
+        st.dvc += mul30(dd, k2) if dd >= 0 else -mul30(-dd, k2)
+        p = mul30(st.v34, T.AC_AL) + mul30(w7, T.AC_BE)              # C36 with R119, then R120 + D27 into pin 1
+        j = st.y27 >> 16
+        l69 = T.AC_L69[128] if j >= 128 else T.AC_L69[j] + (((T.AC_L69[j + 1] - T.AC_L69[j]) * ((st.y27 & 0xFFFF) >> 1)) >> 15)
+        v27 = p - T.AC_V69 - l69
+        st.y27 = acf(T.AC_F27, v27) if v27 > 0 else 0
+        st.v34 = p - mul30(st.y27, T.AC_Q27G)
+        if st.v34 < 0: st.v34 = 0
+    dw = mul30(st.dvc, T.AC_B1[res])
+    if st.spd == 3: dw <<= 1
+    swq8 = mul30(dw + 2 * mul30(y24, qrp), T.AC_KSW)                  # the wiper above N134, through R72
+    return swq8, mul30(st.y27, T.AC_KV)
+
 def ctrl(st):
     st.pcur += mulq15((st.ptgt << 8) - st.pcur, st.slide)              # SLID
     st.inc = inc_of_p(st.pcur >> 8)
     st.sqi = st.pcur >> 16                                             # v7.6: the square's cycle (Q8) by semitone
     st.sqk = T.SQK[st.sqi]
-    st.meg = mul30(st.meg, st.adec if st.accd else T.TB_MEG[st.dec])    # ADEC
+    if st.accd and st.adec:                                            # dEVILish ADEC off its neutral: v7.7's
+        st.meg = mul30(st.meg, st.adec)                                # exponential
+    elif st.meg > 0:                                                   # v7.8: the circuit (o3meg.py), every note
+        st.meg = mul30(st.meg, megf(st.meg, 0 if st.accd else st.dec))
     st.megs += mulq15(st.meg - st.megs, T.TB_MEG_ATT)
     d = st.veg - st.vsus                                               # VDEC (the final level may move
     st.veg = st.vsus + mul30(d, st.vegd) if d >= 0 else st.vsus - mul30(-d, st.vegd)   # above the envelope)
@@ -128,30 +189,7 @@ def ctrl(st):
         st.vatt += mul30(T.ONE30 - st.vatt, st.satk)                     # SATK
         if st.vatt > T.ONE30 - 64: st.vatt = T.ONE30
     cut, res, env = st.cut, st.res, st.env
-    vin = mul30(st.megs, st.accamt) if (st.accd and st.swp) else 0     # SWP 0: no sweep circuit
-    # v7.5: the accent stage is v7.3's again (the direct path plus the capacitor that builds over accents in a row,
-    # fitted on Din Sync and tinyloops); v7.4's network from the schematic alone could not make tinyloops' accents
-    # in a row (claude/OCTA303_v75_ibrido.md).  The rest of the voice stays v7.4's circuit.
-    if st.spd == 2:                                                    # SPD NORM: the 303
-        if vin > st.cap:
-            st.cap += mulq15(vin - st.cap, T.TB_ACH[res])
-        st.cap -= mulq15(st.cap, T.TB_DIS)
-        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(st.cap, T.TB_SWCAP[res])
-        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
-    elif st.spd == 3:                                                  # SLOW (dEVILish): as v7.3
-        if vin > st.cap:
-            st.cap += mulq15(vin - st.cap, T.DF_ACH_SLOW[res])
-        st.cap -= mulq15(st.cap, T.DF_DIS_SLOW)
-        if st.cap > 0x3FFFFFFF: st.cap = 0x3FFFFFFF                     # v7.5: cap * DF_SLOW_G must fit 32 bits (review)
-        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(chk(st.cap * T.DF_SLOW_G, 'slowcap'), T.TB_SWCAP[res])
-        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
-    else:                                                              # FAST (dEVILish): as v7.3
-        if vin > st.cap:
-            st.cap += mulq15(vin - st.cap, T.DF_ACH_FAST[res])
-        st.cap -= mulq15(st.cap, T.TB_DIS)
-        capterm = ((vin - st.cap) >> 4) * T.DF_FAST_G if vin > st.cap else 0
-        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(capterm, T.TB_SWCAP[res])
-        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    swq8, vin = accent(st, st.megs if (st.accd and st.swp) else 0)     # v7.8: the accent circuit (SWP 0: no MEG in)
     if st.envx:                                                        # ENVX: x3, from none
         S = (((T.TB_SLO[127] + (((T.TB_SHI[127] - T.TB_SLO[127]) * res * 258) >> 15)) * T.DF_ENVX_MUL) * env) // 127
     else:
@@ -178,11 +216,10 @@ def ctrl(st):
     st.gcomp = (st.gcomp * T.LG[i]) >> 12                             # v6.7: LG, the level by frequency
     st.w2 = (T.VP_W2[res] * st.ocomp) >> 12                            # v7.4: the VCA pair's RES path (OVDR swamps it)
     v = st.veg if st.vatt >= T.ONE30 else mul30(st.veg, st.vatt)        # SATK (none: v6.1 exactly)
-    st.accvca += mulq15(vin - st.accvca, T.TB_ACC_VCA)
-    tgt = (v >> 16) + mulq15(st.accvca >> 16, st.accvg)                # Q14; v7.0: ACCV
+    tgt = (v >> 16) + ((vin * st.accvg) >> 6)                          # Q14; v7.8: + I27 / I_Q31 (pin 1); ACCV
     if st.gmode:                                                       # v6.5: the 303's gate
         st.glvl += mulq15((32767 if st.gate else 0) - st.glvl, T.GATE_K)
-        tgt = (tgt * st.glvl) >> 15
+        tgt = mulq15(tgt, st.glvl)                                     # v7.8: exact, tgt can pass 2^16
     st.ampstep = (tgt - st.amp) >> 4
 
 def sample(st):
@@ -240,11 +277,12 @@ def sample(st):
     if st.amp < 0: st.amp = 0
     o = fm(o, st.amp >> 1, 7, 6, 'amp')              # v7.3: four times the room (#1011; v6.9-v7.1: amp, 6, 8)
     if T.P6_ON:                                      # v7.7: the BA662A's pin 6 hits the supply (o3tables P6_*)
-        a = min(-o if o < 0 else o, T.P6_AMAX)       # beyond P6_AMAX the table is flat anyway
-        t = ((a >> 6) * T.P6_K) >> 2
+        if o < 0: a, K, F = min(-o, T.P6_AMAX), T.P6_K, T.P6_F   # beyond P6_AMAX the table is flat anyway
+        else: a, K, F = min(o, T.P6_AMAX), T.P6_KP, T.P6_FP      # v7.8: the positive side p6r x higher
+        t = ((a >> 6) * K) >> 2
         i = t >> 16
-        if i >= 256: v = T.P6_F[256]
-        else: v = T.P6_F[i] + (((T.P6_F[i + 1] - T.P6_F[i]) * ((t & 0xFFFF) >> 1)) >> 15)
+        if i >= 256: v = F[256]
+        else: v = F[i] + (((F[i + 1] - F[i]) * ((t & 0xFFFF) >> 1)) >> 15)
         o = -v if o < 0 else v
     if st.muff:                                      # MUFF: the bass passes, the rest is clipped
         st.mlo += fm(clamp(o - st.mlo, -T.DF_MUFF_DLIM, T.DF_MUFF_DLIM), T.DF_MUFF_LP, 4, 11, 'mlo')   # v7.3: fits 32 bits
@@ -299,7 +337,7 @@ def set_setup(st, setup, df):
     """v7.0: the TB-303 machine's SETUP page (o3tables.SETUP_NAMES), or None: SETUP_NEUTRAL (a TB303* sample).
     SLID acts only without dEVILish on the track (dEVILish's own SLID wins)."""
     k = [min(v, 127) for v in (setup or T.SETUP_NEUTRAL)]
-    st.accvg = (T.TB_ACCVCA_GAIN * k[5]) >> 6
+    st.accvg = k[5]                                  # v7.8: ACCV raw, 64 = the 303
     st.fine = (k[2] - 64) * T.FINE_Q8
     st.osin = T.DRV_G[k[4]]                          # v7.7: DRIV = VR8 past Din Sync's position (o3tables DRV_*)
     st.gsel = 1 if k[1] >= 1 else 0                  # GATE: OFF / 303

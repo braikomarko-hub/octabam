@@ -661,6 +661,99 @@ _sm = run([(W(0, 40, 100, 80, 60, 0), 0, 'TB303.WAV', True, None, 1, None, None,
 _ss = run([(W(0, 40, 100, 80, 60, 0), 0, 'TB303.WAV', True)] + [(W(0, 40, 100, 80, 60, 0), None, 'TB303.WAV', True)] * 30)
 check('machine_neutral_is_the_tb303_sample', _sm[2] is None and _ss[2] is None and _sm[0] == _ss[0])
 
+# ---------------------------------------------------------------- v7.8 (V8A): the MEG and the accent from the circuit
+def _meg_t10(dec):                                   # ref303's own MEG (the integer steps), frames to 10 % of its peak
+    m, n = T.ONE30, 0
+    while m > T.ONE30 // 10 and n < 20000:
+        m = R.mul30(m, R.megf(m, dec)); n += 1
+    return n * T.CS / T.FS * 1e3
+_t0, _t127 = _meg_t10(0), _meg_t10(127)
+check('meg_roland_min_max', abs(_t0 - 200.0) < 4.0 and abs(_t127 - 2500.0) < 50.0,
+      'DECAY 0 (and accents) at 10 %% in %.0f ms, DECAY 127 in %.0f ms (Roland: MIN 200 ms, MAX 2.5 s)' % (_t0, _t127))
+_mono = all(0 < R.megf(m, d) < T.ONE30 for d in range(128) for m in (1, 3, 1000, 1 << 20, 1 << 25, T.ONE30 // 3, T.ONE30))
+_dmono = all(_meg_t10(d) <= _meg_t10(d + 8) for d in range(0, 120, 8))
+check('meg_factor_sane', _mono and _dmono, 'every factor in (0, 1) at any level and DECAY; the decay time grows with DECAY')
+def _twin_step(s, Tm, dt, a7, res):                  # the twin's a2_step (sim.c), floats: the circuit itself
+    import math
+    VT, NVT, IS = 0.02585, 1.752 * 0.02585, 2.52e-9
+    def iser(v, Rr):
+        if v <= 0: return 0.0
+        i = max(0.5 * v / Rr, 1e-12)
+        for _ in range(60):
+            f = i * Rr + NVT * math.log(1 + i / IS) - v; i2 = i - f / (Rr + NVT / (IS + i))
+            if i2 <= 0: i2 = 0.1 * i
+            if abs(i2 - i) < 1e-15: return i2
+            i = i2
+        return i
+    r = T._smap(res / 127.0, 0.16)
+    Rt = (1 - a7) * 50e3 + 201.0; Rb = a7 * 50e3 + 1.0; kth = Rb / (Rt + Rb); Rth = Rt * Rb / (Rt + Rb)
+    Rbw = r * 50e3 + 1.0; Rwc = (1 - r) * 50e3 + 1.0; RA = 47e3 + Rbw + Rwc * 1e5 / (Rwc + 1e5)
+    VA0 = (s['vc'] * 1e5 + 3.27 * Rwc) / (Rwc + 1e5); g = 1 / Rth + 1 / 47e3
+    Ve = (Tm * kth / Rth + s['v34'] / 47e3) / g; Re = 1 / g
+    i24 = iser(Ve - VA0, Re + RA); W7 = Ve - i24 * Re
+    k = dt / (1e-6 * (Rwc + 1e5)); s['vc'] = (s['vc'] + k * (3.27 + i24 * 1e5)) / (1 + k)
+    V69 = VT * math.log(1.0 + (48e-6 + s['i27']) / 1e-14); G = 0.033e-6 / dt + 1 / 47e3
+    i27 = iser((0.033e-6 * s['v34'] / dt + W7 / 47e3) / G - V69, 22e3 + 1 / G)
+    s['v34'] = (0.033e-6 * s['v34'] / dt + W7 / 47e3 - i27) / G; s['i27'] = i27
+    Wp = (s['vc'] * 1e5 + 3.27 * Rwc) / (Rwc + 1e5) + i24 * Rwc * 1e5 / (Rwc + 1e5)
+    return 2.2e3 * (Wp - 3.27) / 1e5 / (VT * math.log(2))
+_ew, _ev, _vmax = 0.0, 0.0, 0
+for _acc, _res in ((127, 0), (127, 127), (95, 64), (64, 32), (32, 127), (8, 100)):
+    _st = R.Track(); _st.acci, _st.res, _st.spd = _acc, _res, 2
+    _tw = {'vc': 3.27, 'v34': 0.0, 'i27': 0.0}; _a7 = T._smap(_acc / 127.0, 0.16)
+    _m = T.ONE30
+    for _f in range(2000):                            # 0.73 s: three accents 240 ms apart, the MEG's own decay
+        if _f % 660 == 0: _m = T.ONE30
+        _m = R.mul30(_m, R.megf(_m, 0)) if _f % 660 < 600 else 0
+        _sw, _vi = R.accent(_st, _m)
+        for _j in range(2): _oc = _twin_step(_tw, 9.99 * _m / 2.0 ** 30, T.CS / T.FS / 2, _a7, _res)
+        _ew = max(_ew, abs(_sw / 3072.0 - _oc)); _ev = max(_ev, abs(_vi / 16384.0 - _tw['i27'] / 48e-6)); _vmax = max(_vmax, _vi)
+check('accent_is_the_circuit', _ew < 0.01 and _ev < 0.01,
+      'ref303 vs the circuit in floats (the twin\'s a2_step): push within %.4f octaves, I27 / I_Q31 within %.4f (max %.2f)' % (_ew, _ev, _vmax / 16384.0))
+_ovf, _n = 0, 0
+_keep = R.CHECK; R.CHECK = True
+try:
+    for _spd in (1, 2, 3):
+        for _acc in (1, 64, 95, 127):
+            for _res in (0, 64, 127):
+                _st = R.Track(); _st.acci, _st.res, _st.spd = _acc, _res, _spd
+                for _f in range(1500):
+                    _m = T.ONE30 if _f % 100 < 3 else T.ONE30 // 2   # accents in a row, the MEG near its peak
+                    _sw, _vi = R.accent(_st, _m); _n += 1
+                    if not (0 <= _st.dvc < 2 ** 30 and 0 <= _st.v34 < 2 ** 30 and 0 <= _st.y27 <= T.AC_YMAX
+                            and 0 <= _sw < 2 ** 24 and 0 <= _vi * 127 < 2 ** 31): _ovf += 1
+except OverflowError: _ovf += 1
+R.CHECK = _keep
+check('accent_no_overflow', _ovf == 0, '%d frames, SPD FAST/NORM/SLOW, ACC 1..127, RES 0..127, the MEG held high: states in range' % _n)
+import inspect as _insp, random as _rnd
+_src = _insp.getsource(R.accent).replace("if tm == 0 and st.v34 == 0", "if False and tm == 0 and st.v34 == 0").replace('def accent(', 'def _accent_full(')
+_ns = dict(R.__dict__); exec(_src, _ns); _full = _ns['_accent_full']
+_r = _rnd.Random(78); _bad = 0
+for _k in range(3000 if FULL else 600):
+    _s1 = R.Track(); _s1.acci, _s1.res, _s1.spd = _r.randint(0, 127), _r.randint(0, 127), _r.choice([1, 2, 3])
+    _s1.dvc = _r.choice([0, _r.randint(0, 2000), _r.randint(0, 10 ** 6)]); _s1.v34 = _r.choice([0, 0, _r.randint(0, 10 ** 6)])
+    _s1.y27 = _r.choice([0, 0, _r.randint(0, 10 ** 6)]); _tm = _r.choice([0, 0, _r.randint(0, T.ONE30)])
+    _s2 = R.Track(); _s2.__dict__.update(_s1.__dict__)
+    if R.accent(_s1, _tm) != _full(_s2, _tm) or (_s1.dvc, _s1.v34, _s1.y27) != (_s2.dvc, _s2.v34, _s2.y27): _bad += 1
+check('accent_rest_shortcut_exact', _bad == 0, 'the at-rest shortcut = the two sub-steps, outputs and state (%d random states)' % (3000 if FULL else 600))
+check('p6_asymmetric', abs(T.P6_FP[256] / T.P6_F[256] - T.CAL['p6r']) < 0.002,
+      'pin 6: the positive side at %.3f x the negative (p6r %.2f)' % (T.P6_FP[256] / T.P6_F[256], T.CAL['p6r']))
+def _acc_scen(df, accs=(127, 95, 64, 32, 0), res=(0, 64, 127)):
+    sc = []
+    for r in res:
+        for a in accs:
+            for f in range(36 if FULL else 18):
+                sc.append((W(12 if a else -12, 90, r, 100, 40, a), 0 if f == 0 else None, 'TB303.WAV', True, df))
+    return sc
+_bad = None
+for _df in (None, (25, 0, 0, 64, 0, 50, 0, 0, 0, 0, 0, 0), (25, 0, 0, 64, 0, 50, 0, 0, 2, 0, 0, 0),
+            (25, 0, 0, 64, 0, 10, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 127, 0, 2, 1, 0, 0, 0)):
+    _A, _B, _mm = run(_acc_scen(_df))
+    if _mm is not None and _bad is None: _bad = (_df, _mm)
+check('bit_exact_accent_circuit', _bad is None,
+      'accents in a row ACC 127..0 at RES 0/64/127: the 303, SPD FAST, SPD SLOW, ADEC 10 (v7.7\'s exponential), SWP SELF'
+      if _bad is None else 'dEVILish %s mismatch @%s' % _bad)
+
 # ---------------------------------------------------------------- v7.0: the machine's registration helpers
 PP = lambda part: BANK + 0x8ed80 + part * 6322
 def mrig(part=1, cur=None, sig=((2, b'TB\x01'),), types=None):

@@ -158,7 +158,8 @@ CAL = {
     'q8sw':      5.635355,
     'q8beta':    265.609259,
     'ota_v':     5.752357,
-    'p6v':       3.951449,
+    'p6v':       2.265,      # v7.8 (V8A): the pin-6 level at the centre of Din Sync's band (blocco 3, T8S strada a)
+    'p6r':       1.46,       # v7.8: the positive side's limit / the negative side's (pin 6 toward +12 V; 1.31-1.61)
     'r122w':     0.16,       # v7.7 C2c: the RES wiper feeding R122 (VCA pair) follows an S track (logistic width)
     'r122rl':    50.0}       # ... loaded by ~50 kohm (R67 + Q18 || R99, R122); claude/OCTA303_blocco2_vca.md sec. 22-23
 KNOT_RAW = (0, 32, 64, 95, 127)                 # 0/25/50/75/100 percent of the pots
@@ -340,7 +341,89 @@ def _r122(r):                        # the R122 branch's wiper ratio: S track, 5
     return ra
 VP_W2 = [int(round(2.2 * _r122(r) * 4096)) if VCA_PAIR else 0 for r in range(128)]
 TB_MEG_ACC = TB_MEG[0]                                              # v7.4: an accent decays as DECAY at 0 (IC12 shorts the pot)
-AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * ((TB_ACCVCA_GAIN * 127) >> 6)) >> 15) + 64
+# ---------------------------------------------------------------- v7.8 (V8A): the MEG and the accent from the circuit
+# claude/OCTA303_blocco3_accento.md (V8A passes from C2c and C2c': no number fitted).  Three pieces, all at the control
+# rate (CS samples):
+# (1) MEG: C62 discharging through R138 (+ VR6) into the diodes D28/D29/D26 (o3meg.py): a factor per frame by DECAY and
+#     by level, MEG_T (NROW rows x NLEV levels, Q30).  Accents (and DECAY 0) take row 0.  dEVILish's ADEC away from its
+#     neutral 50 keeps v7.7's exponential (DF_ADEC); ADEC 50 is 0 = "the circuit".
+# (2) the accent's push to the filter (VR7 -> D24 -> R46 -> VR4B -> C13, VR4B's wiper -> R72 -> N134) and (3) its
+#     current into the VCA (VR7 -> R119 -> C36 -> R120 -> D27 -> pin 1 of the BA662A, a junction): the twin's a2_step
+#     (backward Euler on C13 and C36, 2 sub-steps a frame) solved in closed form: D24 is one diode in series with
+#     R24 = Re(ACC) + RA(RES); C36's step and D27 together are one diode in series with R27 = R120 + 1/G.  A diode in
+#     series with R: y = i R from AC_F[V'] (R0, 32.8 mV steps), V' = V + nVT ln(R / R0) (linear in R: R24 spans
+#     80-107k).  Voltages in uV, y in uV.  VR7 and VR4B on the S track of VR4A (C2c, width 0.16).
+def _meg_tables():
+    import json, os, hashlib, tempfile, o3meg
+    here = os.path.dirname(os.path.abspath(globals().get('__file__', 'o3tables.py')))
+    src = hashlib.sha256(open(os.path.join(here, 'o3meg.py'), 'rb').read()).hexdigest()
+    t10 = [-CS * math.log(10) / (FS * math.log(f / 2.0 ** 30)) for f in TB_MEG]   # the model's -20 dB time by DECAY
+    key = [hashlib.sha256(repr(TB_MEG).encode()).hexdigest(), CS, FS, src]
+    p = os.path.join(here, 'meg_cache.json')
+    try:
+        d = json.load(open(p))
+        if d.get('key') == key: return d['MEG_T'], d['is_scale'], d['vr6_scale']
+    except (OSError, ValueError):
+        pass                                                        # missing or half-written: rebuild (~2 min)
+    Q, s_, kv, _ = o3meg.tables(t10)
+    fd, tmp = tempfile.mkstemp(dir=here, suffix='.tmp')
+    with os.fdopen(fd, 'w') as f: json.dump({'key': key, 'MEG_T': Q, 'is_scale': s_, 'vr6_scale': kv}, f)
+    os.replace(tmp, p)
+    return Q, s_, kv
+MEG_T, MEG_IS_SCALE, MEG_VR6_SCALE = _meg_tables()
+MEG_NROW, MEG_NLEV, MEG_LPO = len(MEG_T), len(MEG_T[0]), 6
+MEG_FLAT = [v for row in MEG_T for v in row]
+assert MEG_NROW == 33 and MEG_NLEV == 64
+assert all(abs(MEG_T[r + 1][j] - MEG_T[r][j]) * 3 < 2 ** 31 for r in range(32) for j in range(64))   # (diff * w) fits
+AC_VT, AC_NVT, AC_IS = 0.02585, 1.752 * 0.02585, 2.52e-9            # 1N4148 SPICE (D24, D27): Is, n
+AC_R46, AC_R72, AC_R119, AC_R120, AC_RV, AC_RON = 47e3, 100e3, 47e3, 22e3, 50e3, 200.0
+AC_C13, AC_C36, AC_V134, AC_VPK, AC_IQ31 = 1e-6, 0.033e-6, 3.27, 9.99, 48e-6   # C13 rests at N134 3.27 V; MEG peak
+AC_W = 0.16                                                         # VR7 and VR4B: VR4A's S track (C2c)
+AC_DT = CS / FS / 2                                                 # two sub-steps a frame, as the twin (a2_sub 2)
+def _acc_row(acc):
+    a = _smap(acc / 127.0, AC_W) if acc else 0.0
+    Rt = (1 - a) * AC_RV + AC_RON + 1.0; Rb = a * AC_RV + 1.0; kth = Rb / (Rt + Rb); Rth = Rt * Rb / (Rt + Rb)
+    Re = 1 / (1 / Rth + 1 / AC_R119)
+    return kth * Re / Rth, Re / AC_R119, Re
+def _res_row(res):
+    r = _smap(res / 127.0, AC_W)
+    Rwc = (1 - r) * AC_RV + 1.0; Rp = Rwc * AC_R72 / (Rwc + AC_R72); k = AC_DT / (AC_C13 * (Rwc + AC_R72))
+    return AC_R46 + r * AC_RV + 1.0 + Rp, Rp, AC_R72 / (Rwc + AC_R72), k / (1 + k)
+AC_A1 = [int(round(_acc_row(a)[0] * AC_VPK * 1e6)) for a in range(128)]   # uV at the MEG's peak: Ve = A1 megs + A2 v34
+AC_A2 = [q30(_acc_row(a)[1]) for a in range(128)]
+AC_RE = [int(round(_acc_row(a)[2])) for a in range(128)]            # ohm
+AC_RA = [int(round(_res_row(r)[0])) for r in range(128)]            # ohm: R46 + VR4B to the wiper + (the rest || R72)
+AC_RP = [int(round(_res_row(r)[1])) for r in range(128)]            # ohm: (VR4B wiper to C13) || R72
+AC_B1 = [q30(_res_row(r)[2]) for r in range(128)]                  # Q30: C13 seen at the wiper
+AC_K2 = [q30(_res_row(r)[3]) for r in range(128)]                  # Q30: C13's backward-Euler step, k / (1 + k)
+AC_G = AC_C36 / AC_DT + 1 / AC_R119                                 # C36's companion conductance with R119
+AC_R27 = AC_R120 + 1 / AC_G
+AC_AL, AC_BE = q30((AC_C36 / AC_DT) / AC_G), q30((1 / AC_R119) / AC_G)
+AC_Q27G = q30((1 / AC_G) / AC_R27)                                  # i27 / G = y27 Q27G
+AC_V134 = int(round(AC_V134 * 1e6))
+AC_V69 = int(round(AC_VT * math.log(1 + AC_IQ31 / 1e-14) * 1e6))    # pin 1 at Q31's current alone (the rest: AC_L69)
+AC_R72N = int(AC_R72)                                               # ohm, an integer for the engine
+AC_R0 = 93000                                                       # AC_F's resistor
+AC_KLN = int(round(AC_NVT * 1e6 / AC_R0 * 65536))                  # V' = V + ((R24 - R0) KLN >> 16) ~ nVT ln(R24 / R0)
+AC_FN, AC_FSH = 400, 15                                             # AC_F: 400 points, 2^15 uV apart (to 13.1 V)
+def _iser(v, R):                                                    # y = i R of a 1N4148 in series with R under v volts
+    if v <= 0: return 0.0
+    i = max(0.5 * v / R, 1e-12)
+    for _ in range(60):
+        f = i * R + AC_NVT * math.log(1 + i / AC_IS) - v; i2 = i - f / (R + AC_NVT / (AC_IS + i))
+        if i2 <= 0: i2 = 0.1 * i
+        if abs(i2 - i) < 1e-15: i = i2; break
+        i = i2
+    return i * R
+AC_F = [int(round(_iser((j << AC_FSH) * 1e-6, AC_R0) * 1e6)) for j in range(AC_FN)]
+AC_F27 = [int(round(_iser((j << AC_FSH) * 1e-6, AC_R27) * 1e6)) for j in range(AC_FN)]
+AC_VMAX = ((AC_FN - 1) << AC_FSH) - 1                               # V' is clamped under the last point
+AC_L69 = [int(round(AC_VT * math.log(1 + (j << 16) * 1e-6 / (AC_R27 * AC_IQ31)) * 1e6)) for j in range(129)]   # by y27
+AC_KV = q30(16384 / (AC_R27 * AC_IQ31 * 1e6))                      # Q14 VCA level per uV of y27: (I_Q31 + I27) / I_Q31
+AC_KSW = q30(2.2e3 / AC_R72 / (AC_VT * math.log(2)) * 3072 / 1e6)   # Q8 semitones per uV at the wiper (R72 into N134)
+assert all(0 <= AC_F[j + 1] - AC_F[j] < 1 << 15 for j in range(AC_FN - 1)) and all(0 <= AC_F27[j + 1] - AC_F27[j] < 1 << 15 for j in range(AC_FN - 1))
+AC_YMAX = AC_F27[-1]                                                # y27 at most (V27 clamped)
+AMP_MAX = (ONE30 >> 16) + ((((AC_YMAX >> 1) * (AC_KV >> 1)) >> 28) * 127 >> 6) + 64   # the VCA's level: ACCV 127
 if VCA_PAIR:                                                        # the level by RES comes from the pair: one gain
     TB_GCOMP = [int(round(4096 * CAL.get('vgain', 0.21)))] * 128
 if CAL.get('env_flat', 0):                                          # v7.4: ENV MOD's depth does not depend on RES (VR4b
@@ -361,9 +444,15 @@ P6_ON = CAL.get('p6v', 0.0) > 0
 _P6_L = CAL.get('p6v', 0.0) / (48e-6 * 52.5e3) * (2 ** 0.5 - 2 ** 1.5 / 6) * OTA_V if P6_ON else 1.0
 P6_K = int(round(2 ** 30 / _P6_L)) if P6_ON else 0                      # t = ((|o| >> 6) * P6_K) >> 2 = 64 r in Q16
 P6_F = [int(round(_P6_L * (j / 64.0) / (1 + (j / 64.0) ** 4) ** 0.25)) for j in range(258)] if P6_ON else [0] * 258
-P6_AMAX = 1 << 26                  # |o| is clamped here first: 64 r is then >= 256 (the flat end) and the multiply fits 32 bits
+P6_AMAX = 1 << 25                  # (v7.8: 2^25, the lower p6v) |o| is clamped here first: 64 r is then >= 256 (the flat end) and the multiply fits 32 bits
 assert not P6_ON or ((P6_AMAX >> 6) * P6_K < 2 ** 31 and ((P6_AMAX >> 6) * P6_K >> 2) >> 16 >= 256)
 assert all(P6_F[j + 1] >= P6_F[j] and P6_F[j + 1] - P6_F[j] < 1 << 15 for j in range(257))   # rising; (diff * frac) fits
+# v7.8 (V8A): pin 6 is asymmetric (Din Sync caps the negative side): the positive side's limit is p6r x the negative's
+_P6_LP = _P6_L * CAL.get('p6r', 1.0)
+P6_KP = int(round(2 ** 30 / _P6_LP)) if P6_ON else 0
+P6_FP = [int(round(_P6_LP * (j / 64.0) / (1 + (j / 64.0) ** 4) ** 0.25)) for j in range(258)] if P6_ON else [0] * 258
+assert not P6_ON or ((P6_AMAX >> 6) * P6_KP >> 2) >> 16 >= 256
+assert all(P6_FP[j + 1] >= P6_FP[j] and P6_FP[j + 1] - P6_FP[j] < 1 << 15 for j in range(257))
 # ---------------------------------------------------------------- v7.3: the ladder's soft clip at the top
 # Zac Kyoti, sambanks/octabam#1011: with CUT, RES and ENV high the resonance sweeps up through ~11 kHz, the
 # cubic soft clip's 3rd harmonic (3 fs/4) folds back onto fs/4 exactly and the loop locks to a period-4
@@ -510,7 +599,7 @@ DF_SLIDE = [q15(onepole(SLIDE_TAU * (103.3 + 500.0 * r / 127.0) / 103.3)) for r 
 DF_HIRES = 2                      # "double the usual feedback": self-oscillates at mid/high f (the 150 Hz loop HP)
 # ADEC: the accented notes' MEG decay, 30 ms .. 3 s (-20 dB); 50 = the 303's fixed ~200 ms [p. 4]
 DF_ADEC = [q30(math.exp(-CS / (FS * (0.03 * 100.0 ** (r / 127.0)) / math.log(10)))) for r in range(128)]
-DF_ADEC[50] = TB_MEG_ACC              # neutral: the 303's own accent decay, exactly
+DF_ADEC[50] = 0                       # v7.8: neutral = 0, the circuit's MEG (row 0 of MEG_T), exactly
 # SATK: the VOLUME attack of non-accented notes (pp. 4, 24-25: Decay fully ACW with Soft Attack
 # fully CW plays nothing). 0 = none, v6.1's instant attack; 1..127 = 90 % in 0.3 .. 30 ms
 DF_SATK = [0] + [q30(1.0 - math.exp(-CS / (FS * 0.0003 * 100.0 ** ((r - 1) / 126.0) / math.log(10)))) for r in range(1, 128)]

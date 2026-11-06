@@ -76,7 +76,7 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 | 8 | FINE | −64..+63 | 0 | fine tune, ±½ semitone |
 | 9 | SLID | 0..127 | 0 | slide time (0 = the 303's RC; `devilish`'s SLID wins when it is on the track) |
 | 10 | DRIV | 0..127 | 0 | v7.7: the 303's VOLUME (VR8) past Din Sync's position. 0 = the recording's level (pin 6's ceiling only); above 0 up to +10 dB into the output mixer's soft, asymmetric saturation (Q33/Q34). Projects saved with DRIV > 0 sound different |
-| 11 | ACCV | 0..127 | 64 | accent loudness (64 = the calibrated 303) |
+| 11 | ACCV | 0..127 | 64 | accent loudness: v7.8 scales the accent's current into the VCA (I27, from the circuit); 64 = the 303 |
 
 ## How it works
 
@@ -268,6 +268,50 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
+
+### v7.8 (6 Nov 2026): the MEG and the accent from the circuit (V8A)
+
+Three parts of the voice now follow the Roland service notes' main board (= the x0xb0x netlist) with **no number
+fitted to a recording**; everything else is v7.7's (claude/OCTA303_blocco3_accento.md, V8A).
+
+- **The MEG (filter envelope)** is C62 1 µF discharging through R138 68k (+ VR6, DECAY) into the diodes D28/D29
+  and the node R117/D26, read through the Q40/Q41 Darlington loaded by the Q39 JFET (`tools/octa303/o3meg.py`).
+  The diodes stretch the tail: the decay is no longer exponential. Two numbers set it, both Roland's ("DECAY VR
+  MIN T = 200 ms, MAX T = 2.5 sec"): the diodes' Is (1N4148 / 16.3) so that DECAY 0 (and every accent) falls to
+  10 % in 200 ms, and VR6's part ×0.894 so that DECAY 127 does in 2.5 s; between them the pot's law is v7.7's.
+  The engine steps it with a factor a frame from `O3_MEG_T`: 33 DECAY rows (0, 4, … 124, and an extrapolated row
+  so that 127 is exact) × 64 levels (6 an octave, the level's position from `ff1` and the mantissa), linear in
+  both, 8.4 KB. `meg_cache.json` holds it (~2 min in Python to rebuild).
+- **The accent** is the circuit: the push to the filter VR7 → D24 → R46 → VR4B → C13, VR4B's wiper → R72 →
+  N134, and the current into the VCA VR7 → R119 → C36 → R120 → D27 → the BA662A's pin 1 (a junction), the gain
+  ∝ (I_Q31 + I27) / I_Q31 with no threshold or ceiling invented. Backward Euler on C13 and C36, two sub-steps a
+  frame (as the twin); D24 is one diode in series with Re(ACCENT) + RA(RES), C36's step and D27 one diode in
+  series with R120 + 1/G, each from a table of y = i·R (`O3_AC_F`, `O3_AC_F27`, 32.8 mV apart). VR7 and VR4B
+  follow VR4A's S track (C2c, width 0.16). The accent sweep and VCA curves fitted in v7.3–v7.5 are gone
+  (`TB_ACH`, `TB_SWDIRECT`, `TB_SWCAP`, `ACC_AMT`, `TB_ACC_VCA`). At rest (no MEG in, C36 and I27 at 0, C13's step
+  0) the sub-steps are skipped: the shortcut gives the same numbers (gated).
+- **Pin 6 is asymmetric**: the negative side's limit L = "2.265 V" in the twin's scale (the centre of the band
+  where the strongest accents' negative peak sits where Din Sync's does, −9.5…−8.2 dBFS), the positive side
+  1.46 L (`O3_P6_FP`).
+
+Measured on the twin (training | exam; from C2c, and the control from C2c′ with its own thresholds, both passed):
+cells from 40 ms 1.655 | 1.667 → **1.340 | 1.343** (C2c′ 1.374 | 1.409); accent step 1.579 | 1.422 → **0.920 |
+0.862**; the five strong exam accents +1.12 → −0.86 dB; Zac's map 1.946 | 2.075 → 1.741 | 1.737; brightness 0.1363 |
+0.1388 (threshold 0.13727 | 0.14718). Engine against the twin (control 8): cells from 40 ms 1.334 | 1.335,
+brightness 0.1366 | 0.1417, accent 0.917 | 0.853: within 0.004–0.008 on the cells and +0.003 on the exam's
+brightness, the gap held in a few notes at CUT/RES 127 (as in C2c, per note); 🟡 with the MEG and the accent computed
+exactly (floats) in the engine the brightness gap stays, so it is not these tables. Assembly = engine bit for bit
+(the suite, accents in a row with dEVILish's SPD FAST/SLOW, ADEC and SELF included).
+
+dEVILish: **ADEC 50** (its default) is now the circuit's MEG (`DF_ADEC[50]` = 0); away from 50 the accents keep
+v7.7's exponential, 30 ms … 3 s. **SPD** acts on C13 (INTERPRETED): FAST C13 / 4, NORM the 303, SLOW C13 × 4 and
+its part of the push read doubled. **SWP SELF** still takes the MEG out of the accent circuit.
+
+Cost (simulator counts, instructions a 16-sample frame, machine track, v7.7 → v7.8, mean / worst frame): a plain note
+3 990 / 4 025 → 4 051 / 4 110 (+1.5 %: the MEG's table; the accent circuit at rest takes its shortcut); an accented note
+at CUT/RES/ENV 127 4 191 / 4 241 → 4 727 / 4 790 (+12.8 %, while the MEG still drives the circuit, ~0.5 s), with
+dEVILish SPD SLOW 4 071 → 4 602. 🟡 Two machines measured 65.5 % of the frame interrupt in v7.7 (above): on accented
+notes expect a few points more; to be measured on the unit.
 
 ### v7.7 (5 Nov 2026): the BA662A's pin-6 ceiling replaces the digital output ceiling
 
