@@ -503,7 +503,7 @@ CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's 
 # 303: the 303's own gate, 3.5 of the step's 6 clocks -- Whittle's slide page -- and held through a slide),
 # FINE (+-50 cents, 64 = 0), SLID (the slide RC as dEVILish's SLID, 0 = the 303), DRIV (the output stage
 # past Din Sync's VR8: 0 = the recording .. +10 dB into the output mixer's saturation, DRV_*), ACCV (the accent's share on the VCA, 64 = the 303).
-# A track without the machine (a TB303* sample) plays SETUP_NEUTRAL: v6.9 sample for sample.
+# SETUP_NEUTRAL: a new machine's SETUP (o3_mdefs); until v7.9 also what a TB303* sample's track played.
 SETUP_NAMES = ('WAVE', 'GATE', 'FINE', 'SLID', 'DRIV', 'ACCV')
 SETUP_NEUTRAL = (0, 0, 64, 0, 0, 64)
 SETUP_COUNT = (8, 2, 128, 128, 128, 128)
@@ -658,20 +658,11 @@ DF_ENVX_MUL = 3
 
 DF_HZ = [int(round(FC0 * 2.0 ** (i * 64 / 3072.0))) for i in range(S_MAX // 64 + 1)]   # TRCK: Hz of a ladder index
 
-# ---------------------------------------------------------------- distortion carriers (TB303D / TB303SQD)
+# ---------------------------------------------------------------- the distortion pedal (WAVE's +D; v6.x: TB303D / TB303SQD)
 # A fixed pedal after the VCA, as the London acid-techno records used: pre-gain, soft clip with a
 # small asymmetry (even harmonics), 6 kHz tone lowpass.  The output highpass removes the bias DC.
 DIST_GAIN = 5
 DIST_BIAS = int(round(0.12 * (1 << 20)))
 DIST_TONE = q15(onepole_hz(6000.0))
 
-# the carrier's file name (after the last '/', case-insensitive) decides wave and pedal:
-#   TB303*  saw     TB303SQ*  square     TB303D*  saw+pedal     TB303SQD*  square+pedal
-# code = (dist << 1) | wave; not a TB303* name -> -1
-def name_code(name):
-    n = name.upper()
-    if not n.startswith('TB303'): return -1
-    n = n[5:]; wave = dist = 0
-    if n.startswith('SQ'): wave = 1; n = n[2:]
-    if n.startswith('D'): dist = 1
-    return (dist << 1) | wave
+# v7.9: name_code (a TB303* file name -> the carrier) is gone with the sample way in; test_octa303 keeps its own.

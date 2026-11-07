@@ -9,8 +9,10 @@
 Each layout is one pattern of bank A-H playing its own part, selected by program change as in ot_matrix.
 The axes are ColdFire work that scales with something the project holds:
 
-  OCTA-303 voices   n tracks on a FLEX slot whose sample is named TB303 (saw) or TB303D (saw + pedal),
-                    a trig on every step; the other tracks play HITS on step 1 only
+  OCTA-303 voices   n signed OCTA-303 machines (at most two in a Part: octa303.s O3_MAX), SETUP's WAVE SAW
+                    or SAW+D, a trig on every step; the other tracks play HITS on step 1 only.  OCTA303 v7.9
+                    took away the older way in (a FLEX slot whose sample is named TB303*): such a slot is a
+                    sample, so every layout's 303 is a machine now
   trig density      all eight tracks on HITS, a trig on step 1 / on every step / on every step with a PTCH lock
   VARISPEED         TSTR = VARI (4) on n tracks, HITS on every step
   stations on FX1   the 303 layouts with a station on FX1 of every track
@@ -40,10 +42,10 @@ LOCK_FLAT = 0                       # PTCH, PLAYBACK page 1 slot A (STEP_LOCKS.m
 
 class Lay:
     def __init__(self, name, n303=0, carrier=SLOT_303, density="sparse", locks=False, fx1=None, vari=(),
-                 signed=False, steps303=None, stepsrest=None):
-        self.name, self.n303, self.carrier = name, n303, carrier
+                 signed=True, steps303=None, stepsrest=None, wave=0):
+        self.name, self.n303, self.carrier, self.wave = name, n303, carrier, wave
         self.vari = tuple(vari)             # 0-based tracks with TSTR = VARI
-        self.signed = signed                # the first n303 tracks are OCTA-303 machines (signature), not a TB303 sample name
+        self.signed = signed                # the first n303 tracks are OCTA-303 machines (signature); v7.9: the only way
         self.steps303 = steps303            # None: as density; else the 1-based steps the 303 tracks trig on
         self.stepsrest = stepsrest          # None: as density; else the steps the other tracks trig on (empty list: none)
         self.density, self.locks, self.fx1 = density, locks, fx1
@@ -51,27 +53,25 @@ class Lay:
 
 def layouts():
     out = [Lay("BASE: HITS on step 1, all tracks")]
-    for n in (1, 2, 3, 4, 6, 8):
+    for n in (1, 2):                    # OCTA303 v7.9: machines only, at most two in a Part (was 1..8 by sample name)
         out.append(Lay(f"{n} x OCTA-303 saw, every step", n303=n))
-    out.append(Lay("4 x OCTA-303 TB303D, every step", n303=4, carrier=SLOT_303D))
-    out.append(Lay("8 x OCTA-303 TB303D, every step", n303=8, carrier=SLOT_303D))
+    out.append(Lay("2 x OCTA-303 SAW+D, every step", n303=2, wave=2))
     out.append(Lay("HITS every step, all tracks", density="dense"))
     out.append(Lay("HITS every step + PTCH lock every step", density="dense", locks=True))
     for st in ("SPECTRUM", "CHARACTER", "MODULATION"):
-        out.append(Lay(f"4 x OCTA-303 saw + {st} FX1", n303=4, fx1=st))
-    out.append(Lay(f"8 x OCTA-303 saw + SPECTRUM FX1", n303=8, fx1="SPECTRUM"))
-    out.append(Lay("4 x OCTA-303 saw, every step + PTCH lock every step", n303=4, locks=True))
-    out.append(Lay("8 x OCTA-303 saw, every step + PTCH lock every step", n303=8, locks=True))
+        out.append(Lay(f"2 x OCTA-303 saw + {st} FX1", n303=2, fx1=st))
+    out.append(Lay("2 x OCTA-303 saw, every step + PTCH lock every step", n303=2, locks=True))
     out.append(Lay("1 x VARI (T5), HITS every step", density="dense", vari=(4,)))
     out.append(Lay("4 x VARI (T5-8), HITS every step", density="dense", vari=(4, 5, 6, 7)))
     out.append(Lay("8 x VARI, HITS every step", density="dense", vari=range(8)))
     out.append(Lay("8 x VARI, HITS every step + PTCH lock every step", density="dense", locks=True, vari=range(8)))
-    out.append(Lay("4 x OCTA-303 (T1-4) + 4 x VARI (T5-8)", n303=4, density="dense", vari=(4, 5, 6, 7)))
+    out.append(Lay("2 x OCTA-303 (T1-2) + 4 x VARI (T5-8)", n303=2, density="dense", vari=(4, 5, 6, 7)))
     return out
 
 
 def layouts_diag():
-    """Signed OCTA-303 machines only: the idle cost per machine, and the step-1 / simultaneous-start cases."""
+    """Signed OCTA-303 machines: the idle cost per machine, and the step-1 / simultaneous-start cases.  (Since
+    7379a1f7 a Part keeps two machines; the 3..6 rows measure what the Part validator leaves.)"""
     every = list(range(1, STEPS + 1))
     out = [Lay("nothing plays: no trigs on any track", stepsrest=[], steps303=[])]
     for n in (1, 2, 3, 4, 5, 6):
@@ -103,7 +103,8 @@ def chunk_of(lays, remix_name):
 
 
 def write_samples(dest):
-    """HITS stays slot 1; TB303 and TB303D are the same audio under the carrier names (the 303 voice replaces it)."""
+    """HITS stays slot 1; TB303 and TB303D are the same audio (slots 2 and 3; since OCTA303 v7.9 they are plain
+    samples, kept so a project written before still has its slots)."""
     import ot_stimuli as S
     q, _ = S.render("hits")
     names = ["hits", "TB303", "TB303D"]
@@ -120,8 +121,7 @@ def stamp_layout(data, i, lay):
     assigned = {}
     for t in range(8):
         is303 = t < lay.n303
-        # a signed machine needs no carrier sample (SETUP's WAVE is the carrier), and a TB303* name would make it a
-        # second way into the voice that the signature does not control
+        # a signed machine needs no carrier sample (SETUP's WAVE is the carrier)
         assigned[t] = (SLOT_HITS if lay.signed else lay.carrier) if is303 else SLOT_HITS
     for p in (j, j + 4):
         off = P.PART_BASE + p * P.PART_STRIDE
@@ -132,7 +132,7 @@ def stamp_layout(data, i, lay):
             for t in range(lay.n303):
                 data[off + SIG_AT + 30 * t:off + SIG_AT + 30 * t + 3] = bytes([0x54, 0x42, 0x01])
                 data[off + PLAYBACK_AT + 30 * t:off + PLAYBACK_AT + 30 * t + 6] = bytes([64, 64, 64, 64, 64, 0])
-                data[off + SETUP_AT + 30 * t:off + SETUP_AT + 30 * t + 6] = bytes([0, 0, 64, 0, 0, 64])
+                data[off + SETUP_AT + 30 * t:off + SETUP_AT + 30 * t + 6] = bytes([lay.wave, 0, 64, 0, 0, 64])
     om.stim_pattern(data, j, [(t, s) for t, s in assigned.items()])
     for t in range(8):
         trac = P.trac_off(j, t)

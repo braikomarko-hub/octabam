@@ -1,7 +1,7 @@
 # `devilish` — dEVILish
 
 Robin Whittle's **Devil Fish** modifications to the TB-303, as an FX for [`octa303`](../octa303/README.md)
-tracks. Put dEVILish on FX1 or FX2 of an OCTA-303 track (or a FLEX track playing a `TB303*` sample):
+tracks. Put dEVILish on FX1 or FX2 of an OCTA-303 track:
 the 303 voice reads this slot's twelve knobs and applies them **inside** the voice — the oscillator's
 level into the filter, the filter's frequency and feedback, the envelopes, the slide — where the
 mods live and where an effect after the voice cannot reach. Take dEVILish off and the voice is the

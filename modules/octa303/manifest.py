@@ -1,18 +1,18 @@
 """OCTA303 -- a standalone FLEX machine: one circuit-modelled TB-303 voice (v6.5, dEVILish).
 
-A FLEX track whose voice starts on a sample named TB303* (TB303.wav saw, TB303SQ.wav square,
-TB303D.wav / TB303SQD.wav with the pedal; any case) plays the 303 instead of the sample, its
-PLAYBACK page reading TUNE CUT RES ENV DEC ACC. With the dEVILish module on its FX1 or FX2, the
+The TB-303 machine (row 5 of a track's machine list, v7.0) plays the 303, its PLAYBACK page reading
+TUNE CUT RES ENV DEC ACC and its SETUP page WAVE GATE FINE SLID DRIV ACCV (v7.9: the older way in, a
+FLEX track whose sample is named TB303*, is gone: such a track is FLEX). With the dEVILish module on its FX1 or FX2, the
 303 reads that slot's twelve knobs as Robin Whittle's Devil Fish mods (the module is
 modules/devilish: its menu row, its knobs and a DSP pass-through); without it, it is the 303 of
 v6.1.1, sample for sample. Every other track is stock.
 
 The integration is Tim Hastie's SYNTH MACHINE 2.9 (timhastie/octatrick-modules, MIT), re-done
 for one voice: the kind table's FLEX renderer -> sy_render (a SymbolRef); the voice START
-resolved from the settings record the voice struct points at; PTCH / RATE neutral (0x4000 /
+on the machine's track; PTCH / RATE neutral (0x4000 /
 0x7f00) and the carrier's positions pinned around the stock call; the trig command byte made
-clean on a sounding 303 track (po_retrig's fix, a Detour); the PLAYBACK page a runtime clone of
-the stock record (a Detour at the resolver's table load -- in DRAM, no ROM cave).
+clean on a sounding 303 track (po_retrig's fix, a Detour); the machine's pages a runtime clone of
+the stock FLEX record (a Detour at the resolver's table load -- in DRAM, no ROM cave).
 """
 import os
 
@@ -45,8 +45,8 @@ def remix_inc(modules, remix=None):
 
 def _render_ref(sym):
     return SymbolRef(KIND_TABLE_FLEX, STOCK_RENDERER, "octa303", sym,
-                     "kind table FLEX renderer -> OCTA303 sy_render (TB303*-named samples play the "
-                     "303; every other sample the stock renderer)")
+                     "kind table FLEX renderer -> OCTA303 sy_render (the TB-303 machine's tracks play "
+                     "the 303; every other track the stock renderer)")
 
 
 def select(modules):
@@ -71,8 +71,8 @@ MODULE = Module(
     category=Category.MACHINES,
     author="MaMarko",
     author_url="https://github.com/braikomarko-hub",
-    doc=("A FLEX track whose sample is named TB303* plays a circuit-modelled TB-303 (diode "
-         "ladder, accent-sweep capacitor, RC slide; TB303D*/TB303SQD* add a pedal). PLAYBACK: "
+    doc=("The OCTA-303 machine plays a circuit-modelled TB-303 (diode "
+         "ladder, accent-sweep capacitor, RC slide; WAVE's +D adds a pedal). PLAYBACK: "
          "TUNE (-24..+24 semitones: four octaves) CUT RES ENV DEC ACC; dEVILish on FX1/FX2 = the Devil Fish mods (Whittle). "
          "Accent = an ACC lock, slide = a trigless PTCH lock. v7.0: OCTA-303 is also its own machine (row 5 "
          "of the machine list, no sample needed) with a SETUP page WAVE GATE FINE SLID DRIV ACCV; "
@@ -80,7 +80,8 @@ MODULE = Module(
          "an octave, a new slide takes the note it slides from. v7.3: no fs/4 whistle at the top of the "
          "filter, the VCA no longer clips or wraps (Zac Kyoti, #1011). v7.4: GATE 303's first note after PLAY "
          "sounds. v7.5: the circuit's high-pass and VCA layout (Roland service notes), refitted on Din Sync and "
-         "tinyloops. v7.6: the square from Q8's circuit, the VCA's OTA, fitted on two real 303s."),
+         "tinyloops. v7.6: the square from Q8's circuit, the VCA's OTA, fitted on two real 303s. v7.9: ADEC "
+         "continuous, WAVE's R (the factory TM3 trim); a TB303* sample on a FLEX track no longer plays the 303."),
     proof=Proof.HARDWARE,
     proof_note=("v7.6's voice in the simulator, bit-exact; v7.4's gate under the port (1.40C, the first note after PLAY, slides on their step) and v7.5's voice in the simulator, bit-exact; v7.3's engine fixes (#1011) in the simulator only; none yet on a unit. v7.1 on the author's MKI, image O3V71 (BUILD A0, remix octa303), 23 Oct 2026: held trig + UP / DOWN an octave (several trigs at once, C5 stays), FUNC + TRIG's slide tied into the previous note, then turned to another note and an octave up, a FLEX track's TRIG + UP stock, LFO SETUP's names, save / power-cycle / reload; v7.0 on the author's MKI, image ACIDV70 (BUILD 87, remix acidtrack), 19 Oct 2026: the OCTA-303 "
                 "machine chosen from the list, its SETUP page, save / power-cycle / reload, the 303 gate; "
@@ -94,14 +95,14 @@ MODULE = Module(
     select=select,
     detours=(
         Detour(RESOLVER_HOOK, RESOLVER_STOCK, "octa303", "o3_page",
-               "page resolver PLAYBACK table load: a FLEX track whose slot holds a TB303* sample "
-               "gets the TB-303 clone of the FLEX descriptor", kind="jmp"),
+               "page resolver PLAYBACK table load: the TB-303 machine's track gets the machine's "
+               "clone of the FLEX descriptor", kind="jmp"),
         Detour(RETRIG_HOOK, RETRIG_STOCK, "octa303", "o3_retrig",
                "the frame builder's DSP command-byte copy: a START on a sounding OCTA303 track is "
                "posted as the clean 0x30 (no DSP crossfade of the one continuous stream)",
                kind="jmp", pad_to=8),
         Detour(CHROM_HOOK, CHROM_STOCK, "octa303", "o3_chrom",
-               "CHROMATIC key -> pitch: on a 303 track TUNE is semitones (v6.4, raw = 52 + key "
+               "CHROMATIC key -> pitch: on the TB-303 machine TUNE is semitones (v6.4, raw = 52 + key "
                "index = -12..+12), every other track the stock 5 * index + 4",
                kind="jsr", pad_to=10),
         # v7.0: the TB-303 machine, row 5 of the track's machine list -- ANALOG BD's measured seams
