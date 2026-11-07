@@ -121,3 +121,44 @@ def tables(t10_s):
     E.append([a + (b - a) * 4.0 / 3.0 for a, b in zip(E[31], e127)])
     Q = [[int(round(min(v, 1.0 - 2 ** -30) * (1 << 30))) for v in row] for row in E]
     return Q, s, kv, rows
+
+
+# ---------------------------------------------------------------- v7.9: dEVILish ADEC, continuous (OCTA303_v79_tarature.md sec. 3)
+# The Devil Fish's Accent Decay pot (30 ms .. 3 s, DF manual p. 4) in the accent's discharge path in place of IC12's
+# short: every ADEC is the same circuit (C62, the diodes at the Is already fixed by Roland's 200 ms, the Darlington),
+# with one resistance R in place of R138 + Ron.  R is solved for the time to 10 % of the law below; ADEC 50 is the 303
+# (R138 + Ron, MEG_T's row 0, copied so it is the same bits).  Rows sit at ADEC 4r - 2 (r = 0..33): ADEC a reads the
+# row position q = a + 2 (row q >> 2, weight q & 3), so ADEC 50 is exactly row 13.
+ADEC_NROW, ADEC_Q50 = 34, 52
+
+
+def adec_t10(a):
+    """the MEG's time to 10 % (s) at ADEC a: 30 ms at 0, 200 ms at 50, 3.0 s at 127; geometric on each side"""
+    return 0.2 * (0.15 ** ((50 - a) / 50.0) if a <= 50 else 15.0 ** ((a - 50) / 77.0))
+
+
+def adec_tables(is_scale, row50):
+    """ADEC_NROW x NLEV Q30 factors (the format of tables()); row50 = MEG_T[0]; returns (rows, R by row in ohm)"""
+    import numpy as np
+    VO_VC = np.linspace(0.0, 12.0, 2401); VO = np.array([_meg_out(v) for v in VO_VC])
+    I, G = _chain(np, IS0 / is_scale)
+    rows, rs = [], []
+    for r in range(ADEC_NROW):
+        a = 4 * r - 2
+        if a == 50:
+            rows.append(list(row50)); rs.append(68e3 + 200.0); continue
+        t = adec_t10(a); dt = 1e-5 if t < 0.1 else (1e-4 if t < 0.4 else 4e-4)
+        lo, hi = 1e3, 3e6                                   # R: bisection in log R on the time to 10 %
+        for _ in range(28):
+            R = math.sqrt(lo * hi); e = _run(np, VO_VC, VO, I, G, R, 2.0 * t + 0.01, dt)
+            tt = _t10(np, e, dt) / 1e3 if (e < 0.1).any() else float('inf')   # not down to 10 % in the run: too slow
+            lo, hi = (R, hi) if tt < t else (lo, R)
+        R = math.sqrt(lo * hi)
+        e = _run(np, VO_VC, VO, I, G, R, 7.0 * t, dt)      # 7 x its own time to 10 %: every row's run ends where
+                                                             # MEG_T's row 0 (1.4 s at 200 ms) does, so the held tail
+                                                             # past the run's end (_row) moves with ADEC (review, 7 Nov)
+        row = _row(np, e, dt)
+        rows.append([int(round(min(study_factor(row, level_of_x(j / float(LPO))), 1.0 - 2 ** -30) * (1 << 30)))
+                     for j in range(NLEV)])
+        rs.append(R)
+    return rows, rs

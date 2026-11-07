@@ -71,7 +71,7 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 
 | slot | name | values | default | what it does |
 |---|---|---|---|---|
-| 6 | WAVE | SAW, SQR, SAW+D, SQR+D | SAW | waveform; `+D` adds a distortion pedal stage after the VCA |
+| 6 | WAVE | SAW, SQR, SAW+D, SQR+D, RSAW, RSQR, RSAWD, RSQRD | SAW | waveform; `+D` adds a distortion pedal stage after the VCA; v7.9: `R` = the 303 as Roland's factory trims its filter (TM3: the cutoff +0.575 octave at every CUT; without `R`, Din Sync's 303) |
 | 7 | GATE | OFF, 303 | OFF | OFF: the AMP page shapes the note. 303: the 303's own gate, 3.5 of the step's 6 clocks (Whittle), tied into a slide |
 | 8 | FINE | −64..+63 | 0 | fine tune, ±½ semitone |
 | 9 | SLID | 0..127 | 0 | slide time (0 = the 303's RC; `devilish`'s SLID wins when it is on the track) |
@@ -269,6 +269,36 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
 
+### v7.9 (7 Nov 2026): WAVE's R, the 303 as Roland's factory trims it
+
+The recordings OCTA303 is calibrated on (Din Sync's 303) ring ~0.5 octave below Roland's factory trim of the filter.
+WAVE's four new values (RSAW, RSQR, RSAWD, RSQRD; bit 2 of WAVE) add TM3 as Roland trims it: TM3 feeds the cutoff node
+N134 through R73, so it is the same octaves at every CUT (the researcher, `OCTA303_v79_catena_e_fabbrica.md` sec. 2).
+The amount is Roland's own procedure (service notes p. 7: saw, key C, CUT halfway, RES full, ENV/DEC/ACC 0, the ring's
+first interval 2.0 ms ± 0.5) applied to the model: without R it rings at 2.97–2.99 ms, so R adds log2(2.98 / 2.0) =
++0.575 octave (`TM3_FAB` = 1766 of 3072 an octave; the researcher's estimate +0.47…+0.64). On the engine, RSAW rings at
+2.02–2.04 ms from 500 to 1,200 ms (test `fab_roland_ring_2ms`); the shift is 1766 at CUT 0/32/64/95/127
+(`fab_same_octaves_every_cut`; the ladder's top still clamps). WAVE's count goes from 4 to 8: a project's stored
+WAVE 0..3 keeps its meaning (`stamp-defaults` does not touch OCTA303's SETUP bytes, and nothing needs it here). Each label fits its 6-byte field with its NUL
+(`wave_labels_fit_their_field`); no '.' (the panel's font). Din Sync does not judge R (it is not Din Sync's 303).
+
+### v7.9 (7 Nov 2026): dEVILish ADEC, continuous
+
+ADEC used to jump across its neutral 50 (v7.8, below). Now every ADEC value is the MEG circuit itself, with one
+resistance in place of R138 + IC12's Ron on accents: the Devil Fish's Accent Decay pot (30 ms … 3 s, Whittle's manual
+p. 4). `o3meg.adec_tables` solves R for the time to 10 % of a law that is geometric on each side of the 303's 200 ms:
+30 ms at ADEC 0, 200 ms at 50, 3.0 s at 127 (R 8.3 kΩ … 1.3 MΩ). Each row's circuit runs 7 × its own time to 10 %,
+so every row ends near 1 % as MEG_T's row 0 does; below that the last factor is held (🟡 extrapolated, as MEG_T's
+tail), and the times to 1 % and 0.1 % grow with ADEC too (ADEC 50: 1.50 s / 5.03 s; the review found them
+non-monotonic across 50 in a first draft with shorter runs). The engine reads
+`ADEC_T`, MEG_T's format, 34 rows at ADEC −2, 2, …, 130, so ADEC 50 falls exactly on row 13, which *is* MEG_T's row 0:
+without dEVILish, and at ADEC 50, the output is v7.8's sample for sample (1,600 frames of accented and plain notes,
+the assembly, SPD NORM and SLOW: same sha256). Measured on the engine's own steps: ADEC 0 reaches 10 % in 30.1 ms,
+127 in 2,995 ms; each step of the knob lengthens the time by 3.1–4.7 % (49 / 50 / 51: 192 / 200 / 207 ms). Memory
++8.7 KB (`O3_ADEC_T`, 34 × 64 longs); cost the same as v7.8 within ±1 % (a held accent 4,543 → 4,583 instructions a
+frame at ADEC 10, 4,725 → 4,785 at 120: the table's tail is read for longer). Rule and tests: the project note
+`OCTA303_v79_tarature.md` sec. 3; `adec_*` and `bit_exact_accent_circuit` in `test_octa303`.
+
 ### v7.8 (6 Nov 2026): the MEG and the accent from the circuit (V8A)
 
 Three parts of the voice now follow the Roland service notes' main board (= the x0xb0x netlist) with **no number
@@ -309,7 +339,7 @@ numbers pass V8A's thresholds too; the cause goes to v7.9. Assembly = engine bit
 
 dEVILish: **ADEC 50** (its default) is now the circuit's MEG (`DF_ADEC[50]` = 0); away from 50 the accents keep
 v7.7's exponential, 30 ms … 3 s. The two do not join: at 49 and 51 an accent reaches −40 dB in ~355 and ~380 ms, at 50
-(the circuit's tail) in ~1.5 s, so a lock or an LFO crossing 50 jumps. **SPD** acts on C13, 🟡 an interpretation (Whittle describes the modes, not the parts): FAST C13 / 4,
+(the circuit's tail) in ~1.5 s, so a lock or an LFO crossing 50 jumps. (v7.9: no longer; see above.) **SPD** acts on C13, 🟡 an interpretation (Whittle describes the modes, not the parts): FAST C13 / 4,
 NORM the 303, SLOW C13 × 4 and its part of the push read doubled. **SWP SELF** still takes the MEG out of the accent circuit.
 
 Cost (simulator counts, instructions a 16-sample frame, machine track, v7.7 → v7.8, mean / worst frame): a plain note

@@ -49,7 +49,7 @@ def run(script, track=0, rig=None):
             L, Rr = rig.call(track, w, a, b, start_at is not None, SILENCE, df, fxslot, sq)
             if L != Rr: return A, B, 'L != R'
             code = T.name_code(fname) if (last and start_at is not None) else None
-            if su is not None and code is not None: code = min(su[0], 3)         # the machine: SETUP's WAVE
+            if su is not None and code is not None: code = min(su[0], 7)         # the machine: SETUP's WAVE (v7.9: 8 values)
             ref = R.render_call(st, w, last and start_at is not None, -1 if code is None else code, b - a,
                                alive or su is not None, rdf if fxslot in (1, 2) else None, last=last, seq=sq,
                                setup=su)
@@ -544,9 +544,9 @@ def gate_script(fname, steps=32, tf=2, setup=None, alive=True):
         sc.append((w, 0 if trig else None, fname, alive, None, 1, sq, None, setup))
     return sc
 okg = True
-for wv in (0, 1, 2, 3):
+for wv in (0, 1, 2, 3, 4, 5, 6, 7):
     A, B, mm = run(gate_script('KICK.WAV', setup=(wv, 1, 64, 0, 0, 64))); okg &= mm is None
-check('bit_exact_machine_gate_303', okg, 'WAVE SAW SQR SAW+D SQR+D, GATE 303, slides, rests, 32 steps')
+check('bit_exact_machine_gate_303', okg, 'WAVE SAW SQR SAW+D SQR+D RSAW RSQR RSAWD RSQRD (v7.9), GATE 303, slides, rests, 32 steps')
 A0, _, mm0 = run(gate_script('KICK.WAV', setup=(1, 0, 90, 60, 100, 20), alive=False))
 check('bit_exact_machine_gate_off_dead_voice', mm0 is None, 'GATE OFF, FINE/SLID/DRIV/ACCV moved, no sample voice')
 st_a = R.Track(); st_b = R.Track(); same = True
@@ -580,7 +580,7 @@ def mscen(seed, frames):
                   rnd.randint(0, 127), rnd.choice([0, 0, 64, 127]))
         if rnd.random() < 0.05:                                            # SETUP moved or locked
             i = rnd.randrange(6); su = list(su)
-            su[i] = rnd.choice([0, 1, 2, 3, 4, 63, 64, 65, 127, 200, rnd.randint(0, 127)])
+            su[i] = rnd.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 63, 64, 65, 127, 200, rnd.randint(0, 127)])
         if rnd.random() < 0.03:
             df = None if rnd.random() < 0.4 else tuple(rnd.randint(0, 127) for _ in range(12)); slot = rnd.choice([1, 2])
         k = f // 2; sq = (127, k // 6, k % 6, rnd.getrandbits(16), 16)
@@ -600,6 +600,43 @@ _n = _setup_effect(0, 0)
 _eff = {nm: _setup_effect(i, v) for i, v, nm in ((0, 1, 'WAVE'), (2, 100, 'FINE'), (3, 100, 'SLID'), (4, 127, 'DRIV'), (5, 0, 'ACCV'))}
 check('machine_setup_knobs_act', _n is not None and all(a is not None and a != _n for nm, a in _eff.items() if nm != 'SLID'),
       'WAVE FINE DRIV ACCV change the sound (SLID: the next slide)')
+# ---------------------------------------------------------------- v7.9: WAVE's R, the factory preset (TM3 as Roland trims it)
+def _fab_render(code, cut=64, res=127, env=0, dec=0, frames=3600):
+    st = R.Track(); y = []
+    for f in range(frames):
+        r = R.render_call(st, W(-12, cut, res, env, dec, 0), f == 0, code if f == 0 else -1, 16)   # key C = C2, 65.4 Hz
+        y += [R.s32(x) >> 16 for x in r]
+    return y, st
+def _ring_ms(y, a, b, fs=44100.0):
+    """service notes p. 7: the first interval between the ring's peaks after the saw's edge: the VCO's cycles averaged
+    in sync, the harmonics under 150 Hz removed (the cycle is periodic: an FFT high-pass; numpy only)"""
+    import numpy as np
+    x = np.asarray(y[int(a * fs):int(b * fs)], float)
+    f0 = R.T.F_LOW * 2 ** (52 / 12.0); P = fs / f0; n = int(len(x) / P) - 1
+    cyc = np.mean([np.interp(np.arange(int(P)), np.arange(len(x)) - k * P, x) for k in range(n)], axis=0)
+    X = np.fft.rfft(cyc); X[:int(150.0 / (fs / len(cyc))) + 1] = 0; h = np.fft.irfft(X, len(cyc))
+    e = int(np.argmax(np.abs(np.diff(np.tile(cyc, 2)))[:len(cyc)])); h = np.roll(h, -e - 2)
+    w = h[:int(0.006 * fs)]; sg = np.sign(w[np.argmax(np.abs(w[:int(0.002 * fs)]))])
+    pk = [i for i in range(1, len(w) - 1) if (w[i] - w[i - 1]) * (w[i + 1] - w[i]) < 0 and np.sign(w[i]) == sg]
+    return (pk[1] - pk[0]) / fs * 1e3 if len(pk) > 1 else float('nan')
+try:
+    import numpy as _np_fab                                 # the emu extra brings numpy; without it the ring check skips
+except ImportError:
+    _np_fab = None
+_yr, _ = _fab_render(4); _y0, _ = _fab_render(0)
+if _np_fab is None:
+    _rr = _r0 = [2.0] * 4; print('[SKIP] fab_roland_ring_2ms: no numpy')
+else:
+    _rr = [_ring_ms(_yr, a, a + 0.1) for a in (0.5, 0.7, 0.9, 1.1)]; _r0 = [_ring_ms(_y0, a, a + 0.1) for a in (0.5, 0.7, 0.9, 1.1)]
+check('fab_roland_ring_2ms', all(abs(v - 2.0) <= 0.1 for v in _rr),
+      "RSAW at Roland's VCF procedure (key C, CUT 64, RES 127, ENV/DEC/ACC 0): the ring's first interval %s ms, 500-1200 ms "
+      "(2.0 +- 0.1; SAW, Din Sync's 303: %s ms)" % ('/'.join('%.2f' % v for v in _rr), '/'.join('%.2f' % v for v in _r0)))
+_sh = []
+for _c in (0, 32, 64, 95, 127):
+    _, _sa = _fab_render(0, _c, 127, 0, 0, 300); _, _sb = _fab_render(4, _c, 127, 0, 0, 300)
+    _sh.append(_sb.sctrl - _sa.sctrl)
+check('fab_same_octaves_every_cut', all(v == T.TM3_FAB or (v < T.TM3_FAB and _c == 127) for v, _c in zip(_sh, (0, 32, 64, 95, 127))),
+      'the cutoff moves by %d (%.3f octave) at CUT 0/32/64/95/127: %s (the ladder\'s top clamps)' % (T.TM3_FAB, T.TM3_FAB / 3072.0, _sh))
 # ---------------------------------------------------------------- v7.7: DRIV = VR8 past Din Sync's position, into Q33/Q34
 import types as _ty
 def _drv_ops(y, g):
@@ -676,6 +713,34 @@ check('meg_factor_sane', _mono and _dmono, 'every factor in (0, 1) at any level 
 _rat = [((1 << 30) - row[j + 1]) / float((1 << 30) - row[j]) for row in T.MEG_T for j in range(T.MEG_NLEV - 4)]
 check('meg_table_smooth', 0.5 < min(_rat) and max(_rat) < 1.5,
       "each row's decay (1 - factor) moves by %.3f..%.3f a level step: no stuck tail (review: a factor of 1.0 past the run's end)" % (min(_rat), max(_rat)))
+# ---------------------------------------------------------------- v7.9: dEVILish ADEC continuous (ADEC_T, o3meg.adec_tables)
+def _adec_t10(a):                                    # the accent MEG at dEVILish ADEC a, frames to 10 %, in ms
+    m, n = T.ONE30, 0
+    while m > T.ONE30 // 10 and n < 40000:
+        m = R.mul30(m, R.megf(m, T.DF_ADEC[a], T.ADEC_T)); n += 1
+    return n * T.CS / T.FS * 1e3
+_lv = (1, 3, 1000, 1 << 10, 1 << 15, 1 << 20, 1 << 25, T.ONE30 // 3, T.ONE30 // 2, T.ONE30 - 1, T.ONE30)
+check('adec_50_is_v78', T.ADEC_T[T.ADEC_Q50 >> 2] == T.MEG_T[0] and T.DF_ADEC[50] == T.ADEC_Q50
+      and all(R.megf(m, T.ADEC_Q50, T.ADEC_T) == R.megf(m, 0) for m in _lv),
+      'ADEC 50 (and no dEVILish) reads ADEC_T row 13 = MEG_T row 0, every factor the same bits')
+_ta = [_adec_t10(a) for a in range(128)]
+_up = max(_ta[a + 1] / _ta[a] for a in range(127)); _dn = min(_ta[a + 1] / _ta[a] for a in range(127))
+check('adec_continuous', 1.0 <= _dn and _up <= 1.06,
+      'ADEC 0..127: the time to 10 %% grows at every step, by %.1f..%.1f %% (no jump at 50: 49 %.0f / 50 %.0f / 51 %.0f ms)'
+      % (100 * (_dn - 1), 100 * (_up - 1), _ta[49], _ta[50], _ta[51]))
+def _adec_tl(a, lvl):                               # frames to a level below 10 %: the tail (review, 7 Nov)
+    m, n = T.ONE30, 0
+    while m > int(T.ONE30 * lvl) and n < 400000:
+        m = R.mul30(m, R.megf(m, T.DF_ADEC[a], T.ADEC_T)); n += 1
+    return n
+_tl = [[_adec_tl(a, l) for a in range(0, 128, 2)] for l in (0.01, 0.001)]
+check('adec_tail_monotonic', all(v[i + 1] >= v[i] for v in _tl for i in range(len(v) - 1)),
+      'the tail too (1 %% and 0.1 %%) lengthens with ADEC, across 50 included (ADEC 50: %.0f / %.0f ms)'
+      % (_adec_tl(50, 0.01) * T.CS / T.FS * 1e3, _adec_tl(50, 0.001) * T.CS / T.FS * 1e3))
+check('adec_ends_devil_fish', abs(_ta[0] - 30.0) <= 2.0 and abs(_ta[127] - 3000.0) <= 100.0,
+      'ADEC 0 at 10 %% in %.1f ms, ADEC 127 in %.0f ms (Devil Fish Accent Decay 30 ms .. 3 s)' % (_ta[0], _ta[127]))
+check('adec_factor_sane', all(0 < R.megf(m, q, T.ADEC_T) < T.ONE30 for q in range(2, 130) for m in _lv),
+      'every ADEC_T factor in (0, 1), every row position and level')
 def _twin_step(s, Tm, dt, a7, res):                  # the twin's a2_step (sim.c), floats: the circuit itself
     import math
     VT, NVT, IS = 0.02585, 1.752 * 0.02585, 2.52e-9
@@ -750,11 +815,13 @@ def _acc_scen(df, accs=(127, 95, 64, 32, 0), res=(0, 64, 127)):
     return sc
 _bad = None
 for _df in (None, (25, 0, 0, 64, 0, 50, 0, 0, 0, 0, 0, 0), (25, 0, 0, 64, 0, 50, 0, 0, 2, 0, 0, 0),
-            (25, 0, 0, 64, 0, 10, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 127, 0, 2, 1, 0, 0, 0)):
+            (25, 0, 0, 64, 0, 10, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 127, 0, 2, 1, 0, 0, 0),
+            (25, 0, 0, 64, 0, 0, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 49, 0, 0, 1, 0, 0, 0),
+            (25, 0, 0, 64, 0, 51, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 90, 0, 0, 1, 0, 0, 0)):
     _A, _B, _mm = run(_acc_scen(_df))
     if _mm is not None and _bad is None: _bad = (_df, _mm)
 check('bit_exact_accent_circuit', _bad is None,
-      'accents in a row ACC 127..0 at RES 0/64/127: the 303, SPD FAST, SPD SLOW, ADEC 10 (v7.7\'s exponential), SWP SELF'
+      'accents in a row ACC 127..0 at RES 0/64/127: the 303, SPD FAST, SPD SLOW, ADEC 0/10/49/50/51/90/127 (v7.9: ADEC_T), SWP SELF'
       if _bad is None else 'dEVILish %s mismatch @%s' % _bad)
 
 # ---------------------------------------------------------------- v7.0: the machine's registration helpers
@@ -1000,12 +1067,15 @@ def fmt(name, v):
         if not x: break
         b += bytes([x])
     return (b.decode(), c.d[0]), ok
-_fw = [fmt('o3_fmt_wave', v) for v in (0, 1, 2, 3, 9, -1)]
+_fw = [fmt('o3_fmt_wave', v) for v in (0, 1, 2, 3, 4, 5, 6, 7, 9, -1)]
 _fg = [fmt('o3_fmt_gate', v) for v in (0, 1, 5)]
-check('fmt_wave_gate_labels', [x[0][0] for x in _fw] == ['SAW', 'SQR', 'SAW+D', 'SQR+D', 'SQR+D', 'SAW']
+check('fmt_wave_gate_labels', [x[0][0] for x in _fw] == list(T.WAVE_LABELS) + ['RSQRD', 'SAW']
       and all(x[1] and x[0][1] == len(x[0][0]) for x in _fw + _fg) and [x[0][0] for x in _fg] == ['OFF', '303', '303'])
 _ff = [fmt('o3_fmt_fine', v) for v in (0, 64, 127)]
 c0 = Rig().cpu
+_lw = bytes(c0.mem.r(c0.consts['o3_lwave'] + i, 'b') for i in range(6 * len(T.WAVE_LABELS)))
+check('wave_labels_fit_their_field', all(_lw[6 * i:6 * i + 6] == l.encode().ljust(6, b'\0') for i, l in enumerate(T.WAVE_LABELS))
+      and all(len(l) <= 5 for l in T.WAVE_LABELS), 'v7.9: 8 labels, each in its 6-byte field with its NUL (trap-name-nul)')
 check('fmt_fine_signed', [x[0] for x in _ff] == [(0x81000000, 0x400b465d, -64), (0x81000000, 0x400b465d, 0), (0x81000000, c0.consts['o3_f_plus'], 63)]
       and all(x[1] for x in _ff))
 
