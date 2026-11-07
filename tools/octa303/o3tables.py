@@ -506,8 +506,16 @@ CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's 
 # A track without the machine (a TB303* sample) plays SETUP_NEUTRAL: v6.9 sample for sample.
 SETUP_NAMES = ('WAVE', 'GATE', 'FINE', 'SLID', 'DRIV', 'ACCV')
 SETUP_NEUTRAL = (0, 0, 64, 0, 0, 64)
-SETUP_COUNT = (4, 2, 128, 128, 128, 128)
-WAVE_LABELS = ('SAW', 'SQR', 'SAW+D', 'SQR+D')
+SETUP_COUNT = (8, 2, 128, 128, 128, 128)
+# v7.9: WAVE's bit 2 = R, the factory preset (TM3 as Roland trims it, claude/OCTA303_v79_tarature.md sec. 4); labels
+# of at most 5 characters (a 6-byte field with its NUL; no '.', the panel's font may lack it)
+WAVE_LABELS = ('SAW', 'SQR', 'SAW+D', 'SQR+D', 'RSAW', 'RSQR', 'RSAWD', 'RSQRD')
+assert len(WAVE_LABELS) == SETUP_COUNT[0] and all(len(l) <= 5 and l.isascii() and l.isupper() for l in WAVE_LABELS)
+# v7.9: R, the factory preset: TM3 into N134 through R73 adds the same octaves at every CUT (claude/OCTA303_v79_
+# catena_e_fabbrica.md sec. 2).  Roland's procedure (service notes p. 7: saw, key C, CUT 64, RES 127, ENV/DEC/ACC 0,
+# ring 2.0 ms +-0.5) on V8A's model gives 2.97-2.99 ms: log2(2.98 / 2.0) = +0.575 octave = 1766 of the cutoff's
+# 3072 a octave (claude/OCTA303_v79_tarature.md sec. 4; the researcher's +0.47..+0.64)
+TM3_FAB = int(round(0.575 * 3072))
 GATE_LABELS = ('OFF', '303')
 FINE_Q8 = 2                                   # Q8 semitones a FINE step: +-64 steps = +-0.5 semitone
 # v7.7: DRIV is the 303's own VOLUME (VR8) turned past Din Sync's position, driving the output mixer Q33/Q34 into

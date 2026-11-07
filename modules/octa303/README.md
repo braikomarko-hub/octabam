@@ -71,7 +71,7 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 
 | slot | name | values | default | what it does |
 |---|---|---|---|---|
-| 6 | WAVE | SAW, SQR, SAW+D, SQR+D | SAW | waveform; `+D` adds a distortion pedal stage after the VCA |
+| 6 | WAVE | SAW, SQR, SAW+D, SQR+D, RSAW, RSQR, RSAWD, RSQRD | SAW | waveform; `+D` adds a distortion pedal stage after the VCA; v7.9: `R` = the 303 as Roland's factory trims its filter (TM3: the cutoff +0.575 octave at every CUT; without `R`, Din Sync's 303) |
 | 7 | GATE | OFF, 303 | OFF | OFF: the AMP page shapes the note. 303: the 303's own gate, 3.5 of the step's 6 clocks (Whittle), tied into a slide |
 | 8 | FINE | −64..+63 | 0 | fine tune, ±½ semitone |
 | 9 | SLID | 0..127 | 0 | slide time (0 = the 303's RC; `devilish`'s SLID wins when it is on the track) |
@@ -268,6 +268,19 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
+
+### v7.9 (7 Nov 2026): WAVE's R, the 303 as Roland's factory trims it
+
+The recordings OCTA303 is calibrated on (Din Sync's 303) ring ~0.5 octave below Roland's factory trim of the filter.
+WAVE's four new values (RSAW, RSQR, RSAWD, RSQRD; bit 2 of WAVE) add TM3 as Roland trims it: TM3 feeds the cutoff node
+N134 through R73, so it is the same octaves at every CUT (the researcher, `OCTA303_v79_catena_e_fabbrica.md` sec. 2).
+The amount is Roland's own procedure (service notes p. 7: saw, key C, CUT halfway, RES full, ENV/DEC/ACC 0, the ring's
+first interval 2.0 ms ± 0.5) applied to the model: without R it rings at 2.97–2.99 ms, so R adds log2(2.98 / 2.0) =
++0.575 octave (`TM3_FAB` = 1766 of 3072 an octave; the researcher's estimate +0.47…+0.64). On the engine, RSAW rings at
+2.02–2.04 ms from 500 to 1,200 ms (test `fab_roland_ring_2ms`); the shift is 1766 at CUT 0/32/64/95/127
+(`fab_same_octaves_every_cut`; the ladder's top still clamps). WAVE's count goes from 4 to 8: a project's stored
+WAVE 0..3 keeps its meaning (`stamp-defaults` does not touch OCTA303's SETUP bytes, and nothing needs it here). Each label fits its 6-byte field with its NUL
+(`wave_labels_fit_their_field`); no '.' (the panel's font). Din Sync does not judge R (it is not Din Sync's 303).
 
 ### v7.9 (7 Nov 2026): dEVILish ADEC, continuous
 

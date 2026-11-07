@@ -56,7 +56,7 @@ def softclip(y):                                    # clamp to +-sqrt2, y - y^3/
     y = clamp(y, -1482910, 1482910)
     xs = y >> 8; x2 = (xs * xs) >> 12; x3 = (x2 * xs) >> 12
     return y - ((x3 * 10923) >> 8)
-FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs', 'veg',
+FIELDS = ('latched', 'wave', 'dist', 'fab', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs', 'veg',
           'accd', 'acci', 'v34', 'dvc', 'y27', 'amp', 'ampstep', 'hp', 'y1', 'y2', 'y3', 'y4', 'fb',
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
@@ -69,7 +69,7 @@ class Track:
         self.accvg, self.osin, self.oslim = 64, T.DRV_G[0], 0   # v7.8: accvg = ACCV raw (64 = the 303); v7.7: osin = DRIV's gain (Q12)
 
 def note_on(st, code, w):
-    st.wave, st.dist = code & 1, code >> 1
+    st.wave, st.dist, st.fab = code & 1, (code >> 1) & 1, (code >> 2) & 1   # v7.9: bit 2 = R, the factory preset
     acc = raw(w[5])
     st.pcur = clamp(p_of_word(w[0]) + st.fine, T.P_LO, T.P_HI) << 8   # v7.0: FINE
     st.cs = 1
@@ -204,6 +204,7 @@ def ctrl(st):
     st.envs += mulq15((S << 8) - st.envs, T.SMOOTH_K)
     base, S = st.cutb >> 8, st.envs >> 8
     s = base + ((((st.megs >> 15) - T.TB_OFF[cut]) * S) >> 15) + swq8
+    if st.fab: s += T.TM3_FAB                                          # v7.9: R, TM3 as Roland trims it
     s = clamp(s, 0, T.S_MAX - 1)
     if st.trkhz:
         s = trck(s, (st.pcur >> 8) - T.P_CENTER, st.trkhz)            # TRCK

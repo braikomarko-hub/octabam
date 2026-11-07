@@ -203,6 +203,7 @@
         .set    S_FBO,400                       | v7.4: this sample's high-passed ladder output
         .set    S_SQL,404                       | v7.6: the square's edge lowpass state (as v6.9)
         .set    S_Y27,408                       | v7.8: I27 x R27, uV (D27 into pin 1)
+        .set    S_FAB,412                       | v7.9: WAVE's R, the factory preset (TM3_FAB on the cutoff)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -269,6 +270,7 @@
         .set    P6_KP,           1535
         .set    MEG_NLEV,        64
         .set    ADEC_Q50,        52
+        .set    TM3_FAB,         1766
         .set    AC_R0,           93000
         .set    AC_KLN,          31915
         .set    AC_R72N,         100000
@@ -510,7 +512,7 @@ sy_render:
         beq     .Lsmp
         bsr     o3_setupptr             | yes: SETUP's WAVE is the carrier, whatever the slot holds
         KB      0,%a0
-        moveq   #3,%d1
+        moveq   #7,%d1                  | v7.9: 8 values (bit 2 = R)
         cmp.l   %d1,%d0
         bls     .Lours
         move.l  %d1,%d0
@@ -2670,7 +2672,7 @@ o3_stock_validate:
 | ---- the SETUP page's formatters (fmt(buf, value) -> length)
 o3_fmt_wave:
         lea     o3_lwave,%a1
-        moveq   #3,%d1
+        moveq   #7,%d1                  | v7.9: 8 labels
         bra     o3_fmt_lbl
 o3_fmt_gate:
         lea     o3_lgate,%a1
@@ -3213,14 +3215,20 @@ o3_params:
         move.l  (%sp)+,%a2
         rts
 
-| ---- o3_note_on: d5 = (dist<<1)|wave.  Clobbers d0-d1, d4.
+| ---- o3_note_on: d5 = (fab<<2)|(dist<<1)|wave (v7.9: fab = WAVE's R).  Clobbers d0-d1, d4.
 o3_note_on:
         moveq   #1,%d0
         and.l   %d5,%d0
         move.l  %d0,S_WAVE(%a3)
         move.l  %d5,%d0
         lsr.l   #1,%d0
+        moveq   #1,%d1
+        and.l   %d1,%d0
         move.l  %d0,S_DIST(%a3)
+        move.l  %d5,%d0
+        lsr.l   #2,%d0
+        and.l   %d1,%d0
+        move.l  %d0,S_FAB(%a3)
         moveq   #0,%d4                  | ACC of the trig, raw 0..127
         move.w  10(%a4),%d4
         lsr.l   #8,%d4
@@ -3425,6 +3433,10 @@ o3_ctrl:
         asr.l   #7,%d0
         add.l   %d0,%d3
         add.l   %d6,%d3                 | the accent sweep (Q8 semitones)
+        tst.l   S_FAB(%a3)              | v7.9: WAVE's R, TM3 as Roland trims it (ref303 ctrl)
+        beq     .Lc_nfab
+        add.l   #TM3_FAB,%d3
+.Lc_nfab:
         CLAMP   %d3,0,S_MAX-1
         move.l  S_TRKHZ(%a3),%d0        | TRCK, linear in Hz
         beq     .Lc_nt
@@ -6435,7 +6447,7 @@ o3_mover:
 o3_zero6:
         .long   0, 0, 0, 0, 0, 0
 o3_mcnt:                                | o3tables.SETUP_COUNT
-        .long   4, 2, 128, 128, 128, 128
+        .long   8, 2, 128, 128, 128, 128
 o3_mfmts:
         .long   o3_fmt_wave, o3_fmt_gate, o3_fmt_fine, FMT_PLAIN, FMT_PLAIN, FMT_PLAIN
 o3_mflags:
@@ -6463,6 +6475,12 @@ o3_lwave:                               | o3tables.WAVE_LABELS
         .byte   0, 0
         .asciz  "SAW+D"
         .asciz  "SQR+D"
+        .asciz  "RSAW"                  | v7.9: R, the factory preset
+        .byte   0
+        .asciz  "RSQR"
+        .byte   0
+        .asciz  "RSAWD"
+        .asciz  "RSQRD"
 o3_lgate:                               | o3tables.GATE_LABELS
         .asciz  "OFF"
         .byte   0, 0

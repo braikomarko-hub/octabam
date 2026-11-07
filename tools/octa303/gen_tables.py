@@ -17,7 +17,7 @@ CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', '
           'TB_MEG_ATT',
           'DF_FM_MUL', 'DF_GIN_Q15', 'DF_ENVX_MUL',
           'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'DRV_G0', 'DRV_YLIM', 'DRV_KN', 'DRV_KP', 'DRV_RN', 'DRV_RP', 'DRV_WN', 'DRV_WP', 'DRV_DN4', 'DRV_DP4', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM',
-          'P6_K', 'P6_AMAX', 'P6_KP', 'MEG_NLEV', 'ADEC_Q50', 'AC_R0', 'AC_KLN', 'AC_R72N', 'AC_VMAX', 'AC_V134', 'AC_V69', 'AC_AL',
+          'P6_K', 'P6_AMAX', 'P6_KP', 'MEG_NLEV', 'ADEC_Q50', 'TM3_FAB', 'AC_R0', 'AC_KLN', 'AC_R72N', 'AC_VMAX', 'AC_V134', 'AC_V69', 'AC_AL',
           'AC_BE', 'AC_Q27G', 'AC_KV', 'AC_KSW']
 
 TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R, T.VP_HP1, T.VP_HP2]),
