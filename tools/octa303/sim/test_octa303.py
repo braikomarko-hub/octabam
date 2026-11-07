@@ -676,6 +676,34 @@ check('meg_factor_sane', _mono and _dmono, 'every factor in (0, 1) at any level 
 _rat = [((1 << 30) - row[j + 1]) / float((1 << 30) - row[j]) for row in T.MEG_T for j in range(T.MEG_NLEV - 4)]
 check('meg_table_smooth', 0.5 < min(_rat) and max(_rat) < 1.5,
       "each row's decay (1 - factor) moves by %.3f..%.3f a level step: no stuck tail (review: a factor of 1.0 past the run's end)" % (min(_rat), max(_rat)))
+# ---------------------------------------------------------------- v7.9: dEVILish ADEC continuous (ADEC_T, o3meg.adec_tables)
+def _adec_t10(a):                                    # the accent MEG at dEVILish ADEC a, frames to 10 %, in ms
+    m, n = T.ONE30, 0
+    while m > T.ONE30 // 10 and n < 40000:
+        m = R.mul30(m, R.megf(m, T.DF_ADEC[a], T.ADEC_T)); n += 1
+    return n * T.CS / T.FS * 1e3
+_lv = (1, 3, 1000, 1 << 10, 1 << 15, 1 << 20, 1 << 25, T.ONE30 // 3, T.ONE30 // 2, T.ONE30 - 1, T.ONE30)
+check('adec_50_is_v78', T.ADEC_T[T.ADEC_Q50 >> 2] == T.MEG_T[0] and T.DF_ADEC[50] == T.ADEC_Q50
+      and all(R.megf(m, T.ADEC_Q50, T.ADEC_T) == R.megf(m, 0) for m in _lv),
+      'ADEC 50 (and no dEVILish) reads ADEC_T row 13 = MEG_T row 0, every factor the same bits')
+_ta = [_adec_t10(a) for a in range(128)]
+_up = max(_ta[a + 1] / _ta[a] for a in range(127)); _dn = min(_ta[a + 1] / _ta[a] for a in range(127))
+check('adec_continuous', 1.0 <= _dn and _up <= 1.06,
+      'ADEC 0..127: the time to 10 %% grows at every step, by %.1f..%.1f %% (no jump at 50: 49 %.0f / 50 %.0f / 51 %.0f ms)'
+      % (100 * (_dn - 1), 100 * (_up - 1), _ta[49], _ta[50], _ta[51]))
+def _adec_tl(a, lvl):                               # frames to a level below 10 %: the tail (review, 7 Nov)
+    m, n = T.ONE30, 0
+    while m > int(T.ONE30 * lvl) and n < 400000:
+        m = R.mul30(m, R.megf(m, T.DF_ADEC[a], T.ADEC_T)); n += 1
+    return n
+_tl = [[_adec_tl(a, l) for a in range(0, 128, 2)] for l in (0.01, 0.001)]
+check('adec_tail_monotonic', all(v[i + 1] >= v[i] for v in _tl for i in range(len(v) - 1)),
+      'the tail too (1 %% and 0.1 %%) lengthens with ADEC, across 50 included (ADEC 50: %.0f / %.0f ms)'
+      % (_adec_tl(50, 0.01) * T.CS / T.FS * 1e3, _adec_tl(50, 0.001) * T.CS / T.FS * 1e3))
+check('adec_ends_devil_fish', abs(_ta[0] - 30.0) <= 2.0 and abs(_ta[127] - 3000.0) <= 100.0,
+      'ADEC 0 at 10 %% in %.1f ms, ADEC 127 in %.0f ms (Devil Fish Accent Decay 30 ms .. 3 s)' % (_ta[0], _ta[127]))
+check('adec_factor_sane', all(0 < R.megf(m, q, T.ADEC_T) < T.ONE30 for q in range(2, 130) for m in _lv),
+      'every ADEC_T factor in (0, 1), every row position and level')
 def _twin_step(s, Tm, dt, a7, res):                  # the twin's a2_step (sim.c), floats: the circuit itself
     import math
     VT, NVT, IS = 0.02585, 1.752 * 0.02585, 2.52e-9
@@ -750,11 +778,13 @@ def _acc_scen(df, accs=(127, 95, 64, 32, 0), res=(0, 64, 127)):
     return sc
 _bad = None
 for _df in (None, (25, 0, 0, 64, 0, 50, 0, 0, 0, 0, 0, 0), (25, 0, 0, 64, 0, 50, 0, 0, 2, 0, 0, 0),
-            (25, 0, 0, 64, 0, 10, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 127, 0, 2, 1, 0, 0, 0)):
+            (25, 0, 0, 64, 0, 10, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 127, 0, 2, 1, 0, 0, 0),
+            (25, 0, 0, 64, 0, 0, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 49, 0, 0, 1, 0, 0, 0),
+            (25, 0, 0, 64, 0, 51, 0, 0, 1, 0, 0, 0), (25, 0, 0, 64, 0, 90, 0, 0, 1, 0, 0, 0)):
     _A, _B, _mm = run(_acc_scen(_df))
     if _mm is not None and _bad is None: _bad = (_df, _mm)
 check('bit_exact_accent_circuit', _bad is None,
-      'accents in a row ACC 127..0 at RES 0/64/127: the 303, SPD FAST, SPD SLOW, ADEC 10 (v7.7\'s exponential), SWP SELF'
+      'accents in a row ACC 127..0 at RES 0/64/127: the 303, SPD FAST, SPD SLOW, ADEC 0/10/49/50/51/90/127 (v7.9: ADEC_T), SWP SELF'
       if _bad is None else 'dEVILish %s mismatch @%s' % _bad)
 
 # ---------------------------------------------------------------- v7.0: the machine's registration helpers

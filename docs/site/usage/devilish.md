@@ -19,7 +19,7 @@ dEVILish from the chooser. It takes PHASER's place on both menus.
 | 1 | TRCK | filter tracking |
 | 1 | VDEC | volume decay, up to endless notes |
 | 1 | SLID | slide time, 60–360 ms |
-| 1 | ADEC | accented notes' filter decay, 30 ms–3 s (50 = the 303's own, with a longer tail: moving across 50 jumps) |
+| 1 | ADEC | accented notes' filter decay, 30 ms–3 s (50 = the 303's own, 200 ms; continuous, no jump across 50; the tail below ~1 % is extrapolated) |
 | 2 | SATK | soft attack on non-accented notes |
 | 2 | SWP | ACID (the 303), WHST, SELF (the filter can self-oscillate) |
 | 2 | SPD | accent sweep speed: FAST, NORM, SLOW |

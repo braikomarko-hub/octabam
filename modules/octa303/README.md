@@ -269,6 +269,23 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
 
+### v7.9 (7 Nov 2026): dEVILish ADEC, continuous
+
+ADEC used to jump across its neutral 50 (v7.8, below). Now every ADEC value is the MEG circuit itself, with one
+resistance in place of R138 + IC12's Ron on accents: the Devil Fish's Accent Decay pot (30 ms … 3 s, Whittle's manual
+p. 4). `o3meg.adec_tables` solves R for the time to 10 % of a law that is geometric on each side of the 303's 200 ms:
+30 ms at ADEC 0, 200 ms at 50, 3.0 s at 127 (R 8.3 kΩ … 1.3 MΩ). Each row's circuit runs 7 × its own time to 10 %,
+so every row ends near 1 % as MEG_T's row 0 does; below that the last factor is held (🟡 extrapolated, as MEG_T's
+tail), and the times to 1 % and 0.1 % grow with ADEC too (ADEC 50: 1.50 s / 5.03 s; the review found them
+non-monotonic across 50 in a first draft with shorter runs). The engine reads
+`ADEC_T`, MEG_T's format, 34 rows at ADEC −2, 2, …, 130, so ADEC 50 falls exactly on row 13, which *is* MEG_T's row 0:
+without dEVILish, and at ADEC 50, the output is v7.8's sample for sample (1,600 frames of accented and plain notes,
+the assembly, SPD NORM and SLOW: same sha256). Measured on the engine's own steps: ADEC 0 reaches 10 % in 30.1 ms,
+127 in 2,995 ms; each step of the knob lengthens the time by 3.1–4.7 % (49 / 50 / 51: 192 / 200 / 207 ms). Memory
++8.7 KB (`O3_ADEC_T`, 34 × 64 longs); cost the same as v7.8 within ±1 % (a held accent 4,543 → 4,583 instructions a
+frame at ADEC 10, 4,725 → 4,785 at 120: the table's tail is read for longer). Rule and tests: the project note
+`OCTA303_v79_tarature.md` sec. 3; `adec_*` and `bit_exact_accent_circuit` in `test_octa303`.
+
 ### v7.8 (6 Nov 2026): the MEG and the accent from the circuit (V8A)
 
 Three parts of the voice now follow the Roland service notes' main board (= the x0xb0x netlist) with **no number
@@ -309,7 +326,7 @@ numbers pass V8A's thresholds too; the cause goes to v7.9. Assembly = engine bit
 
 dEVILish: **ADEC 50** (its default) is now the circuit's MEG (`DF_ADEC[50]` = 0); away from 50 the accents keep
 v7.7's exponential, 30 ms … 3 s. The two do not join: at 49 and 51 an accent reaches −40 dB in ~355 and ~380 ms, at 50
-(the circuit's tail) in ~1.5 s, so a lock or an LFO crossing 50 jumps. **SPD** acts on C13, 🟡 an interpretation (Whittle describes the modes, not the parts): FAST C13 / 4,
+(the circuit's tail) in ~1.5 s, so a lock or an LFO crossing 50 jumps. (v7.9: no longer; see above.) **SPD** acts on C13, 🟡 an interpretation (Whittle describes the modes, not the parts): FAST C13 / 4,
 NORM the 303, SLOW C13 × 4 and its part of the push read doubled. **SWP SELF** still takes the MEG out of the accent circuit.
 
 Cost (simulator counts, instructions a 16-sample frame, machine track, v7.7 → v7.8, mean / worst frame): a plain note

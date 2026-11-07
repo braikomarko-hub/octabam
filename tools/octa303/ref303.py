@@ -115,9 +115,11 @@ def ladder_clip(st, u):
     u = clamp(u, -st.cll, st.cll)
     return fm(softclip(fm(u, st.clg, 4, 8, 'clg')), st.cli, 4, 8, 'cli')
 
-def megf(m, dec):
+def megf(m, dec, tab=None):
     """v7.8: the MEG's factor for this frame (o3meg.py): MEG_T by DECAY (33 rows, 4 apart, linear) and by level
-    (64 points, 6 an octave, linear; level coordinate from ff1 and the mantissa: o3meg.level_of_x)"""
+    (64 points, 6 an octave, linear; level coordinate from ff1 and the mantissa: o3meg.level_of_x).  v7.9: tab =
+    ADEC_T for accents, dec = the ADEC row position (o3_megfa)"""
+    if tab is None: tab = T.MEG_T
     n = 32 - m.bit_length()                          # ff1: m <= ONE30, so n >= 2
     t = (1 << 32) - (m << n)                         # 2 - the mantissa, Q31: (0, 2^31]
     x = (n - 2) * 393216 + (t >> 15) * 6             # Q16 position on the grid (6 points an octave)
@@ -126,9 +128,9 @@ def megf(m, dec):
     def lv(row):
         if j >= T.MEG_NLEV - 1: return row[T.MEG_NLEV - 1]
         return row[j] + mulq15(row[j + 1] - row[j], (x & 0xFFFF) >> 1)
-    f0 = lv(T.MEG_T[r])
+    f0 = lv(tab[r])
     if w == 0: return f0
-    return f0 + ((chk((lv(T.MEG_T[r + 1]) - f0) * w, 'megw')) >> 2)
+    return f0 + ((chk((lv(tab[r + 1]) - f0) * w, 'megw')) >> 2)
 
 def acf(tab, v):
     """y = i R of a diode in series with R, from AC_F or AC_F27 (32.8 mV steps, linear)"""
@@ -178,10 +180,11 @@ def ctrl(st):
     st.inc = inc_of_p(st.pcur >> 8)
     st.sqi = st.pcur >> 16                                             # v7.6: the square's cycle (Q8) by semitone
     st.sqk = T.SQK[st.sqi]
-    if st.accd and st.adec:                                            # dEVILish ADEC off its neutral: v7.7's
-        st.meg = mul30(st.meg, st.adec)                                # exponential
-    elif st.meg > 0:                                                   # v7.8: the circuit (o3meg.py), every note
-        st.meg = mul30(st.meg, megf(st.meg, 0 if st.accd else st.dec))
+    if st.meg > 0:                                                     # v7.8: the circuit (o3meg.py), every note;
+        if st.accd:                                                    # v7.9: accents on ADEC_T, dEVILish's ADEC
+            st.meg = mul30(st.meg, megf(st.meg, st.adec or T.ADEC_Q50, T.ADEC_T))   # (0: none = ADEC 50)
+        else:
+            st.meg = mul30(st.meg, megf(st.meg, st.dec))
     st.megs += mulq15(st.meg - st.megs, T.TB_MEG_ATT)
     d = st.veg - st.vsus                                               # VDEC (the final level may move
     st.veg = st.vsus + mul30(d, st.vegd) if d >= 0 else st.vsus - mul30(-d, st.vegd)   # above the envelope)

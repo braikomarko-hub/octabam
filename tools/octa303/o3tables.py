@@ -345,8 +345,8 @@ TB_MEG_ACC = TB_MEG[0]                                              # v7.4: an a
 # claude/OCTA303_blocco3_accento.md (V8A passes from C2c and C2c': no number fitted).  Three pieces, all at the control
 # rate (CS samples):
 # (1) MEG: C62 discharging through R138 (+ VR6) into the diodes D28/D29/D26 (o3meg.py): a factor per frame by DECAY and
-#     by level, MEG_T (NROW rows x NLEV levels, Q30).  Accents (and DECAY 0) take row 0.  dEVILish's ADEC away from its
-#     neutral 50 keeps v7.7's exponential (DF_ADEC); ADEC 50 is 0 = "the circuit".
+#     by level, MEG_T (NROW rows x NLEV levels, Q30).  Accents (and DECAY 0) take row 0.  v7.9: accents read ADEC_T
+#     (below), whose row for ADEC 50 is MEG_T's row 0; dEVILish's ADEC moves along it with no jump.
 # (2) the accent's push to the filter (VR7 -> D24 -> R46 -> VR4B -> C13, VR4B's wiper -> R72 -> N134) and (3) its
 #     current into the VCA (VR7 -> R119 -> C36 -> R120 -> D27 -> pin 1 of the BA662A, a junction): the twin's a2_step
 #     (backward Euler on C13 and C36, 2 sub-steps a frame) solved in closed form: D24 is one diode in series with
@@ -375,6 +375,30 @@ MEG_NROW, MEG_NLEV, MEG_LPO = len(MEG_T), len(MEG_T[0]), 6
 MEG_FLAT = [v for row in MEG_T for v in row]
 assert MEG_NROW == 33 and MEG_NLEV == 64
 assert all(abs(MEG_T[r + 1][j] - MEG_T[r][j]) * 3 < 2 ** 31 for r in range(32) for j in range(64))   # (diff * w) fits
+# v7.9: dEVILish ADEC continuous (o3meg.adec_tables; claude/OCTA303_v79_tarature.md sec. 3).  ADEC_T has MEG_T's format;
+# ADEC a reads row position a + 2 (DF_ADEC); 0 (no dEVILish) means ADEC 50, the 303 = MEG_T's row 0, the same bits.
+def _adec_tables():
+    import json, os, hashlib, tempfile, o3meg
+    here = os.path.dirname(os.path.abspath(globals().get('__file__', 'o3tables.py')))
+    src = hashlib.sha256(open(os.path.join(here, 'o3meg.py'), 'rb').read()).hexdigest()
+    key = [hashlib.sha256(repr(MEG_T).encode()).hexdigest(), MEG_IS_SCALE, src]
+    p = os.path.join(here, 'adec_cache.json')
+    try:
+        d = json.load(open(p))
+        if d.get('key') == key: return d['ADEC_T'], d['R']
+    except (OSError, ValueError):
+        pass                                                        # missing or half-written: rebuild (~3 min)
+    Q, rs = o3meg.adec_tables(MEG_IS_SCALE, MEG_T[0])
+    fd, tmp = tempfile.mkstemp(dir=here, suffix='.tmp')
+    with os.fdopen(fd, 'w') as f: json.dump({'key': key, 'ADEC_T': Q, 'R': rs}, f)
+    os.replace(tmp, p); os.chmod(p, 0o644)
+    return Q, rs
+ADEC_T, ADEC_R = _adec_tables()
+ADEC_NROW, ADEC_Q50 = 34, 52
+ADEC_FLAT = [v for row in ADEC_T for v in row]
+assert len(ADEC_T) == ADEC_NROW and all(len(r) == MEG_NLEV for r in ADEC_T)
+assert ADEC_T[ADEC_Q50 >> 2] == MEG_T[0]                            # ADEC 50 = the 303, bit for bit
+assert all(abs(ADEC_T[r + 1][j] - ADEC_T[r][j]) * 3 < 2 ** 31 for r in range(ADEC_NROW - 1) for j in range(64))
 AC_VT, AC_NVT, AC_IS = 0.02585, 1.752 * 0.02585, 2.52e-9            # 1N4148 SPICE (D24, D27): Is, n
 AC_R46, AC_R72, AC_R119, AC_R120, AC_RV, AC_RON = 47e3, 100e3, 47e3, 22e3, 50e3, 200.0
 AC_C13, AC_C36, AC_V134, AC_VPK, AC_IQ31 = 1e-6, 0.033e-6, 3.27, 9.99, 48e-6   # C13 rests at N134 3.27 V; MEG peak
@@ -597,9 +621,9 @@ DF_SLIDE = [q15(onepole(SLIDE_TAU * (103.3 + 500.0 * r / 127.0) / 103.3)) for r 
 # SWP: 2 ACID = sweep on, resonance normal; 1 WHST = sweep on, resonance doubled; 0 SELF =
 # sweep circuit off (accents reach filter and VCA no more), resonance doubled             [p. 18]
 DF_HIRES = 2                      # "double the usual feedback": self-oscillates at mid/high f (the 150 Hz loop HP)
-# ADEC: the accented notes' MEG decay, 30 ms .. 3 s (-20 dB); 50 = the 303's fixed ~200 ms [p. 4]
-DF_ADEC = [q30(math.exp(-CS / (FS * (0.03 * 100.0 ** (r / 127.0)) / math.log(10)))) for r in range(128)]
-DF_ADEC[50] = 0                       # v7.8: neutral = 0, the circuit's MEG (row 0 of MEG_T), exactly
+# ADEC: the accented notes' MEG decay, 30 ms .. 3 s to 10 % [p. 4]; 50 = the 303's 200 ms.  v7.9: the circuit at every
+# value (ADEC_T, continuous); the entry is ADEC_T's row position a + 2 (2..129), never 0 (0 = no dEVILish = ADEC 50)
+DF_ADEC = [r + 2 for r in range(128)]
 # SATK: the VOLUME attack of non-accented notes (pp. 4, 24-25: Decay fully ACW with Soft Attack
 # fully CW plays nothing). 0 = none, v6.1's instant attack; 1..127 = 90 % in 0.3 .. 30 ms
 DF_SATK = [0] + [q30(1.0 - math.exp(-CS / (FS * 0.0003 * 100.0 ** ((r - 1) / 126.0) / math.log(10)))) for r in range(1, 128)]

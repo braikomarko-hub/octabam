@@ -17,7 +17,7 @@ CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', '
           'TB_MEG_ATT',
           'DF_FM_MUL', 'DF_GIN_Q15', 'DF_ENVX_MUL',
           'DF_MUFF_LP', 'DF_MUFF_T', 'DF_HIRES', 'OSAT_IN', 'OSAT_OUT', 'OSAT_LIM', 'DRV_G0', 'DRV_YLIM', 'DRV_KN', 'DRV_KP', 'DRV_RN', 'DRV_RP', 'DRV_WN', 'DRV_WP', 'DRV_DN4', 'DRV_DP4', 'VCA_LIM', 'SMOOTH_K', 'FINE_Q8', 'CL_I0', 'DF_MUFF_DLIM',
-          'P6_K', 'P6_AMAX', 'P6_KP', 'MEG_NLEV', 'AC_R0', 'AC_KLN', 'AC_R72N', 'AC_VMAX', 'AC_V134', 'AC_V69', 'AC_AL',
+          'P6_K', 'P6_AMAX', 'P6_KP', 'MEG_NLEV', 'ADEC_Q50', 'AC_R0', 'AC_KLN', 'AC_R72N', 'AC_VMAX', 'AC_V134', 'AC_V69', 'AC_AL',
           'AC_BE', 'AC_Q27G', 'AC_KV', 'AC_KSW']
 
 TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R, T.VP_HP1, T.VP_HP2]),
@@ -32,14 +32,14 @@ TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIS
           ('O3_TB_UD', T.TB_UD), ('O3_KD', T.KD), ('O3_DRV_G', T.DRV_G), ('O3_DRV_TH', T.DRV_TH),
           ('O3_CL_G', T.CL_G), ('O3_CL_INV', T.CL_INV), ('O3_CL_LIM', T.CL_LIM),
           ('O3_VP_W2', T.VP_W2), ('O3_SQK', T.SQK), ('O3_P6_F', T.P6_F),
-          ('O3_P6_FP', T.P6_FP), ('O3_MEG_T', T.MEG_FLAT), ('O3_AC_A1', T.AC_A1), ('O3_AC_A2', T.AC_A2),     # v7.8 (V8A)
+          ('O3_P6_FP', T.P6_FP), ('O3_MEG_T', T.MEG_FLAT), ('O3_ADEC_T', T.ADEC_FLAT), ('O3_AC_A1', T.AC_A1), ('O3_AC_A2', T.AC_A2),     # v7.8 (V8A)
           ('O3_AC_RE', T.AC_RE), ('O3_AC_RA', T.AC_RA), ('O3_AC_RP', T.AC_RP), ('O3_AC_B1', T.AC_B1),
           ('O3_AC_K2', T.AC_K2), ('O3_AC_F', T.AC_F), ('O3_AC_F27', T.AC_F27), ('O3_AC_L69', T.AC_L69)]
 SHORTS = [('O3_SQC', T.SQC_FLAT)]                 # v7.6: Q8's square cycles, 128 semitones x 128 points (Q15)
 
 def consts_block():
     assert T.P6_ON, 'v7.7: octa303.s always has the pin-6 ceiling (CAL p6v)'
-    assert T.AC_FSH == 15 and len(T.AC_L69) == 129 and T.MEG_NROW == 33, 'v7.8: octa303.s hardcodes these (o3_acf, o3_acc, o3_megf)'
+    assert T.AC_FSH == 15 and len(T.AC_L69) == 129 and T.MEG_NROW == 33 and T.ADEC_NROW == 34, 'v7.8: octa303.s hardcodes these (o3_acf, o3_acc, o3_megf)'
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]
     assert len(R.LB) == T.S_MAX // 64 + 1 == len(T.DF_HZ) == len(T.KF) == len(T.LG) == len(T.KD)
     L.append('        .set    %-16s %d' % ('NHZ,', len(T.DF_HZ)))
