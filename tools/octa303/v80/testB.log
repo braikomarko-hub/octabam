@@ -1,0 +1,19 @@
+note  0: rms err -109.47 dB, max |err| 0.482 units  ok
+note  1: rms err -108.60 dB, max |err| 0.448 units  ok
+note  2: rms err -99.02 dB, max |err| 1.126 units  ok
+note  3: rms err -106.34 dB, max |err| 0.749 units  ok
+note  4: rms err -98.46 dB, max |err| 0.927 units  ok
+note  5: rms err -98.46 dB, max |err| 0.927 units  ok
+note  6: rms err -102.46 dB, max |err| 0.411 units  ok
+note  7: rms err -118.79 dB, max |err| 0.988 units  ok
+note  8: rms err -96.96 dB, max |err| 0.667 units  ok
+note  9: rms err -100.75 dB, max |err| 0.914 units  ok
+note 10: rms err -104.76 dB, max |err| 0.731 units  ok
+note 11: rms err -97.90 dB, max |err| 0.879 units  ok
+note 12: rms err -97.90 dB, max |err| 0.879 units  ok
+note 13: rms err -94.26 dB, max |err| 0.763 units  ok
+note 14: rms err -118.47 dB, max |err| 0.894 units  ok
+note 15: rms err -98.64 dB, max |err| 0.543 units  ok
+note 16: rms err -100.06 dB, max |err| 0.841 units  ok
+note 17: rms err -110.15 dB, max |err| 0.396 units  ok
+B: PASS
