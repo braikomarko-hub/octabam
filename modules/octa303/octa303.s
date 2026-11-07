@@ -521,13 +521,14 @@ sy_render:
         move.l  %d0,S_LATCHED(%a3)
         move.l  RS_PTR,%a0
         clr.l   4(%a0)                  | the retrig count the packer latched: no stock retrigs
-        bra     .Lison
-.Lnot:
+        bra     .Lparams                | v8.0: o3_params already ran for this call (it reads only the
+.Lnot:                                  | record, SETUP and the lanes; o3_note_on writes none of them)
         clr.l   S_LATCHED(%a3)          | not ours: stock from here on
 .Lison:
         tst.l   S_LATCHED(%a3)
         beq     .Lstock
         bsr     o3_params               | this call's knobs, before the record is neutralised
+.Lparams:
         bsr     o3_gate                 | v7.0: SETUP's GATE (OFF: the AMP decides, as v6.5e-v6.9)
         move.w  (%a4),%d0
         move.w  %d0,S_WPTCH+2(%a3)
