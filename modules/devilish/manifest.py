@@ -61,7 +61,7 @@ MODULE = Module(
         Param(b"SLID", 0, 128, active=True, formatter=_PLAIN,
               doc="slide time, 60 ms (0, the 303) to 360 ms"),
         Param(b"ADEC", 50, 128, active=True, formatter=_PLAIN,
-              doc="filter decay on accented notes, 30 ms to 3 s (the MEG circuit at every value); 50 is the 303's 200 ms"),
+              doc="filter decay on accented notes, 30 ms to 3 s (the MEG circuit); 50 is the 303's 200 ms"),
         # ---- page 2 ------------------------------------------------------------
         Param(b"SATK", 0, 128, active=True, formatter=_PLAIN,
               doc="soft attack on the volume of unaccented notes: 0 none, 1 to 127 is 0.3 to 30 ms"),
