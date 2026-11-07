@@ -230,8 +230,8 @@ MACHINES = {
 # renderer the FLEX kind entry names (`movea.l 0x400d6438,%a0 ; movea.l
 # -4(%a0),%a0`), so the entry must be its sy_render. ANALOG BD's renderer (C)
 # calls stock's 0x40004008 itself, so it is the last. CX OSC's STATIC entry
-# chains the same way: OCTA303 claims a voice only by a FLEX signature or a
-# TB303* sample's settings record (o3_marker), and stock renders the rest.
+# chains the same way: OCTA303 claims a voice only by its FLEX signature (the
+# TB-303 machine; v7.9: no longer a TB303* sample), and stock renders the rest.
 MC_ORDER = {"RENDER": ("CX OSC", "OCTA303", "ANALOG BD"),
             "PAGE": ("OCTA303", "CX OSC"), "RETRIG": ("OCTA303", "CX OSC")}
 MC_CHAINED = ("TYPE", "NAME", "MAIN_COMMIT", "SRC_COMMIT", "SRC_COMMIT2", "VALIDATE",

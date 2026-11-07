@@ -15,7 +15,7 @@ comes from the measurements and gates named beside it.
 [BLACKPYRAMIDS_303](https://github.com/Zac-Kyoti/octatrack-kyoti-fw) (BLKPYRAMD) adapts Robin
 Schmidt's Open303 to the **DSP**: one voice per DSP core (one on T1–T4, one on T5–T8), in SPRING
 REV's space, voiced by ear. OCTA303 takes the other road: the voice runs on the **ColdFire**, one
-per track (the author plays three at once), gives up no stock effect, and its model is fitted to
+per track (up to two in a Part), gives up no stock effect, and its model is fitted to
 measurements of a real TB-303 (Din Sync's set, below) rather than tuned by ear. Both register
 their machine row with repeat98's ANALOG BD seams, so they cannot share an image.
 
@@ -30,8 +30,8 @@ afterwards no longer has those signatures); the render path counts the same way.
 25.3 % of the ColdFire frame interrupt, 2 machines playing 65.5 %, 4 machines 83.2 %; the model fitted to those
 (about 21 points once any machine plays, 9.3 per machine) gives about 102 % for six. Near 98 % the frame
 interrupt leaves the panel's task almost no time: the audio keeps playing and the interface stops answering
-(`docs/contributing/FAILURE_MODES.md`). A track that starts on a sample named `TB303*` is a second way into the
-voice and is not counted.
+(`docs/contributing/FAILURE_MODES.md`). Until v7.9 a track that started on a sample named `TB303*` was a second
+way into the voice, not counted; v7.9 took it away, so two is the limit.
 
 ## Using it
 
@@ -51,8 +51,10 @@ voice and is not counted.
 5. LFO SETUP names an OCTA-303 track's PLAYBACK destinations TUNE CUT RES ENV DEC ACC (v7.1; before,
    FLEX's PTCH STRT LEN RATE RTRG RTIM: the modulation was right, the names were not).
 
-The older form still works and is unchanged: a FLEX track whose sample is named `TB303*.wav`
-(`TB303`, `TB303SQ`, `TB303D`, `TB303SQD`, any case) plays the same engine with neutral SETUP values.
+Until v7.8 a FLEX track whose sample was named `TB303*.wav` (`TB303`, `TB303SQ`, `TB303D`, `TB303SQD`, any
+case) played the same engine with neutral SETUP values. v7.9 took that way out: such a track plays its sample.
+A project that used it gets the same sound from an OCTA-303 track with WAVE set to the file's carrier (SAW, SQR,
+SAW+D, SQR+D) and the other SETUP values at their defaults.
 
 ### PLAYBACK page (the FLEX playback slots)
 
@@ -299,6 +301,27 @@ the assembly, SPD NORM and SLOW: same sha256). Measured on the engine's own step
 frame at ADEC 10, 4,725 → 4,785 at 120: the table's tail is read for longer). Rule and tests: the project note
 `OCTA303_v79_tarature.md` sec. 3; `adec_*` and `bit_exact_accent_circuit` in `test_octa303`.
 
+
+### v7.9 (7 Nov 2026): the TB303* sample way in is gone
+
+A FLEX track whose sample is named `TB303*` no longer plays the 303: it is an ordinary FLEX track, its sample
+rendered by stock, its PLAYBACK page stock's, its CHROMATIC keys stock's. The TB-303 machine is the only way
+in. Gone from `octa303.s`: the name match (`o3_marker`, `o3_basename`, `o3_name`), the sample's PLAYBACK clone
+(`o3_pgdesc`, `o3_over`, the record's first half of `o3_desc`), v6.9's knob stamp for a new sample track
+(`o3_stamp`, `o3_lastslot`), the semitone keys and the neutral SETUP for such a track (`o3_setup_neutral`), and the
+dead-voice check that only a sample track needed. 6,520 → 6,274 lines; ~480 bytes of runtime data fewer.
+The machine is the same sample for sample: `test_octa303`'s scripts, written in v6.x's vocabulary (a TB303*
+file names the carrier), now play their carrier on the machine (SETUP's WAVE = the carrier, the rest
+`SETUP_NEUTRAL`, which is what the sample's track played), and every bit-exact run passes against an
+unchanged `ref303.py` (125 of 125); the same converted scripts run on v7.9's engine before this change pass
+115 of 125, every bit-exact run among them: the ten that fail are the checks of what changed (the TB303* sample
+now stock: 7; the machine's record now at the start of `o3_desc`: 3), so the machine's path did not move. New checks: `tb303_sample_is_stock_*` (samples, the DSP record, the retrig count and the
+positions as stock leaves them), `page_tb303_sample_is_stock_*`, `machine_taken_away_releases_at_the_next_start`;
+`chrom_stock_for_other_tracks` now includes TB303* files. Cost (simulator): a note start on a plain FLEX track
+123 → 44 instructions; a machine frame 4,446 → 4,435 at its start and 4,110 → 4,105 after (the two checks
+only a sample track needed). `tools/hw/ot_cfmatrix.py`'s OCTA-303 layouts are signed machines now, at most
+two in a Part.
+
 ### v7.8 (6 Nov 2026): the MEG and the accent from the circuit (V8A)
 
 Three parts of the voice now follow the Roland service notes' main board (= the x0xb0x netlist) with **no number
@@ -480,7 +503,7 @@ the table on the square (simulator counts).
 - The validator called on a Part with a signed track keeps FINE/SLID/DRIV = 100/90/120; on an
   unsigned FLEX track the same bytes clamp to 1/1/3.
 - Audio with an **empty** FLEX slot: C3 at 130.8 Hz; GATE 303 ≈ 58 % of a step; SQR has the odd
-  harmonics (H2 −22 dB). With a TB303.wav in the slot, WAVE still decides.
+  harmonics (H2 −22 dB). With a TB303.wav in the slot, WAVE still decides (v7.9: the file is never read).
 
 ### On the unit
 

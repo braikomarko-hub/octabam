@@ -443,7 +443,7 @@ def chromatic():
                     track(u, 2, kind)
                 ub.mem_write(sym["qz_scale"], bytes([scale]))
                 got = run(ub, sym["o3_chrom"], DONE, d2=2, a2=idx, stack=(DONE,))
-                if kind in ("tb303", "sig-tb"):
+                if kind == "sig-tb":                  # OCTA303 v7.9: a TB303* sample is a sample
                     want = run(ua, sym1["o3_chrom"], DONE, d2=2, a2=idx, stack=(DONE,))
                 else:
                     track(ub, 2, kind)
@@ -451,8 +451,8 @@ def chromatic():
                     want = run(ub, sym["qz_chrom"], DONE, d2=2, a2=idx, stack=(DONE,))
                 n += 1
                 bad += got[3] != want[3] or got[1] != want[1] or got[4] != want[4]
-    check(bad == 0, f"chrom_pitch: {n} cases -- a 303 track (its sample or its signature) as OCTA303 alone, "
-                    f"every other track (static, sample, synth; scale off and on) as SCALE QUANTIZER's qz_chrom")
+    check(bad == 0, f"chrom_pitch: {n} cases -- a 303 track (its signature) as OCTA303 alone, "
+                    f"every other track (static, sample, synth, a TB303.WAV sample; scale off and on) as SCALE QUANTIZER's qz_chrom")
     track(ub, 2, "sample")
     ub.mem_write(sym["qz_scale"], b"\x00")
     check(run(ub, sym["o3_chrom"], DONE, d2=2, a2=7, stack=(DONE,))[3] == 5 * 7 + 4,

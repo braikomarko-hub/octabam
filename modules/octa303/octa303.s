@@ -16,13 +16,13 @@
 |       (Robin Whittle's Devil Fish: OVDR FM TRCK VDEC SLID ADEC / SATK SWP SPD MUFF CUTX ENVX)
 |       from that slot's live lane; every other 303 track reads O3_DF_NEUTRAL, which is v6.1.1
 |       sample for sample.  The LFO page is stock again.
-| DIST  optional (TB303D / TB303SQD carriers): a fixed pedal after the VCA -- gain, asymmetric
+| DIST  optional (SETUP's WAVE +D): a fixed pedal after the VCA -- gain, asymmetric
 |       soft clip, 6 kHz tone -- the London acid-techno treatment.  The plain carriers are pure.
 |
-| WHICH TRACKS: a FLEX track whose voice starts on a sample named TB303* (after the last '/',
-| any case: TB303 saw, TB303SQ square, TB303D saw+pedal, TB303SQD square+pedal) -- decided
-| at the voice START from the settings record the voice struct points at, as SYNTH MACHINE
-| decides SYNTH*.  Every other track is the stock renderer's, byte for byte.
+| WHICH TRACKS: the TB-303 machine (v7.0, a signed FLEX track; see "THE TB-303 MACHINE" below),
+| decided at the voice START.  v7.9: the older way in, a FLEX track whose sample is named TB303*,
+| is gone; such a track is an ordinary FLEX track.  Every other track is the stock renderer's,
+| byte for byte.
 |
 | THE CALL (Tim Hastie's poly.s 2.9, sy_render): sy_render(track, ping, start, end) replaces
 | the kind table's FLEX entry; the packer calls it once a 16-sample frame, twice when a START
@@ -36,7 +36,7 @@
 | o3_retrig (detour 0x4000c634, Tim's po_retrig): a START on a sounding OCTA303 track is
 | posted as the clean 0x30 so the DSP does not crossfade the one continuous stream with
 | itself (+5.6 dB at every trig, measured by Tim).  o3_page (detour 0x40031ece): the
-| PLAYBACK page of an OCTA303 track is a runtime clone of the stock FLEX record.
+| machine's pages are a runtime clone of the stock FLEX record (o3_mdesc).
 |
 | CPU (v6.x): per-sample multiplies are ((x >> pre) * c) >> post -- one muls.l and two shifts --
 | the per-sample code is inline, constants are read through %a5, control runs every 16 samples.
@@ -57,14 +57,10 @@
         .set    STOCK_RENDER,   0x40004008      | the FLEX renderer this unit replaces in the kind table
         .set    FP_PTR,         0x800062a8      | the packer's per-track DSP parameter record (halfwords, raw<<8)
         .set    RS_PTR,         0x800062a4      | the packer's per-track render state (+4 = the latched retrig count)
-        .set    SETTINGS_BASE,  0x100b14f0      | the sample settings records, 0x448 each, the path at +0
-        .set    SETTINGS_SPAN,  0x24640         | 136 * 0x448
-        .set    SETTINGS_STRIDE,0x448
-        .set    SLOT_OFF,       0x8f04b         | Part + 0x8f04a + track*5 + 1: the track's FLEX slot
         .set    PART_SIZE,      6322
         .set    FLEX_P,         0x400d31ae      | the stock FLEX PLAYBACK descriptor (P form)
         .set    FLEX_DESC_LEN,  0x192
-        .set    O3_DLEN,        0x194           | v7.0: o3_desc's records, a long apart
+        .set    O3_DLEN,        0x194           | v7.0: o3_desc, the machine's record (v7.9: the only one)
         .set    PART_OFF,       0x8ed80         | v7.0: the bank blob's Part 0 (Part' = BANK + this + part * 6322)
         .set    LANE_SETUP,     0x20            | v7.0: the live lane's SETUP bytes (+0x20..+0x25)
         .set    RESOLVER_RET,   0x40031ed6      | the page resolver after its table load (o3_page)
@@ -467,7 +463,7 @@
         move.l  %d0,\dst(%a3)
         .endm
 
-        .global o3_pgdesc, o3_page, o3_retrig, o3_chrom
+        .global o3_page, o3_retrig, o3_chrom
         .if     HK_MACHINE_ROWS         | CX OSC's poly.s exports sy_render too: ours is o3_render
         .global o3_render
         .else
@@ -509,7 +505,7 @@ sy_render:
         move.l  %d2,%d0                 | v7.0: the TB-303 machine (a signed FLEX track, one of the first O3_MAX)?
         bsr     o3_sigcur_lim
         move.l  %d0,S_MACH(%a3)
-        beq     .Lsmp
+        beq     .Lnot                   | v7.9: not the machine: not ours (TB303* samples are FLEX)
         bsr     o3_setupptr             | yes: SETUP's WAVE is the carrier, whatever the slot holds
         KB      0,%a0
         moveq   #7,%d1                  | v7.9: 8 values (bit 2 = R)
@@ -517,10 +513,6 @@ sy_render:
         bls     .Lours
         move.l  %d1,%d0
         bra     .Lours
-.Lsmp:
-        bsr     o3_marker               | d0 = (dist<<1)|wave of a TB303* sample, or -1
-        tst.l   %d0
-        bmi     .Lnot
 .Lours:
         move.l  %d0,%d5
         bsr     o3_params               | dEVILish first: SATK decides how the note starts
@@ -583,15 +575,7 @@ sy_render:
         tst.l   S_LATCHED(%a3)
         beq     .Ldone                  | not an OCTA303 track: the stock samples stand
         bsr     o3_params               | a first call [0,n): the record is untouched
-.Lrender:
-        tst.l   S_MACH(%a3)             | v7.0: the machine plays with or without a sample
-        bne     .Lalive
-        move.l  #VOICE_STRIDE,%d0
-        muls.l  %d2,%d0
-        lea     VOICE_BASE,%a0
-        tst.b   (%a0,%d0.l)             | the CF voice ended: leave stock's silence
-        beq     .Ldone
-.Lalive:
+.Lrender:                               | the machine plays with or without a sample (v7.9: only the machine)
         moveq   #0,%d7
         move.b  3(%a2),%d7              | samples shipped by this call
         beq     .Ldone
@@ -992,82 +976,6 @@ o3_voice:
         lea     V_POS(%a0),%a0
         rts
 
-| ---- o3_marker: track d2's starting voice -> d0 = name code or -1 (poly.s sy_render's scan:
-|      only a pointer INTO the settings table is followed).  Clobbers d0, d1, d3, a0, a1.
-o3_marker:
-        move.l  #VOICE_STRIDE,%d0
-        muls.l  %d2,%d0
-        lea     VOICE_BASE,%a0
-        move.l  8(%a0,%d0.l),%a0        | the new voice's settings record
-        move.l  %a0,%d0
-        sub.l   #SETTINGS_BASE,%d0
-        cmp.l   #SETTINGS_SPAN,%d0
-        bcc     .Lmk_no
-        bsr     o3_basename
-        bra     o3_name
-.Lmk_no:
-        moveq   #-1,%d0
-        rts
-
-| ---- o3_basename: a0 = a path -> a1 = after its last '/' (255 chars at most).  Clobbers d0, d1, a0.
-o3_basename:
-        move.l  %a0,%a1
-        move.l  #255,%d1
-.Lbn1:
-        moveq   #0,%d0
-        move.b  (%a0)+,%d0
-        beq     .Lbn3
-        cmp.l   #0x2f,%d0
-        bne     .Lbn2
-        move.l  %a0,%a1
-.Lbn2:
-        subq.l  #1,%d1
-        bne     .Lbn1
-.Lbn3:
-        rts
-
-| ---- o3_name: a1 = a file name -> d0 = (dist<<1)|wave for TB303 / TB303SQ / TB303D / TB303SQD
-|      (any case), -1 otherwise (o3tables.name_code).  Clobbers d0, d1, a1.
-        .macro  NAMECH c
-        moveq   #0,%d0
-        move.b  (%a1)+,%d0
-        or.l    #0x20,%d0
-        cmp.l   #\c,%d0
-        bne     .Lnm_no
-        .endm
-o3_name:
-        NAMECH  0x74                    | t
-        NAMECH  0x62                    | b
-        NAMECH  0x33                    | 3
-        NAMECH  0x30                    | 0
-        NAMECH  0x33                    | 3
-        moveq   #0,%d1
-        moveq   #0,%d0
-        move.b  (%a1),%d0
-        or.l    #0x20,%d0
-        cmp.l   #0x73,%d0               | s
-        bne     .Lnm_d
-        moveq   #0,%d0
-        move.b  1(%a1),%d0
-        or.l    #0x20,%d0
-        cmp.l   #0x71,%d0               | q
-        bne     .Lnm_d
-        moveq   #1,%d1
-        addq.l  #2,%a1
-.Lnm_d:
-        moveq   #0,%d0
-        move.b  (%a1),%d0
-        or.l    #0x20,%d0
-        cmp.l   #0x64,%d0               | d
-        bne     .Lnm_ok
-        addq.l  #2,%d1
-.Lnm_ok:
-        move.l  %d1,%d0
-        rts
-.Lnm_no:
-        moveq   #-1,%d0
-        rts
-
 | ============================================================================
 | o3_retrig -- Detour 0x4000c634 (8 bytes: `moveal 114(sp),a1; moveb (a0,a1.l),d0`,
 | a0 = 0x46104d15): the frame builder's copy of a track's DSP command byte into the
@@ -1120,8 +1028,8 @@ o3_retrig:
 | o3_page -- Detour 0x40031ece (6 bytes: `move.l 0(a0,d0.l*4),d0; bra.s 0x40031ed6`),
 | the page resolver's PLAYBACK table load.  d0 = machine, a0 = table, d3 = track,
 | d1 = part index, a1 = bank blob; d2-d5 restored by the resolver's epilogue, d0/d1/a0/a1
-| scratch (poly.s po_lfopage's contract).  A FLEX track whose assigned FLEX slot holds a
-| TB303* sample gets the TB-303 clone (o3_pgdesc); everything else the stock descriptor.
+| scratch (poly.s po_lfopage's contract).  The TB-303 machine's track gets the machine's record
+| (o3_mdesc); everything else the stock descriptor (v7.9: a TB303* sample too).
 | ============================================================================
 o3_page:
         .if     HK_MACHINE_ROWS
@@ -1150,35 +1058,8 @@ o3_page:
         move.l  %d3,%d0
         bsr     o3_sig
         tst.l   %d0
-        beq     .Lpg_smp
+        beq     .Lpg_stock
         bsr     o3_mdesc
-        bra     .Lpg_done
-.Lpg_smp:
-        move.l  %d5,%d0
-        move.l  %d3,%d4
-        lsl.l   #2,%d4
-        add.l   %d3,%d4                 | track * 5
-        add.l   %d4,%d2
-        move.l  %d2,%a0
-        add.l   #SLOT_OFF,%a0
-        moveq   #0,%d2
-        move.b  (%a0),%d2               | the track's FLEX slot
-        cmp.l   #127,%d2
-        bhi     .Lpg_done               | 0xff = none; 128.. = the recorder buffers
-        move.l  %a0,-(%sp)              | v6.9: the slot byte, for o3_stamp
-        move.l  #SETTINGS_STRIDE,%d4
-        muls.l  %d2,%d4
-        add.l   #SETTINGS_BASE,%d4
-        move.l  %d4,%a0                 | the slot's path
-        move.l  %d0,%d5                 | (o3_basename / o3_name clobber d0, d1)
-        bsr     o3_basename
-        bsr     o3_name
-        move.l  (%sp)+,%a0
-        tst.l   %d0
-        bmi     .Lpg_stock
-        bsr     o3_stamp                | v6.9: a new 303 track starts with CUT RES ENV DEC at 64
-        lea     o3_over,%a1
-        bsr     o3_pgdesc               | d0 = the clone
         bra     .Lpg_done
 .Lpg_stock:
         .if     HK_MACHINE_ROWS
@@ -1197,84 +1078,6 @@ o3_page:
         .endif
         .endif
         jmp     RESOLVER_RET
-
-| ---- o3_stamp (v6.9): a new 303 track's CUT RES ENV DEC to 64.  New = the track's FLEX slot is not the
-|      one this unit last saw there (none since boot) AND the four knobs all read 0 (a fresh FLEX record:
-|      a 303 track whose knobs the author set are never touched).  64 goes where the stock writer
-|      0x40054cd8 stores a PLAYBACK knob -- the Part (+0x8edaa + 30*track + 6*machine + slot, FLEX = 1),
-|      its shadow (0x100a4ef8 + part*6322 + the same) and, for the current part, the live lane
-|      (0x80000810 + 72*track + slot) -- without calling it: the page resolver we sit in is its callee.
-|      a0 = the track's slot byte (Part + SLOT_OFF + 5*track), d2 = slot, d3 = track.
-|      Clobbers d0, d1, d4, a0, a1.
-        .set    PB_FLEX,        0x8edb0         | Part + 0x8edaa + 6 * FLEX: the FLEX PLAYBACK knobs (+30 a track)
-        .set    PB_SHADOW,      0x1001614e      | shadow = Part offset + this (modules/mode-defaults' bases agree)
-        .set    STAMP_V,        64
-o3_stamp:
-        lea     o3_lastslot,%a1
-        move.l  %d2,%d0
-        addq.l  #1,%d0                  | remembered as slot + 1 (0 = none since boot)
-        mvz.b   (%a1,%d3.l),%d1
-        cmp.l   %d0,%d1
-        beq     .Lst_x
-        move.b  %d0,(%a1,%d3.l)
-        moveq   #25,%d0
-        muls.l  %d3,%d0
-        add.l   %d0,%a0
-        sub.l   #SLOT_OFF-PB_FLEX,%a0   | a0 = Part + PB_FLEX + 30*track (slot 0 = TUNE)
-        tst.b   1(%a0)
-        bne     .Lst_x
-        tst.b   2(%a0)
-        bne     .Lst_x
-        tst.b   3(%a0)
-        bne     .Lst_x
-        tst.b   4(%a0)
-        bne     .Lst_x
-        moveq   #STAMP_V,%d0
-        move.b  %d0,1(%a0)              | the Part
-        move.b  %d0,2(%a0)
-        move.b  %d0,3(%a0)
-        move.b  %d0,4(%a0)
-        move.l  %a0,%d4
-        sub.l   BANK_PTR,%d4            | d4 = part*6322 + PB_FLEX + 30*track, if a0 is in the bank blob
-        moveq   #30,%d1
-        muls.l  %d3,%d1
-        add.l   #PB_FLEX,%d1            | d1 = part 0's offset of the same knobs
-        sub.l   %d1,%d4                 | d4 = part*6322
-        bmi     .Lst_x
-        cmp.l   #3*PART_SIZE,%d4
-        bhi     .Lst_x
-        move.l  %d4,%d0                 | a whole part (0..3), or not the bank blob's record: no shadow
-.Lst_p:
-        tst.l   %d0
-        beq     .Lst_ok
-        sub.l   #PART_SIZE,%d0
-        bpl     .Lst_p
-        bra     .Lst_x
-.Lst_ok:
-        moveq   #STAMP_V,%d0
-        add.l   %d4,%d1
-        move.l  %d1,%a1
-        add.l   #PB_SHADOW,%a1          | the shadow
-        move.b  %d0,1(%a1)
-        move.b  %d0,2(%a1)
-        move.b  %d0,3(%a1)
-        move.b  %d0,4(%a1)
-        mvz.b   PART_IDX,%d1
-        move.l  #PART_SIZE,%d0
-        muls.l  %d0,%d1
-        cmp.l   %d1,%d4
-        bne     .Lst_x                  | not the playing part: its lane is not this record's
-        moveq   #CV_STRIDE,%d1
-        muls.l  %d3,%d1
-        lea     CURVALS,%a1
-        add.l   %d1,%a1
-        moveq   #STAMP_V,%d0
-        move.b  %d0,1(%a1)              | the live lane
-        move.b  %d0,2(%a1)
-        move.b  %d0,3(%a1)
-        move.b  %d0,4(%a1)
-.Lst_x:
-        rts
 
 | ============================================================================
 | o3_gate -- v6.5d, the 303's own gate (ref303.gate_frame), timed from the note's START in ticks
@@ -1586,8 +1389,8 @@ o3_fmt_tune:
 | o3_chrom -- Detour 0x4004fc58 (jsr + 2 nops over 10 bytes: `lea (4,a2,a2.l*4),a2;
 | mvz.b 0x100b14cf,d0`), the CHROMATIC key handler 0x4004fb94 (track d2, key index a2 =
 | 0..24, 12 = TRIG 13) about to make the raw pitch 5 * idx + 4 that the voice is trigged with,
-| a held or live-recorded trig's PTCH lock receives and the screen shows.  On a 303 track
-| (FLEX, its slot's sample TB303*) the byte is semitones (v6.4): raw = 52 + idx = -12..+12, so
+| a held or live-recorded trig's PTCH lock receives and the screen shows.  On the TB-303 machine
+| (v7.9: no longer on a TB303* sample) the byte is semitones (v6.4): raw = 52 + idx = -12..+12, so
 | keys and recorded locks play what they say (the knob and the locks reach +24).  Every other
 | track: the stock lea.  The quantizer module's qz_chrom owns the same site: beside it, HOOKS
 | overrides qz_chrom's detour and this one, built with HK_CHROM_PITCH, hands every other track
@@ -1604,30 +1407,11 @@ o3_chrom:
         mvz.b   (%a1,%d2.l),%d0         | the track's machine
         cmp.l   #1,%d0                  | FLEX
         bne     .Lch_stock
-        move.l  %a0,-(%sp)              | v7.0: the TB-303 machine
-        adda.l  #PART_OFF,%a0
+        adda.l  #PART_OFF,%a0           | v7.0: the TB-303 machine?
         move.l  %d2,%d0
         bsr     o3_sig
-        move.l  (%sp)+,%a0
         tst.l   %d0
-        bne     .Lch_303
-        move.l  %d2,%d0
-        lsl.l   #2,%d0
-        add.l   %d2,%d0                 | track * 5
-        adda.l  %d0,%a0
-        adda.l  #SLOT_OFF,%a0
-        mvz.b   (%a0),%d0               | the track's FLEX slot
-        cmp.l   #127,%d0
-        bhi     .Lch_stock              | none / a recorder buffer
-        move.l  #SETTINGS_STRIDE,%d1
-        muls.l  %d1,%d0
-        add.l   #SETTINGS_BASE,%d0
-        move.l  %d0,%a0                 | the slot's path
-        bsr     o3_basename             | a1 = its basename (d0, d1, a0, a1)
-        bsr     o3_name                 | d0 = the carrier code, or -1
-        tst.l   %d0
-        bmi     .Lch_stock
-.Lch_303:
+        beq     .Lch_stock
         lea     64-12(%a2),%a2          | a 303: raw = 64 + (idx - 12) = 52 + idx (semitones)
         bra     .Lch_out
 .Lch_stock:
@@ -1671,20 +1455,16 @@ o3_pword:
 .Lpw4:
         rts
 
-| ---- o3_setupptr (v7.0): a0 = the track's six SETUP bytes (o3tables.SETUP_NAMES): on the TB-303 machine
-|      (S_MACH) the live lane's +0x20..+0x25 (track d2), else o3_setup_neutral (a TB303* sample: v6.9
-|      sample for sample).  Clobbers a0 only.
+| ---- o3_setupptr (v7.0): a0 = the track's six SETUP bytes (o3tables.SETUP_NAMES): the live lane's
+|      +0x20..+0x25 (track d2), locks applied.  Only the machine's tracks get here (v7.9: the TB303*
+|      sample's neutral SETUP is gone).  Clobbers a0 only.
 o3_setupptr:
-        lea     o3_setup_neutral,%a0
-        tst.l   S_MACH(%a3)
-        beq     .Lsp_x
-        move.l  %d0,-(%sp)              | the machine: the live lane's SETUP bytes, locks applied
+        move.l  %d0,-(%sp)
         moveq   #CV_STRIDE,%d0
         muls.l  %d2,%d0
         lea     CURVALS+LANE_SETUP,%a0
         add.l   %d0,%a0
         move.l  (%sp)+,%d0
-.Lsp_x:
         rts
 
 | ---- o3_setup (v7.0): the SETUP page into the state: S_ACCVG (ACCV), S_FINE, S_OSIN (DRIV).
@@ -1715,7 +1495,7 @@ o3_setup:
 | its NEIGHBOR PLAYBACK bytes (Part' + 0x3c + 30*track, which NEIGHBOR does not use); every hook asks
 | o3_type, which reads a signed FLEX track as machine 5.  Its pages are one record (o3_mdesc, a clone
 | of the user's FLEX record): PLAYBACK TUNE CUT RES ENV DEC ACC (the FLEX slots, as a TB303* sample's
-| track), SETUP WAVE GATE FINE SLID DRIV ACCV (FLEX's SETUP slots, Part' + 0x1e0 + 30*track, the live
+| track had until v7.9), SETUP WAVE GATE FINE SLID DRIV ACCV (FLEX's SETUP slots, Part' + 0x1e0 + 30*track, the live
 | lane +0x20).  The stock validator sees FLEX's defaults in a signed track's twelve bytes (o3_validate).
 | Part' = BANK + PART_OFF + part * PART_SIZE (the machine bytes at +0x22, ANALOG BD's form).
 | ============================================================================
@@ -1726,6 +1506,8 @@ o3_setup:
         .set    O3_ROW,         5               | the machine's row and UI type
         .endif
         .set    SIG_OFF,        0x3c            | Part' + 0x3c + 30*track: 'T', 'B', 1
+        .set    PB_FLEX,        0x8edb0         | Part + 0x8edaa + 6 * FLEX: the FLEX PLAYBACK knobs (+30 a track)
+        .set    PB_SHADOW,      0x1001614e      | shadow = Part offset + this (modules/mode-defaults' bases agree)
         .set    SRAM_PART,      0x100a4ece      | the shadow of Part 0's Part' (PB_SHADOW + PART_OFF)
         .set    SRC_CURSOR,     0x460d5c30      | SRC SETUP's selected row
         .set    PB_TABLE,       0x400d5f38      | the PLAYBACK records by UI type (5: stock NEIGHBOR's)
@@ -2006,7 +1788,6 @@ o3_sigwrite:
 o3_mdesc:
         lea     FLEX_P,%a0
         lea     o3_mover,%a1
-        moveq   #1,%d1
         bra     o3_clone
 
 | ---- the hooks (ANALOG BD's, the same sites and contracts) ---------------------------------------
@@ -3588,26 +3369,20 @@ o3_trck:
         rts
 
 | ============================================================================
-| o3_pgdesc / o3_lfodesc (a1 = override list) -> d0 = the TB-303 PLAYBACK / LFO descriptor:
-| a RAM clone of the stock record (built once, from the user's own ROM) with the listed
-| fields replaced.  Called inside the page resolver: may clobber d0/d1/a0/a1 only.
+| o3_clone (a0 = the stock record, a1 = override list) -> d0 = the machine's record (v7.0, o3_mdesc):
+| a RAM clone of the stock FLEX record (built once, from the user's own ROM) with the listed
+| fields replaced.  Called inside the page resolver: may clobber d0/d1/a0/a1 only.  v7.9: the
+| TB303* sample's PLAYBACK clone (o3_pgdesc, record 0) is gone; this is the only record.
 | ============================================================================
-o3_pgdesc:
-        lea     FLEX_P,%a0
-        moveq   #0,%d1
-o3_clone:                               | a0 = stock record, a1 = list, d1 = 0 PLAYBACK / 1 LFO
-        lea     -12(%sp),%sp
-        movem.l %d2/%a2-%a3,(%sp)
-        move.l  %d1,%d2
-        move.l  #O3_DLEN,%d0            | v7.0: record d2 of o3_desc (0 the PLAYBACK clone, 1 the machine)
-        muls.l  %d2,%d0
+o3_clone:
+        lea     -8(%sp),%sp
+        movem.l %a2-%a3,(%sp)
         lea     o3_desc,%a2
-        add.l   %d0,%a2
         lea     o3_built,%a3
-        tst.b   (%a3,%d2.l)
+        tst.b   (%a3)
         bne     .Lclhave
         move.l  %a2,%a3
-        move.l  #FLEX_DESC_LEN,%d1      | (both records are 0x192 bytes)
+        move.l  #FLEX_DESC_LEN,%d1      | (0x192 bytes)
 .Lclcp:
         move.b  (%a0)+,(%a3)+
         subq.l  #1,%d1
@@ -3629,11 +3404,11 @@ o3_clone:                               | a0 = stock record, a1 = list, d1 = 0 P
 .Lclbuilt:
         lea     o3_built,%a3
         moveq   #1,%d0
-        move.b  %d0,(%a3,%d2.l)
+        move.b  %d0,(%a3)
 .Lclhave:
         move.l  %a2,%d0
-        movem.l (%sp),%d2/%a2-%a3
-        lea     12(%sp),%sp
+        movem.l (%sp),%a2-%a3
+        lea     8(%sp),%sp
         rts
 
 | >>> GENERATED TABLES (tools/octa303/gen_tables.py) -- do not edit by hand
@@ -6354,7 +6129,7 @@ O3_SQC:
         .short  5610, 5821, 5971, 6235, 6693, 7261, 7758, 8059, 8205, 8370, 8718, 9262, 9845, 10271, 10472, 10566
 | <<< GENERATED TABLES
 
-| ---- the page clone's fields (poly.s po_pgdesc's {offset.w, length.w, source.l} list;
+| ---- the machine record's PLAYBACK fields (o3_mover; poly.s po_pgdesc's {offset.w, length.w, source.l} list;
 |      offsets from page.s 2.9 and PARAM_PAGES.md: names P+0x16 + 6*slot, defaults P+0x5e +
 |      slot, formatters P+0xca + 4*slot).  Slot 0 is TUNE (the 303's notes); v6.4, Tim Hastie's
 |      tuning system (modules/synth page.s): its minimum and count (P+0x6a, P+0x9a, longs) make
@@ -6364,23 +6139,6 @@ O3_SQC:
 |      and swallows detents); its formatter prints raw - 64 as "-24" "0" "+24".  The default stays
 |      the stock 64 = 0 semitones = C3.
         .align  4
-o3_over:
-        .short  0x009, 9
-        .long   o3_title
-        .short  0x016, 36
-        .long   o3_names
-        .short  0x05f, 5
-        .long   o3_defaults
-        .short  0x06a, 4
-        .long   o3_tune_min
-        .short  0x09a, 4
-        .long   o3_tune_cnt
-        .short  0x0ca, 24
-        .long   o3_fmts
-        .short  0x12a, 4
-        .long   o3_zero
-        .short  -1, 0
-        .long   0
 o3_tune_min:
         .long   64 + TUNE_LO
 o3_tune_cnt:
@@ -6405,11 +6163,11 @@ o3_names:                               | slots 0..5 (PTCH STRT LEN RATE RTRG RT
         .byte   0, 0, 0
         .ascii  "ACC"
         .byte   0, 0, 0
-o3_defaults:                            | CUT RES ENV DEC ACC: v6.9, the knobs in the middle (o3_stamp's 64)
+o3_defaults:                            | CUT RES ENV DEC ACC: v6.9, the knobs in the middle
         .byte   64, 64, 64, 64, 0
 
 | ---- dEVILish neutral: the knobs that make the 303 of v6.1.1 (o3tables.DF_NEUTRAL); page 1, page 2
-| ---- v7.0: the machine's record: o3_over's PLAYBACK fields, then the SETUP page (slots 6..11)
+| ---- v7.0: the machine's record: the PLAYBACK fields above, then the SETUP page (slots 6..11)
         .align  4
 o3_mover:
         .short  0x009, 9
@@ -6489,8 +6247,6 @@ o3_lgate:                               | o3tables.GATE_LABELS
 
 o3_df_neutral:
         .byte   25, 0, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0
-o3_setup_neutral:                       | v7.0: SETUP of a track without the machine (o3tables.SETUP_NEUTRAL)
-        .byte   0, 0, 64, 0, 0, 64
 o3_f_plus:
         .asciz  "+%d"
 o3_notes:                               | v7.0: o3_fmt_tune's names, two bytes each
@@ -6512,9 +6268,7 @@ o3_snapt:
 o3_state:
         .fill   ST_SIZE*NTRACKS, 1, 0
 o3_desc:
-        .fill   2*O3_DLEN, 1, 0                 | v7.0: the PLAYBACK clone, the machine's record
+        .fill   O3_DLEN, 1, 0                   | v7.0: the machine's record (v7.9: the TB303* sample's clone is gone)
         .align  4
 o3_built:
-        .fill   4, 1, 0                 | byte 0: the PLAYBACK clone is built
-o3_lastslot:
-        .fill   NTRACKS, 1, 0           | v6.9: o3_stamp, the FLEX slot + 1 last seen on each track (0 = none)
+        .fill   4, 1, 0                 | byte 0: the machine's record is built

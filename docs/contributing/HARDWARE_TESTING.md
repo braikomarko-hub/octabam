@@ -118,8 +118,8 @@ about 0.03 point.
   [HARDWARE_MATRIX.md](HARDWARE_MATRIX.md), "Tests not yet run", item 1.
 
 **ColdFire cost of a ColdFire module.** `tools/hw/ot_cfmatrix.py` writes a project of
-layouts whose cost is ColdFire work: OCTA-303 voices (a `TB303` sample name, or a signed
-machine), trig density, PTCH locks, VARISPEED (TSTR = VARI) and stations on FX1.
+layouts whose cost is ColdFire work: OCTA-303 voices (signed machines, at most two in a
+Part; until OCTA303 v7.9 also a `TB303` sample name), trig density, PTCH locks, VARISPEED (TSTR = VARI) and stations on FX1.
 `plan` lists a set (`--set cost` or `--set diag`), `proj SRC DEST` writes it
 (`--only-layout N` fills every slot with one layout, for the port, which plays A01), and
 `run DEST LABEL` steps the layouts over USB MIDI and records only LOAD METER's ColdFire

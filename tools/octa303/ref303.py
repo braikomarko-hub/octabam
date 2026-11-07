@@ -338,7 +338,7 @@ def set_df(st, df):
     st.cutx, st.envx = int(k[10] >= 1), int(k[11] >= 1)
 
 def set_setup(st, setup, df):
-    """v7.0: the TB-303 machine's SETUP page (o3tables.SETUP_NAMES), or None: SETUP_NEUTRAL (a TB303* sample).
+    """v7.0: the TB-303 machine's SETUP page (o3tables.SETUP_NAMES), or None: SETUP_NEUTRAL (until v7.9, a TB303* sample).
     SLID acts only without dEVILish on the track (dEVILish's own SLID wins)."""
     k = [min(v, 127) for v in (setup or T.SETUP_NEUTRAL)]
     st.accvg = k[5]                                  # v7.8: ACCV raw, 64 = the 303
@@ -405,8 +405,8 @@ def gate_frame(st, seq):
 
 def render_call(st, w, start, code, n, alive=True, df=None, last=None, seq=None, setup=None):
     """One sy_render call: w = the record's six words as the call found them, start = this is the
-    frame's last call (end == 16) and the packer's START bit is set, code = name_code() of the new
-    voice's file (-1 = not ours), n = the samples this call ships, alive = the CF voice byte,
+    frame's last call (end == 16) and the packer's START bit is set, code = the new voice's carrier
+    (SETUP's WAVE on the machine; -1 = not ours), n = the samples this call ships, alive = the CF voice byte,
     df = dEVILish's twelve knobs on this track or None (no dEVILish there).
     Returns None (stock's samples stand) or n output longs (written to L and R)."""
     if start and code >= 0:
