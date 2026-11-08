@@ -13,3 +13,7 @@ is the tuning chat's twin "(a) solo circuito" (`claude/OCTA303_v79_gemello_a/` i
   accumulator units, Q31 / Q30 coefficients, Q26 k, the closed form's reciprocal at the control step.
 - Check B (thresholds written before, `SOGLIE_passo2.md`): rms error <= -80 dB and max |error| <= 64 twin units
   (1 LSB of the s16 output) on all 18 notes. Result (`testB.log`): **PASS**, worst -94.26 dB, max 1.13 units.
+
+`gemello_a/OCTA303_v79_gemello_a_tabelle.json`: the twin "(a)"'s full table, as the tuning chat published it in the
+Octa303 project on 8 Nov 2026 (moved here, unchanged, to free room in the project). With the twin's `sim.c` and
+`wtab.py` it gives the four reference notes bit for bit.
