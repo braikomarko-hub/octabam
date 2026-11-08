@@ -8,10 +8,10 @@ import math, json, os
 GB = 8
 GBI = 2
 def q(v, s): return int(round(v * (1 << s)))
-def emac(pairs, init=0):
+def emac(pairs, init=0, rnd=True):
     acc = init << 8
     for a, b in pairs: acc += (2 * a * b) >> 24
-    acc += 128                                       # rounding: half a read-out LSB
+    if rnd: acc += 128                               # rounding: half a read-out LSB (step 4e: only where a state integrates)
     assert -(1 << 47) <= acc < (1 << 47), 'acc overflow'
     r = acc >> 8
     assert -(1 << 31) <= r < (1 << 31), 'read-out overflow'
@@ -45,6 +45,8 @@ class Tables:
             c.append(-p * sh)
         c += [g1a[0] * (1 + ga[1]), g1a[1]]
         self.SGC = [q(v, 30) for v in c]
+        # step 4e: Sg on lz itself (Q31) -- c3 = -1 - 6e-6 is not a Q31 value: -lz3 exactly, as the sum's init, plus (c3 + 1)
+        self.SGC31 = [q(c[0], 31), q(c[1], 31), q(c[2], 31), q(c[3] + 1.0, 31), q(c[4], 31), q(c[5], 31)]
         # and the loop's D (c''-0) weights per index, for k's products folded at the control step (Q31)
         self.DW1 = [q(D * (0.5 - a + b), 31) for a, b in zip(T['KLA'], T['KLB'])]
         self.DW0h = [q(D * (0.5 + 2 * a - b) / 2, 31) for a, b in zip(T['KLA'], T['KLB'])]
@@ -88,15 +90,15 @@ class Ladder:
     def step(self, X):
         Tb = self.Tb; li = self.key[0]; y = self.y; lz = self.lz; fz = self.fz; kq = self.kq
         y4o = y[3]; y4p_ = self.y4p
-        Sg = emac([(chk(2 * lz[j]), Tb.SGC[j]) for j in range(6)])           # G's states as out = D in + Sg
+        Sg = emac([(lz[j], Tb.SGC31[j]) for j in range(6)], -lz[3], rnd=False)  # G's states as out = D in + Sg
         A = Tb.A[li]; B = Tb.B[li]
-        ay = [emac([(A[4 * r + c], y[c]) for c in range(4)]) for r in range(4)]
+        ay = [emac([(A[4 * r + c], y[c]) for c in range(4)], rnd=False) for r in range(4)]
         w1, w0h, wm = Tb.W1[li], Tb.W0h[li], Tb.WM[li]
-        S = emac([(y4o, self.KW0h), (y4o, self.KW0h), (y4p_, self.KWM), (Sg, kq)])   # k (D (w0 y4o + wm y4p) + Sg), GBI
+        S = emac([(y4o, self.KW0h), (y4o, self.KW0h), (y4p_, self.KWM), (Sg, kq)], rnd=False)   # k (D (w0 y4o + wm y4p) + Sg), GBI
         e = chk(X - S)                                                         # x - k (...), GBI units
-        num = emac([(e, B[3])], 0); num = chk(ay[3] + chk(num << 7))           # ay3 + d e   (B Q30: x 2; GBI -> GB: x 64)
-        y4n = chk(emac([(num, self.R)]) << 1)                                  # num R       (R Q30: x 2)
-        u = chk(e - emac([(y4n, self.KW1)]))                                   # x - k (D ym + Sg), GBI units
+        num = emac([(e, B[3])], 0, rnd=False); num = chk(ay[3] + chk(num << 7))           # ay3 + d e   (B Q30: x 2; GBI -> GB: x 64)
+        y4n = chk(emac([(num, self.R)], rnd=False) << 1)                                  # num R       (R Q30: x 2)
+        u = chk(e - emac([(y4n, self.KW1)], rnd=False))                                   # x - k (D ym + Sg), GBI units
         u = q12(Tb, u)                                                         # K tanh(u / K), back in GB units
         u2 = chk(u << 1)
         self.y = y = [emac([(u2, B[r])], ay[r]) for r in range(4)]

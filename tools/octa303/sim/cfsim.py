@@ -205,6 +205,7 @@ class CPU:
             if b in ('mac', 'msac'):
                 if sz != 'l' or k[0] not in ('d', 'a') or k[1] not in ('d', 'a') or k[-1] != 'acc' or len(ops) not in (3, 5):
                     bad('v8.0: mac.l/msac.l Ry,Rx[,<ea>,Dw],ACCn only (no shift, MASK or word halves)')
+                if k[0] == 'a' and k[1] == 'a': bad('v8.0: two address registers as the factors: no stock precedent (emac_an)')
                 if len(ops) == 5 and (k[2] not in ('ind', 'post', 'pre', 'd16') or k[3] != 'd'):
                     bad('v8.0: the parallel load is (An), (An)+, -(An) or d16(An), into a DATA register')
             if b == 'movclr' and (sz != 'l' or len(ops) != 2 or k[0] != 'acc' or k[1] not in ('d', 'a')): bad('movclr.l ACCn,Rx only')

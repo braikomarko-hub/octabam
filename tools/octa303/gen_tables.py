@@ -37,7 +37,7 @@ TB = NL.TB                                        # v8.0: the new ladder (o3ladd
 def _rec(i):                                      # one ladder index, 128 bytes: A 16, B 4, w1 w0/2 wm, D w1 D w0/2 D wm
     r = TB.A[i] + TB.B[i] + [TB.W1[i], TB.W0h[i], TB.WM[i], TB.DW1[i], TB.DW0h[i], TB.DWM[i]]
     return r + [0] * (32 - len(r))
-TABLES += [('O3_NL_K', [TB.D] + TB.SGC + TB.lhp + [TB.lsa[0], TB.lsg[0], TB.lsa[1], TB.lsg[1]]   # o3_nl_step's offsets:
+TABLES += [('O3_NL_K', [TB.D] + TB.SGC31 + TB.lhp + [TB.lsa[0], TB.lsg[0], TB.lsa[1], TB.lsg[1]]   # o3_nl_step's offsets:
             + TB.fhp + [TB.fsa[0], TB.fsg[0], TB.fsa[1], TB.fsg[1]]),                            # G and F in their order of use
            ('O3_NL_R', [v for i in range(len(TB.A)) for v in _rec(i)]),
            ('O3_NL_IMAP', NL.IMAP), ('O3_NL_KL4', NL.KL4Q), ('O3_NL_KLR4', NL.KLR4Q),
@@ -50,6 +50,7 @@ def consts_block():
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]
     assert T.S_MAX // 64 + 1 == len(T.DF_HZ) == len(NL.IMAP) == len(TB.A) == len(TB.B) == len(TB.W1)
     L.append('        .set    %-16s %d' % ('NHZ,', len(T.DF_HZ)))
+    assert T.TB_PREHP == 0, 'v8.0: octa303.s dropped the VCO->VCF high-pass (its coefficient is 0)'
     assert NL.GB == 8 and NL.GBI == 2 and TB.TH_SH == 19 and TB.RT_SH == 19 and len(TB.RT) == 2049, 'v8.0: octa303.s hardcodes these (o3_nl_*)'
     L.append('        .set    %-16s %d' % ('NL_TH_N,', TB.TH_N))
     L.append('        .set    %-16s %d' % ('NL_LGQ,', NL.LGQ))
@@ -58,6 +59,7 @@ def consts_block():
 def tables_block():
     L = ['        .align  4']
     for name, vals in TABLES:
+        if name == 'O3_NL_R': L.append('        .balign 16')          # v8.0: a record = 8 cache lines (OCTA_MK1_render_audit R5)
         L.append('%s:' % name)
         for i in range(0, len(vals), 8):
             L.append('        .long   ' + ', '.join(str(v) for v in vals[i:i + 8]))
