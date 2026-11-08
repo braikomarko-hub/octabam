@@ -10,7 +10,7 @@ the golden model therefore read the very same numbers.
 import os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import o3tables as T, ref303 as R
+import o3tables as T, ref303 as R, o3ladder as NL
 SRC = os.path.normpath(os.path.join(HERE, '..', '..', 'modules', 'octa303', 'octa303.s'))
 
 CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', 'GATE_K', 'GATE_HOLD_INF', 'GATE_IDLE', 'GATE_TPS0', 'GATE_FSKIP', 'OTA_IN', 'OTA_OUT', 'OTA_LIM', 'SQL_DLIM', 'ONE30', 'S_MAX', 'DIST_GAIN', 'DIST_BIAS',
@@ -28,21 +28,31 @@ TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIS
           ('O3_DF_TRK_HZ', T.DF_TRK_HZ), ('O3_DF_VEG', T.DF_VEG), ('O3_DF_VSUS', T.DF_VSUS),
           ('O3_DF_SLIDE', T.DF_SLIDE), ('O3_DF_ADEC', T.DF_ADEC), ('O3_DF_SATK', T.DF_SATK),
           ('O3_DF_CUTX', T.DF_CUTX), ('O3_DF_HZ', T.DF_HZ),
-          ('O3_LADDER_B', R.LB), ('O3_LADDER_K', R.LK), ('O3_KF', T.KF), ('O3_LG', T.LG),
-          ('O3_TB_UD', T.TB_UD), ('O3_KD', T.KD), ('O3_DRV_G', T.DRV_G), ('O3_DRV_TH', T.DRV_TH),
-          ('O3_CL_G', T.CL_G), ('O3_CL_INV', T.CL_INV), ('O3_CL_LIM', T.CL_LIM),
+          ('O3_TB_UD', T.TB_UD), ('O3_DRV_G', T.DRV_G), ('O3_DRV_TH', T.DRV_TH),
           ('O3_VP_W2', T.VP_W2), ('O3_SQK', T.SQK), ('O3_P6_F', T.P6_F),
           ('O3_P6_FP', T.P6_FP), ('O3_MEG_T', T.MEG_FLAT), ('O3_ADEC_T', T.ADEC_FLAT), ('O3_AC_A1', T.AC_A1), ('O3_AC_A2', T.AC_A2),     # v7.8 (V8A)
           ('O3_AC_RE', T.AC_RE), ('O3_AC_RA', T.AC_RA), ('O3_AC_RP', T.AC_RP), ('O3_AC_B1', T.AC_B1),
           ('O3_AC_K2', T.AC_K2), ('O3_AC_F', T.AC_F), ('O3_AC_F27', T.AC_F27), ('O3_AC_L69', T.AC_L69)]
+TB = NL.TB                                        # v8.0: the new ladder (o3ladder.py, the twin (a)'s tables)
+def _rec(i):                                      # one ladder index, 128 bytes: A 16, B 4, w1 w0/2 wm, D w1 D w0/2 D wm
+    r = TB.A[i] + TB.B[i] + [TB.W1[i], TB.W0h[i], TB.WM[i], TB.DW1[i], TB.DW0h[i], TB.DWM[i]]
+    return r + [0] * (32 - len(r))
+TABLES += [('O3_NL_K', [TB.D] + TB.SGC + TB.lhp + [TB.lsa[0], TB.lsg[0], TB.lsa[1], TB.lsg[1]]   # o3_nl_step's offsets:
+            + TB.fhp + [TB.fsa[0], TB.fsg[0], TB.fsa[1], TB.fsg[1]]),                            # G and F in their order of use
+           ('O3_NL_R', [v for i in range(len(TB.A)) for v in _rec(i)]),
+           ('O3_NL_IMAP', NL.IMAP), ('O3_NL_KL4', NL.KL4Q), ('O3_NL_KLR4', NL.KLR4Q),
+           ('O3_NL_TH', TB.TH), ('O3_NL_RT', TB.RT)]
 SHORTS = [('O3_SQC', T.SQC_FLAT)]                 # v7.6: Q8's square cycles, 128 semitones x 128 points (Q15)
 
 def consts_block():
     assert T.P6_ON, 'v7.7: octa303.s always has the pin-6 ceiling (CAL p6v)'
     assert T.AC_FSH == 15 and len(T.AC_L69) == 129 and T.MEG_NROW == 33 and T.ADEC_NROW == 34, 'v7.8: octa303.s hardcodes these (o3_acf, o3_acc, o3_megf)'
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]
-    assert len(R.LB) == T.S_MAX // 64 + 1 == len(T.DF_HZ) == len(T.KF) == len(T.LG) == len(T.KD)
+    assert T.S_MAX // 64 + 1 == len(T.DF_HZ) == len(NL.IMAP) == len(TB.A) == len(TB.B) == len(TB.W1)
     L.append('        .set    %-16s %d' % ('NHZ,', len(T.DF_HZ)))
+    assert NL.GB == 8 and NL.GBI == 2 and TB.TH_SH == 19 and TB.RT_SH == 19 and len(TB.RT) == 2049, 'v8.0: octa303.s hardcodes these (o3_nl_*)'
+    L.append('        .set    %-16s %d' % ('NL_TH_N,', TB.TH_N))
+    L.append('        .set    %-16s %d' % ('NL_LGQ,', NL.LGQ))
     return '\n'.join(L)
 
 def tables_block():

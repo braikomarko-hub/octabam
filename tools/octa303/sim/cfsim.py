@@ -10,6 +10,20 @@ Executes the TEXT of a .s file (not a binary) and LINTS it against ColdFire enco
   * movem only to/from (An) or d16(An)
 It is a correctness model, not a timing model, and it is NOT an assembler: `make check` is.
 Supports .macro/.endm (\\arg, \\@), .set/.equ, .long/.short/.byte/.space/.zero/.align/.balign, .text/.bss/.data.
+
+v8.0 (OCTA303's new ladder): the EMAC in its FRACTIONAL mode, MACSR 0x20, as the frame builder leaves it at the FLEX
+renderer (claude/OCTA_MK1_emac_render.md), with the semantics of the ColdFire port (tools/emu/ot_emu/v4e.cpp,
+test_emac.cpp case 4b): mac.l Ry,Rx,ACCn adds floor(2 Ry Rx / 2^24) to a 48-bit accumulator; move.l Ry,ACCn loads
+Ry << 8; movclr.l ACCn,Rx reads floor(ACC / 2^8) and clears it; move.l ACCn,Rx reads without clearing; msac.l
+subtracts the same floored product (v4e.cpp: acc - (product >> 23)).  mac.l/msac.l may carry the parallel load
+(Ry,Rx,<ea>,Dw,ACCn with <ea> (An), (An)+, -(An), d16(An); the multiply reads its operands before the load writes
+Dw) -- into a DATA register only (claude/OCTA_MK1_emac_cicli.md section 4).  No shift factor, no MASK, no word halves.
+A read-out that does not fit 32 bits and an accumulator left non-empty when a call returns are errors (the stock code
+after the renderer takes acc0..acc3 as empty).
+Cycle FLOOR (v8.0, an estimate only, `cyc`; MCF54455RM tables 3-14..3-20): 1 a counted instruction, muls/mulu.l 4,
+an accumulator read 3 - k more when k instructions separate it from the last MAC into that accumulator, an indexed
+operand 3 - k more when its index register was written k instructions before; `nbcc` counts the conditional branches
+taken or not (a mispredicted one costs 8: not modelled).
 """
 import re
 
@@ -38,7 +52,8 @@ CODE_BASE, TEXT_DATA, DATA_BASE, BSS_BASE = 0x50000000, 0x51000000, 0x52000000, 
 class CPU:
     def __init__(self, src, mem=None, hooks=None, defsyms=None):
         self.mem = mem or Mem(); self.hooks = hooks or {}
-        self.d = [0] * 8; self.a = [0] * 8; self.N = self.Z = self.V = self.C = 0
+        self.d = [0] * 8; self.a = [0] * 8; self.N = self.Z = self.V = self.C = 0; self.acc = [0] * 4
+        self.cyc = 0; self.nbcc = 0; self._accw = [-9] * 4; self._regw = {}
         self.consts = dict(defsyms or {}); self.labels = {}; self.prog = []; self.icount = 0; self.prof = None
         self.lines = self._expand(src.splitlines())
         self._load()
@@ -167,6 +182,7 @@ class CPU:
     def _kind(self, op):
         op = op.strip()
         if op.startswith('#'): return 'imm'
+        if re.fullmatch(r'%acc[0-3]', op): return 'acc'
         if re.fullmatch(r'%d\d', op): return 'd'
         if re.fullmatch(r'%(a\d|sp)', op): return 'a'
         if re.fullmatch(r'\(%(a\d|sp)\)', op): return 'ind'
@@ -186,6 +202,15 @@ class CPU:
             for o, kk in zip(ops, k):                       # v6.7.2: m68k-elf-as's displacement ranges
                 if kk == 'idx' and not -128 <= self.ea(o)[4] <= 127: bad('indexed displacement must be -128..127 (byte)')
                 if kk == 'd16' and not -32768 <= self.ea(o)[2] <= 32767: bad('d16 displacement out of range')
+            if b in ('mac', 'msac'):
+                if sz != 'l' or k[0] not in ('d', 'a') or k[1] not in ('d', 'a') or k[-1] != 'acc' or len(ops) not in (3, 5):
+                    bad('v8.0: mac.l/msac.l Ry,Rx[,<ea>,Dw],ACCn only (no shift, MASK or word halves)')
+                if len(ops) == 5 and (k[2] not in ('ind', 'post', 'pre', 'd16') or k[3] != 'd'):
+                    bad('v8.0: the parallel load is (An), (An)+, -(An) or d16(An), into a DATA register')
+            if b == 'movclr' and (sz != 'l' or len(ops) != 2 or k[0] != 'acc' or k[1] not in ('d', 'a')): bad('movclr.l ACCn,Rx only')
+            if b == 'move' and 'acc' in k and not ((k[1] == 'acc' and k[0] in ('d', 'a')) or (k[0] == 'acc' and k[1] in ('d', 'a'))):
+                bad('move to/from an accumulator: a register only')
+            if b in ('maaac', 'masac', 'msaac', 'mssac'): bad('v8.0: no %s' % b)
             if b in ('lsl', 'lsr', 'asr', 'asl'):
                 if sz != 'l': bad('shifts are .l only on ColdFire')
                 if k[0] == 'imm' and not 1 <= self.ev(ops[0][1:]) <= 8: bad('shift immediate must be 1..8')
@@ -286,6 +311,7 @@ class CPU:
             if steps > maxsteps: raise RuntimeError('step limit')
             mn, ops, line = self.prog[pc]; pc += 1
             b, _, sz = mn.partition('.'); sz = sz if sz in ('b', 'w', 'l') else 'l'
+            if b[0] in 'bj' and b[1:] in self.CONDS: self.nbcc += 1
             if b in ('bra', 'jra') or (b[0] in 'bj' and b[1:] in self.CONDS):
                 if b in ('bra', 'jra') or self.cond(b[1:]): pc = self.labels[ops[0]][1]
                 continue
@@ -306,14 +332,53 @@ class CPU:
                 else: raise RuntimeError('jmp to unmapped %#x' % tgt)
             if b == 'rts':
                 ra = self.mem.r(self.a[7], 'l'); self.a[7] = (self.a[7] + 4) & M32
-                if ra == retaddr: return steps
+                if ra == retaddr:
+                    if any(self.acc): raise RuntimeError('EMAC accumulator left non-empty: %s' % self.acc)
+                    return steps
                 pc = (ra - CODE_BASE) // 2; continue
-            self.icount += 1
+            self.icount += 1; self._cost(b, sz, ops)
             if self.prof is not None: self.prof[pc - 1] = self.prof.get(pc - 1, 0) + 1
             self.exec1(b, sz, ops, line)
 
+    def _cost(self, b, sz, ops):
+        n = self.icount; c = 1
+        if b in ('muls', 'mulu') and sz == 'l': c = 4
+        if b in ('mac', 'msac'): self._accw[int(ops[-1].strip()[4])] = n
+        elif b == 'move' and ops[-1].strip().startswith('%acc'): self._accw[int(ops[-1].strip()[4])] = n
+        elif b == 'movclr' or (b == 'move' and ops[0].strip().startswith('%acc')):
+            c += max(0, 3 - (n - 1 - self._accw[int(ops[0].strip()[4])]))
+        for o in ops:
+            m = re.search(r',%([da]\d)\.l', o)
+            if m and '(' in o: c += max(0, 3 - (n - 1 - self._regw.get(m.group(1), -9)))
+        if ops:
+            d = ops[-1].strip()
+            if re.fullmatch(r'%[da]\d', d): self._regw[d[1:]] = n
+            if b in ('mac', 'msac') and len(ops) == 5: self._regw[ops[3].strip()[1:]] = n
+        self.cyc += c
+    def _a48(self, v):
+        v &= (1 << 48) - 1
+        return v - (1 << 48) if v >> 47 else v
+    def _rd(self, n):
+        v = self.acc[n] >> 8
+        if not -(1 << 31) <= v < (1 << 31): raise RuntimeError('EMAC read-out does not fit 32 bits: acc%d = %d' % (n, self.acc[n]))
+        return v & M32
     def exec1(self, b, sz, ops, line):
         g, p = self.get, self.put
+        if b == 'move' and '%acc' in ''.join(ops):              # v8.0: the EMAC (fractional, MACSR 0x20)
+            if ops[1].strip().startswith('%acc'):
+                self.acc[int(ops[1].strip()[4])] = self._a48(s32(g(ops[0], 'l')) << 8)
+            else:
+                p(ops[1], 'l', self._rd(int(ops[0].strip()[4])))
+            return
+        if b in ('mac', 'msac'):
+            n = int(ops[-1].strip()[4])
+            pr = (2 * s32(g(ops[0], 'l')) * s32(g(ops[1], 'l'))) >> 24
+            self.acc[n] = self._a48(self.acc[n] + (pr if b == 'mac' else -pr))
+            if len(ops) == 5: p(ops[3], 'l', g(ops[2], 'l'))     # the parallel load, after the operands are read
+            return
+        if b == 'movclr':
+            n = int(ops[0].strip()[4]); v = self._rd(n); self.acc[n] = 0; p(ops[1], 'l', v)
+            return
         if b in ('move', 'movea'):
             v = g(ops[0], sz)
             if self.ea(ops[1])[0] != 'a': self.nz(v, sz); self.V = self.C = 0

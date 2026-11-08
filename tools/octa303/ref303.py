@@ -98,7 +98,7 @@ def trck(s, d, hz):
 
 def nlctrl(st, i, res):
     """v8.0: old ladder index i (CUT/ENV/accent in Hz) -> the new ladder's index (IMAP) and k = KL4[res] x KLR4[im]
-    (Q26); dEVILish SWP 1/0 doubles it as before (DF_HIRES).  The ring's decay UD and KMUL belonged to the old
+    (Q25); dEVILish SWP 1/0 doubles it as before (DF_HIRES).  The ring's decay UD and KMUL belonged to the old
     ladder's resonance law and are not used."""
     if not st.nl: st.nl = NL.Ladder(NL.TB)
     im = NL.IMAP[i]
@@ -221,8 +221,6 @@ def ctrl(st):
     if st.trkhz:
         s = trck(s, (st.pcur >> 8) - T.P_CENTER, st.trkhz)            # TRCK
     st.sctrl = s
-    st.kmul = T.TB_KMUL[res] * (1 if st.swp == 2 else T.DF_HIRES)        # SWP 1/0: resonance doubled
-    st.ud = T.TB_UD[res]                                               # v6.9: the ring's decay, dB/ms Q10
     i = s >> 6
     nlctrl(st, i, res)                                                 # v8.0: the new ladder's index, k, reciprocal
     g0 = T.TB_GCOMP[0]
@@ -267,7 +265,7 @@ def sample(st):
         x += 64 if st.nz & 1 else -64
     # v8.0: the new ladder (the twin (a): M1t matrices, trapezoidal loop with (c''-0), Q12 once on the linear
     # estimate, the loop's couplings G and the output path F as TPT sections), 8 guard bits, EMAC-exact
-    fb = clamp((st.nl.step(x << NL.GB) + 128) >> NL.GB, -(1 << 23), 1 << 23)
+    fb = clamp((st.nl.step(x << NL.GBI) + 128) >> NL.GB, -(1 << 23), 1 << 23)
     # v7.4: the output is the loop's high-pass (the circuit has one, C25/C27 into Q21, for both), then the VCA's
     # input pair: R121/C21 (72 Hz) from it, R122/C22 (156 Hz) from the RES wiper (weight 2.2 x RES)
     st.vp1 += fm(fb - st.vp1, T.VP_HP1, 4, 11, 'vp1')
