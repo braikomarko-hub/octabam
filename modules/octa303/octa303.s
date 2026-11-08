@@ -125,8 +125,8 @@
         .set    S_FB,84
         .set    S_DC,88
         .set    S_TONE,92
-        .set    S_C1,96
-        .set    S_B,100
+        .set    S_NLI0,96                       | v8.0: o3_nlctrl's last input: the old index (was S_C1)
+        .set    S_NLRS,100                      | v8.0: and RES (was S_B)
         .set    S_K,104
         .set    S_GCOMP,108
         .set    S_PTGT,112
@@ -140,7 +140,7 @@
         .set    S_TRKHZ,144
         .set    S_FMQ,148
         .set    S_SCTRL,152
-        .set    S_KMUL,156
+        .set    S_NLSW,156                      | v8.0: and SWP (was S_KMUL)
         .set    S_OVCA,160
         .set    S_OCOMP,164
         .set    S_OGAIN,168
@@ -200,6 +200,18 @@
         .set    S_SQL,404                       | v7.6: the square's edge lowpass state (as v6.9)
         .set    S_Y27,408                       | v7.8: I27 x R27, uV (D27 into pin 1)
         .set    S_FAB,412                       | v7.9: WAVE's R, the factory preset (TM3_FAB on the cutoff)
+        .set    S_NLI,416                       | v8.0, the new ladder (o3ladder.py): its index (IMAP of the old one)
+        .set    S_NLR,420                       | R = 1 / (1 + k d D w1), Q30; 0 = not computed yet
+        .set    S_NLAP,424                      | &O3_NL_A[index] (16 longs, Q31)
+        .set    S_NLBP,428                      | &O3_NL_B[index] (4 longs, Q30)
+        .set    S_NLWP,432                      | &O3_NL_W[index] (w1, w0/2, wm, 0; Q31)
+        .set    S_Y4P,436                       | y4 a sample before ((c''-0))
+        .set    S_LZ0,440                       | the loop's couplings G: 4 high-passes, 2 shelves (TPT states)
+        .set    S_FZ0,464                       | the output path F: 3 high-passes, 2 shelves
+        .set    S_T0,484                        | scratch: ay0..ay3 within a sample
+        .set    S_KW1,500                       | k D w1, Q25 (k folded into the loop's weights at the control step)
+        .set    S_KW0H,504                      | k D w0 / 2, Q25
+        .set    S_KWM,508                       | k D wm, Q25
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -279,6 +291,8 @@
         .set    AC_KV,           13613786
         .set    AC_KSW,          4050025
         .set    NHZ,             446
+        .set    NL_TH_N,         2839
+        .set    NL_LGQ,          2028
 | <<< GENERATED CONSTANTS
 
 | ---- exact split multiplies: dst = floor(dst * cof / 2^s); cof >= 0, |dst| < 2^30, tmp scratch
@@ -371,29 +385,6 @@
         muls.l  K_C6(%a5),%d1
         asr.l   #8,%d1
         sub.l   %d1,\reg
-        .endm
-| ---- v7.3: the ladder clip's operating point at the ladder index in d0 (clobbered); d1, a0 scratch.
-|      ACID (SWP 2) only.
-        .macro  CLSET
-        moveq   #2,%d1                  | ACID only (SWP 2): WHST / SELF keep the plain clip
-        cmp.l   S_SWP(%a3),%d1
-        bne     .Lcs0\@
-        sub.l   #CL_I0,%d0
-        bgt     .Lcs1\@
-.Lcs0\@:
-        clr.l   S_CLG(%a3)              | at or below CL_I0: the plain soft clip
-        bra     .Lcs9\@
-.Lcs1\@:
-        lea     O3_CL_G,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        move.l  %d1,S_CLG(%a3)
-        lea     O3_CL_INV,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        move.l  %d1,S_CLI(%a3)
-        lea     O3_CL_LIM,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        move.l  %d1,S_CLL(%a3)
-.Lcs9\@:
         .endm
         .macro  KB off, areg            | d0 = the knob byte at off(areg), clamped 0..127
         moveq   #0,%d0
@@ -521,13 +512,14 @@ sy_render:
         move.l  %d0,S_LATCHED(%a3)
         move.l  RS_PTR,%a0
         clr.l   4(%a0)                  | the retrig count the packer latched: no stock retrigs
-        bra     .Lison
-.Lnot:
+        bra     .Lparams                | v8.0: o3_params already ran for this call (it reads only the
+.Lnot:                                  | record, SETUP and the lanes; o3_note_on writes none of them)
         clr.l   S_LATCHED(%a3)          | not ours: stock from here on
 .Lison:
         tst.l   S_LATCHED(%a3)
         beq     .Lstock
         bsr     o3_params               | this call's knobs, before the record is neutralised
+.Lparams:
         bsr     o3_gate                 | v7.0: SETUP's GATE (OFF: the AMP decides, as v6.5e-v6.9)
         move.w  (%a4),%d0
         move.w  %d0,S_WPTCH+2(%a3)
@@ -600,34 +592,8 @@ sy_render:
         add.l   S_SCTRL(%a3),%d0
         CLAMP   %d0,0,S_MAX-1
         asr.l   #6,%d0
-        lea     O3_LADDER_B,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        move.l  %d1,S_B(%a3)
-        muls.l  K_C1R(%a5),%d1          | v6.7: c1 = b * C1R (Q12; v6.6: b * 2)
-        asr.l   #8,%d1
-        asr.l   #4,%d1
-        move.l  %d1,S_C1(%a3)
-        lea     O3_LADDER_K,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        muls.l  S_KMUL(%a3),%d1
-        asr.l   #8,%d1
-        asr.l   #7,%d1
-        lea     O3_KF,%a0               | the oscillation point and its shape by frequency (Q12)
-        move.l  (%a0,%d0.l*4),%d2
-        muls.l  %d2,%d1
-        asr.l   #8,%d1
-        asr.l   #4,%d1
-        lea     O3_KD,%a0               | v6.9: less the ring's decay, UD (dB/ms) * KD; never < 0
-        move.l  (%a0,%d0.l*4),%d2
-        muls.l  S_UD(%a3),%d2
-        asr.l   #8,%d2
-        asr.l   #2,%d2
-        sub.l   %d2,%d1
-        bpl     .Lfm_k
-        moveq   #0,%d1
-.Lfm_k:
-        move.l  %d1,S_K(%a3)
-        CLSET                 | v7.3
+        move.l  S_RES(%a3),%d1          | v8.0: the new ladder's control step at this index
+        bsr     o3_nlctrl
 .Lnofm:
         move.l  S_INC(%a3),%d5          | VCO
         move.l  S_PHASE(%a3),%d4
@@ -699,13 +665,8 @@ sy_render:
         move.l  %d0,S_SQL(%a3)
         move.l  %d0,%d6
 .Losc:
-        move.l  %d6,%d0                 | VCO->VCF coupling highpass, level
-        sub.l   S_HP(%a3),%d0
-        FM411   %d0,K_PREHP(%a5)
-        add.l   S_HP(%a3),%d0
-        move.l  %d0,S_HP(%a3)
-        sub.l   %d0,%d6
-        tst.l   S_GINQ15(%a3)           | OVDR: up to normal, v6.1's product exactly...
+        tst.l   S_GINQ15(%a3)           | v8.0: the VCO->VCF high-pass is gone from here: its coefficient is 0 (gen_tables
+                                        | asserts TB_PREHP == 0), so S_HP stays 0 and x - S_HP is x (ref303 keeps the sum)           | OVDR: up to normal, v6.1's product exactly...
         beq     .Lov
         FM78    %d6,S_GIN(%a3)
         bra     .Lov2
@@ -721,87 +682,22 @@ sy_render:
         bne     .Lnz0
         move.l  #0x1D872B41,%d0
 .Lnz0:
-        move.l  %d0,%d1
+        moveq   #1,%d1                  | v8.0: no branch on the random bit (claude/OCTA_MK1_render_audit.md R8)
+        and.l   %d0,%d1
+        neg.l   %d1                     | 0 or -1
+        and.l   #0xD0000001,%d1
         lsr.l   #1,%d0
-        btst    #0,%d1
-        beq     .Lnz1
-        eor.l   #0xD0000001,%d0
-.Lnz1:
+        eor.l   %d1,%d0                 | the Galois step
         move.l  %d0,S_NZ(%a3)
-        btst    #0,%d0
-        beq     .Lnzm
-        add.l   #64,%d6
-        bra     .Lnz9
-.Lnzm:
-        sub.l   #64,%d6
+        moveq   #1,%d1
+        and.l   %d0,%d1
+        lsl.l   #7,%d1
+        add.l   %d1,%d6
+        moveq   #64,%d1
+        sub.l   %d1,%d6                 | +64 or -64
 .Lnz9:
-        move.l  S_Y4(%a3),%d4           | resonance: y4 through the loop highpass, * k
-        move.l  %d4,%d0
-        sub.l   S_FB(%a3),%d0
-        FM411   %d0,K_FBHP(%a5)
-        add.l   S_FB(%a3),%d0
-        move.l  %d0,S_FB(%a3)
-        move.l  %d4,%d1
-        sub.l   %d0,%d1
-        CLAMP   %d1,-0x800000,0x800000
-        move.l  %d1,S_FBO(%a3)          | v7.4: the high-passed ladder output, also the voice's output
-        asr.l   #8,%d1
-        muls.l  S_K(%a3),%d1
-        sub.l   %d1,%d6
-        tst.l   S_CLG(%a3)              | v7.3 (#1011): at the top of the table softclip(u * g) / g,
-        beq     .Llcp                   | so its 3rd harmonic cannot lock the loop at fs/4
-        move.l  S_CLL(%a3),%d2
-        cmp.l   %d2,%d6
-        ble     .Llc1
-        move.l  %d2,%d6
-.Llc1:
-        neg.l   %d2
-        cmp.l   %d2,%d6
-        bge     .Llc2
-        move.l  %d2,%d6
-.Llc2:
-        asr.l   #4,%d6
-        muls.l  S_CLG(%a3),%d6
-        asr.l   #8,%d6
-        SOFTCLIP %d6
-        asr.l   #4,%d6
-        muls.l  S_CLI(%a3),%d6
-        asr.l   #8,%d6
-        bra     .Llc9
-.Llcp:
-        SOFTCLIP %d6
-.Llc9:
-        move.l  S_Y1(%a3),%d1           | diode ladder
-        move.l  S_Y2(%a3),%d2
-        move.l  S_Y3(%a3),%d3
-        move.l  S_B(%a3),%d5
-        move.l  %d6,%d0
-        sub.l   %d1,%d0
-        add.l   %d2,%d0
-        FM78    %d0,S_C1(%a3)
-        add.l   %d0,%d1
-        move.l  %d1,%d0
-        sub.l   %d2,%d0
-        sub.l   %d2,%d0
-        add.l   %d3,%d0
-        FM78    %d0,%d5
-        add.l   %d0,%d2
-        move.l  %d2,%d0
-        sub.l   %d3,%d0
-        sub.l   %d3,%d0
-        add.l   %d4,%d0
-        FM78    %d0,%d5
-        add.l   %d0,%d3
-        move.l  %d3,%d0
-        sub.l   %d4,%d0
-        sub.l   %d4,%d0
-        FM78    %d0,%d5
-        add.l   %d0,%d4
-        move.l  %d1,S_Y1(%a3)
-        move.l  %d2,S_Y2(%a3)
-        move.l  %d3,S_Y3(%a3)
-        move.l  %d4,S_Y4(%a3)
-        move.l  S_FBO(%a3),%d6          | v7.4: the output is the loop's high-pass (one, shared), then the
+        bsr     o3_nl_step              | v8.0: the new ladder (the twin (a)); d6 = x in, the filter's output out
+        move.l  %d6,S_FBO(%a3)          | v7.4: the output is the loop's high-pass (one, shared), then the
         move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper
         sub.l   S_VP1(%a3),%d0
         FM411   %d0,K_VP1(%a5)
@@ -3058,6 +2954,385 @@ o3_note_on:
         rts
 
 | ---- o3_ctrl: once per CS samples.  Clobbers d0-d6, a0 (keeps a1, a3, a5, d7).
+| ==== v8.0: the new ladder (tools/octa303/o3ladder.py, the twin "(a) solo circuito": M1t matrices, trapezoidal
+| loop with (c''-0), Q12 once on the linear estimate, the loop's couplings G and the output path F as TPT sections).
+| Every product goes through the EMAC in its fractional mode, MACSR 0x20 as the frame builder leaves it
+| (claude/OCTA_MK1_emac_render.md): E[a b ...] = (init << 8 + sum floor(2 a b / 2^24) + 128) >> 8, the 128 a
+| mac.l of 0x8000 x 0x8000 (a2).  Every accumulation ends with movclr.l: acc0 is left empty, as the stock code
+| after us assumes.  ref303.py / o3ladder.py are the same steps, bit for bit (test_octa303).
+        .macro  ERD dst                         | dst = E[...] (round, read, clear acc0); d7 = a2 = 0x8000 here
+        mac.l   %d7,%a2,%acc0
+        movclr.l %acc0,\dst
+        .endm
+
+| ---- o3_nlctrl: the control step (ref303.nlctrl, o3ladder.Ladder.ctrl).  d0 = the old ladder index (CUT/ENV/accent
+|      in Hz), d1 = RES.  Writes S_NLI, S_K (k, Q25), S_NLR and the row pointers.  Clobbers d0, d1, a0.
+o3_nlctrl:
+        tst.l   S_NLR(%a3)              | the same inputs as the last step (index, RES, SWP): nothing to do
+        beq     .Lnc_go                 | (k and R are functions of them; R = 0: not computed yet)
+        cmp.l   S_NLI0(%a3),%d0
+        bne     .Lnc_go
+        cmp.l   S_NLRS(%a3),%d1
+        bne     .Lnc_go
+        movea.l S_SWP(%a3),%a0
+        cmpa.l  S_NLSW(%a3),%a0
+        bne     .Lnc_go
+        rts
+.Lnc_go:
+        move.l  %d0,S_NLI0(%a3)
+        move.l  %d1,S_NLRS(%a3)
+        move.l  S_SWP(%a3),S_NLSW(%a3)
+        lea     -24(%sp),%sp
+        movem.l %d2-%d4/%d7/%a2/%a6,(%sp)
+        move.l  #0x8000,%d7             | the rounding's 0x8000 x 0x8000 as a data and an address register: the
+        movea.l %d7,%a2                 | stock image multiplies an An with a Dn, never two An (emac_an)
+        lea     O3_NL_IMAP,%a0
+        move.l  (%a0,%d0.l*4),%d2       | im = IMAP[i]
+        lea     O3_NL_KL4,%a0
+        move.l  (%a0,%d1.l*4),%d3
+        lea     O3_NL_KLR4,%a0
+        move.l  (%a0,%d2.l*4),%d4
+        mac.l   %d3,%d4,%acc0
+        ERD     %d3
+        add.l   %d3,%d3                 | k = E[KL4[res] KLR4[im]] << 1, Q25
+        moveq   #2,%d4                  | SWP 1/0 (WHST / SELF): the feedback doubled, as before
+        cmp.l   S_SWP(%a3),%d4
+        beq     .Lnc_k
+        moveq   #DF_HIRES,%d4
+        muls.l  %d4,%d3
+.Lnc_k:
+        tst.l   S_NLR(%a3)              | the same index and k as the last step: R is still good
+        beq     .Lnc_new
+        cmp.l   S_NLI(%a3),%d2
+        bne     .Lnc_new
+        cmp.l   S_K(%a3),%d3
+        beq     .Lnc_out
+.Lnc_new:
+        move.l  %d2,S_NLI(%a3)
+        move.l  %d3,S_K(%a3)
+        move.l  %d2,%d0
+        lsl.l   #7,%d0
+        lea     O3_NL_R,%a0
+        adda.l  %d0,%a0
+        move.l  %a0,S_NLAP(%a3)         | the index's record: A 16, B 4, w1 w0/2 wm, D w1 D w0/2 D wm, 6 spare (128 B)
+        movea.l 76(%a0),%a6             | d = B3
+        move.l  92(%a0),%d4
+        mac.l   %d3,%d4,%acc0
+        ERD     %d4
+        move.l  %d4,S_KW1(%a3)          | k D w1, Q25
+        move.l  96(%a0),%d1
+        mac.l   %d3,%d1,%acc0
+        ERD     %d1
+        move.l  %d1,S_KW0H(%a3)         | k D w0 / 2
+        move.l  100(%a0),%d1
+        mac.l   %d3,%d1,%acc0
+        ERD     %d1
+        move.l  %d1,S_KWM(%a3)          | k D wm
+        mac.l   %d4,%a6,%acc0
+        ERD     %d4
+        lsl.l   #6,%d4                  | den = k d D w1, Q30
+        move.l  %d4,%d1                 | R = 1 / (1 + den): RT[den >> 19] + E[(RT[i+1] - RT[i]) (fr << 12)]
+        lsr.l   #8,%d1
+        lsr.l   #8,%d1
+        lsr.l   #3,%d1
+        and.l   #0x7FFFF,%d4
+        lsl.l   #8,%d4
+        lsl.l   #4,%d4
+        lea     O3_NL_RT,%a0
+        lea     (%a0,%d1.l*4),%a0
+        move.l  (%a0)+,%d1
+        move.l  %d1,%acc0
+        neg.l   %d1
+        add.l   (%a0),%d1
+        mac.l   %d1,%d4,%acc0
+        ERD     %d0
+        move.l  %d0,S_NLR(%a3)
+.Lnc_out:
+        movem.l (%sp),%d2-%d4/%d7/%a2/%a6
+        lea     24(%sp),%sp
+        rts
+
+| ---- o3_nl_step: one sample (o3ladder.Ladder.step; step 4e: the sums that feed no integrator are not rounded).  d6 = x (the engine's ladder input) in; d6 = the filter's
+|      output out, (F + 128) >> 8 clamped to +-2^23 (ref303.sample's fb).  Clobbers d0-d6, a0, a2, a4, a6.
+|      State: S_Y1..S_Y4, S_Y4P, S_LZ0.., S_FZ0.. (8 guard bits); scratch S_T0..S_T3.  Written for cycles
+|      (claude/OCTA_MK1_emac_cicli.md): Sg and the rows of A on four accumulators, each read three instructions or
+|      more after its last MAC, coefficients loaded by the MAC itself (into data registers), Q12's sign without a
+|      branch, G and F side by side.  Every sum is the same set of floored products as o3ladder.py: bit for bit.
+o3_nl_step:
+        move.l  %d7,-(%sp)              | the loop's count, kept: d7 = a2 = 0x8000, the +128 that rounds a read-out
+        move.l  #0x8000,%d7             | (Dn x An: the stock image never multiplies two An, emac_an)
+        movea.l %d7,%a2
+        lsl.l   #2,%d6                  | X: the input side's 2 guard bits (the states carry 8)
+        movea.l %d6,%a4                 | X kept in a4 until e
+        move.l  S_LZ0+12(%a3),%d0       | Sg = E[-lz3 init, sum lz_j SGC_j] in acc0 (the chain G as out = D in + Sg;
+        neg.l   %d0                     | c3 = -1 - 6e-6 is split: -lz3 exactly, plus (c3 + 1) in Q31), not rounded
+        move.l  %d0,%acc0
+        lea     O3_NL_K+4,%a6
+        move.l  (%a6)+,%d1
+        move.l  S_LZ0(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+4(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+8(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+12(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+16(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+20(%a3),%d0
+        mac.l   %d0,%d1,%acc0
+        movea.l S_NLAP(%a3),%a0         | ay = A y: row 0 in acc1, 1 in acc2, 2 in acc3, 3 in acc1 again
+        move.l  S_Y1(%a3),%d1
+        move.l  S_Y2(%a3),%d2
+        move.l  S_Y3(%a3),%d3
+        move.l  S_Y4(%a3),%d4           | y4o, kept to the end
+        move.l  (%a0)+,%d0
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc1
+        movclr.l %acc0,%d5              | Sg
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc2
+        movclr.l %acc1,%d6
+        move.l  %d6,S_T0(%a3)           | ay0
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc3
+        movclr.l %acc2,%d6
+        move.l  %d6,S_T0+4(%a3)         | ay1
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d4,%acc1           | (a0 now at B0)
+        movclr.l %acc3,%d6
+        move.l  %d6,S_T0+8(%a3)         | ay2
+        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc2, the input side's units
+        move.l  S_KW0H(%a3),%d1
+        mac.l   %d4,%d1,%acc2
+        mac.l   %d4,%d1,%acc2
+        move.l  S_KWM(%a3),%d1
+        mac.l   %d3,%d1,%acc2
+        move.l  S_K(%a3),%d1
+        mac.l   %d5,%d1,%acc2
+        movclr.l %acc1,%d2              | ay3
+        move.l  %d2,S_T0+12(%a3)
+        move.l  12(%a0),%d1             | d = B3
+        move.l  %a4,%d6
+        movclr.l %acc2,%d0
+        sub.l   %d0,%d6                 | e = X - S
+        mac.l   %d6,%d1,%acc0           | num = ay3 + (E[e d] << 7)
+        move.l  S_NLR(%a3),%d1
+        move.l  S_KW1(%a3),%d5
+        lea     O3_NL_TH,%a6
+        movclr.l %acc0,%d0
+        lsl.l   #7,%d0
+        add.l   %d2,%d0
+        mac.l   %d0,%d1,%acc1           | y4n = E[num R] << 1
+        moveq   #31,%d2
+        lea     O3_NL_K,%a4
+        movea.l S_NLAP(%a3),%a0
+        movclr.l %acc1,%d0
+        add.l   %d0,%d0
+        mac.l   %d0,%d5,%acc2           | u = e - E[y4n k D w1]
+        move.l  S_T0(%a3),%d3
+        move.l  %d3,%acc0               | (the y updates' inits, ahead)
+        move.l  S_T0+4(%a3),%d3
+        movclr.l %acc2,%d0
+        sub.l   %d0,%d6                 | u
+        move.l  %d6,%d1                 | Q12: K tanh(u / K) on |u| (O3_NL_TH, a step of 2^13 input units), sign back
+        asr.l   %d2,%d1                 | s = u >> 31: 0 or -1 (no branch)
+        eor.l   %d1,%d6
+        sub.l   %d1,%d6                 | |u|
+        move.l  %d3,%acc1
+        move.l  S_T0+8(%a3),%d3
+        move.l  %d3,%acc2
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d7,%a2,%acc2
+        move.l  84(%a0),%d2             | w0/2
+        move.l  80(%a0),%d5             | w1
+        move.l  S_T0+12(%a3),%d3        | ay3
+        move.l  %d6,%d0
+        lsr.l   #8,%d0
+        lsr.l   #5,%d0                  | i
+        cmp.l   #NL_TH_N,%d0
+        bcc     .Lns_qx
+        and.l   #0x1FFF,%d6
+        lsl.l   #8,%d6
+        lsl.l   #8,%d6
+        lsl.l   #2,%d6                  | the fraction << 18
+        lea     (%a6,%d0.l*4),%a6
+        move.l  (%a6)+,%d0              | TH[i]
+        move.l  %d0,%acc3
+        mac.l   %d7,%a2,%acc3
+        neg.l   %d0
+        add.l   (%a6),%d0               | TH[i+1] - TH[i]
+        mac.l   %d6,%d0,%acc3
+        move.l  64(%a0),%d6             | B0, B1 ahead
+        movea.l 68(%a0),%a6
+        move.l  %d1,%d1
+        movclr.l %acc3,%d0
+.Lns_qr:
+        eor.l   %d1,%d0
+        sub.l   %d1,%d0
+        add.l   %d0,%d0                 | 2u (B is Q30)
+        move.l  %d3,%acc3               | y = ay + B (2u): four accumulators
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d6,%acc0
+        mac.l   %d0,%a6,%acc1
+        move.l  72(%a0),%d6
+        mac.l   %d0,%d6,%acc2
+        move.l  76(%a0),%d6
+        mac.l   %d0,%d6,%acc3
+        move.l  S_Y4P(%a3),%d3          | y4p (the old one)
+        movclr.l %acc0,%d0
+        move.l  %d0,S_Y1(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_Y2(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_Y3(%a3)
+        movclr.l %acc3,%d6
+        move.l  %d6,S_Y4(%a3)
+        mac.l   %d7,%a2,%acc0           | ym = E[w1 y4 + w0 y4o + wm y4p], with the true y4; y4p <- y4o
+        mac.l   %d6,%d5,%acc0
+        mac.l   %d4,%d2,%acc0
+        mac.l   %d4,%d2,%acc0
+        move.l  88(%a0),%d1
+        mac.l   %d3,%d1,%acc0
+        move.l  %d4,S_Y4P(%a3)
+        lea     O3_NL_K+28,%a6          | G's coefficients in their order of use (the MAC loads the next one)
+        move.l  (%a6)+,%d3
+        movclr.l %acc0,%d0              | ym: G's input (F's is y4o, in d4)
+        lea     O3_NL_K+60,%a0          | F's
+        move.l  (%a0)+,%d6
+        move.l  S_LZ0(%a3),%d1           | G and F high-pass 0 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0(%a3)
+        move.l  S_LZ0+4(%a3),%d1           | G and F high-pass 1 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0+4(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+4(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+4(%a3)
+        move.l  S_LZ0+8(%a3),%d1           | G and F high-pass 2 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0+8(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+8(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+8(%a3)
+        move.l  S_LZ0+12(%a3),%d1       | G's fourth high-pass, alone
+        sub.l   %d1,%d0
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        move.l  S_FZ0+12(%a3),%d5       | (F's first shelf, ahead: its state, and x as its init)
+        move.l  %d4,%acc3
+        mac.l   %d7,%a2,%acc3
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+12(%a3)
+        move.l  S_LZ0+16(%a3),%d1           | G and F shelf 0: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
+        move.l  %d0,%acc1
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        mac.l   %d7,%a2,%acc1
+        movclr.l %acc0,%d2
+        add.l   %d2,%d1
+        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+16(%a3)
+        movclr.l %acc2,%d2
+        add.l   %d2,%d5
+        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+12(%a3)
+        movclr.l %acc1,%d0
+        movclr.l %acc3,%d4
+        move.l  S_FZ0+16(%a3),%d5
+        move.l  %d4,%acc3
+        mac.l   %d7,%a2,%acc3
+        move.l  S_LZ0+20(%a3),%d1           | G and F shelf 1: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
+        move.l  %d0,%acc1
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        mac.l   %d7,%a2,%acc1
+        movclr.l %acc0,%d2
+        add.l   %d2,%d1
+        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+20(%a3)
+        movclr.l %acc2,%d2
+        add.l   %d2,%d5
+        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+16(%a3)
+        movclr.l %acc1,%d0
+        movclr.l %acc3,%d4
+        add.l   #128,%d4                | the filter's output: F, back to the engine's units
+        asr.l   #8,%d4
+        CLAMP   %d4,-0x800000,0x800000
+        move.l  %d4,%d6
+        move.l  (%sp)+,%d7
+        rts
+.Lns_qx:
+        move.l  #NL_TH_N,%d0            | beyond the table: K tanh(4) as the table ends (rare)
+        move.l  (%a6,%d0.l*4),%d0
+        move.l  64(%a0),%d6
+        movea.l 68(%a0),%a6
+        bra     .Lns_qr
+
 o3_ctrl:
         move.l  S_PTGT(%a3),%d0         | SLID: RC slide on the pitch CV
         lsl.l   #8,%d0
@@ -3237,47 +3512,9 @@ o3_ctrl:
 .Lc_nt:
         move.l  %d3,S_SCTRL(%a3)
         asr.l   #6,%d3
-        lea     O3_LADDER_B,%a0
-        move.l  (%a0,%d3.l*4),%d0
-        move.l  %d0,S_B(%a3)
-        muls.l  K_C1R(%a5),%d0          | v6.7: c1 = b * C1R (Q12; v6.6: b * 2)
-        asr.l   #8,%d0
-        asr.l   #4,%d0
-        move.l  %d0,S_C1(%a3)
-        lea     O3_LADDER_K,%a0
-        move.l  (%a0,%d3.l*4),%d0
-        lea     O3_TB_KMUL,%a0
-        move.l  (%a0,%d5.l*4),%d1
-        moveq   #2,%d2                  | SWP 1/0: the feedback doubled
-        cmp.l   S_SWP(%a3),%d2
-        beq     .Lc_k
-        moveq   #DF_HIRES,%d2
-        muls.l  %d2,%d1
-.Lc_k:
-        move.l  %d1,S_KMUL(%a3)
-        muls.l  %d1,%d0
-        asr.l   #8,%d0
-        asr.l   #7,%d0
-        lea     O3_KF,%a0               | the oscillation point and its shape by frequency (Q12)
-        move.l  (%a0,%d3.l*4),%d2
-        muls.l  %d2,%d0
-        asr.l   #8,%d0
-        asr.l   #4,%d0
-        lea     O3_TB_UD,%a0            | v6.9: the ring's decay by RES (dB/ms, Q10) ...
-        move.l  (%a0,%d5.l*4),%d1
-        move.l  %d1,S_UD(%a3)
-        lea     O3_KD,%a0               | ... times the feedback a dB/ms, off k; never < 0
-        move.l  (%a0,%d3.l*4),%d2
-        muls.l  %d1,%d2
-        asr.l   #8,%d2
-        asr.l   #2,%d2
-        sub.l   %d2,%d0
-        bpl     .Lc_kp
-        moveq   #0,%d0
-.Lc_kp:
-        move.l  %d0,S_K(%a3)
-        move.l  %d3,%d0                 | v7.3: the ladder clip's operating point
-        CLSET
+        move.l  %d3,%d0                 | v8.0: the new ladder's index, k and reciprocal (ref303.nlctrl)
+        move.l  %d5,%d1
+        bsr     o3_nlctrl
         lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's (v7.5: one gain, the part 0)
         move.l  (%a0),%d1               | factor (overdrive swamps the resonance)
         move.l  (%a0,%d5.l*4),%d0
@@ -3289,8 +3526,7 @@ o3_ctrl:
         muls.l  S_OGAIN(%a3),%d0
         asr.l   #8,%d0
         asr.l   #4,%d0
-        lea     O3_LG,%a0               | v6.7: the level by frequency (Q12), the real ladder's
-        move.l  (%a0,%d3.l*4),%d2       | passband with the resonance up
+        move.l  #NL_LGQ,%d2             | v8.0: LG flat (the twin (a)); v6.7-v7.9 O3_LG[i]
         muls.l  %d2,%d0
         asr.l   #8,%d0
         asr.l   #4,%d0
@@ -3854,234 +4090,6 @@ O3_DF_HZ:
         .long   9123, 9255, 9390, 9527, 9665, 9806, 9948, 10093
         .long   10240, 10389, 10540, 10693, 10849, 11007, 11167, 11329
         .long   11494, 11661, 11831, 12003, 12177, 12355
-O3_LADDER_B:
-        .long   66, 67, 68, 69, 70, 71, 72, 73
-        .long   74, 75, 76, 77, 78, 79, 80, 82
-        .long   83, 84, 85, 86, 88, 89, 90, 92
-        .long   93, 94, 96, 97, 98, 100, 101, 103
-        .long   104, 106, 107, 109, 110, 112, 113, 115
-        .long   117, 118, 120, 122, 124, 125, 127, 129
-        .long   131, 133, 135, 137, 139, 141, 143, 145
-        .long   147, 149, 151, 153, 155, 158, 160, 162
-        .long   165, 167, 169, 172, 174, 177, 179, 182
-        .long   185, 187, 190, 193, 195, 198, 201, 204
-        .long   207, 210, 213, 216, 219, 222, 225, 229
-        .long   232, 235, 239, 242, 245, 249, 253, 256
-        .long   260, 263, 267, 271, 275, 279, 283, 287
-        .long   291, 295, 299, 304, 308, 312, 317, 321
-        .long   326, 331, 335, 340, 345, 350, 355, 360
-        .long   365, 370, 375, 381, 386, 392, 397, 403
-        .long   408, 414, 420, 426, 432, 438, 444, 451
-        .long   457, 463, 470, 477, 483, 490, 497, 504
-        .long   511, 518, 526, 533, 541, 548, 556, 564
-        .long   572, 580, 588, 596, 604, 613, 621, 630
-        .long   639, 648, 657, 666, 675, 684, 694, 704
-        .long   713, 723, 733, 744, 754, 764, 775, 786
-        .long   796, 807, 819, 830, 841, 853, 865, 876
-        .long   888, 901, 913, 926, 938, 951, 964, 977
-        .long   991, 1004, 1018, 1032, 1046, 1060, 1074, 1089
-        .long   1103, 1118, 1133, 1149, 1164, 1180, 1196, 1212
-        .long   1228, 1245, 1261, 1278, 1295, 1312, 1330, 1348
-        .long   1366, 1384, 1402, 1421, 1439, 1458, 1478, 1497
-        .long   1517, 1537, 1557, 1577, 1598, 1619, 1640, 1661
-        .long   1683, 1705, 1727, 1749, 1772, 1795, 1818, 1841
-        .long   1865, 1889, 1913, 1937, 1962, 1987, 2012, 2038
-        .long   2063, 2089, 2116, 2142, 2169, 2196, 2224, 2252
-        .long   2280, 2308, 2337, 2366, 2395, 2424, 2454, 2484
-        .long   2515, 2545, 2576, 2608, 2639, 2671, 2703, 2736
-        .long   2769, 2802, 2835, 2869, 2903, 2938, 2972, 3007
-        .long   3043, 3078, 3114, 3151, 3187, 3224, 3261, 3299
-        .long   3337, 3375, 3413, 3452, 3491, 3531, 3571, 3611
-        .long   3651, 3692, 3733, 3774, 3816, 3858, 3900, 3943
-        .long   3986, 4029, 4072, 4116, 4160, 4205, 4249, 4294
-        .long   4340, 4385, 4431, 4477, 4524, 4571, 4618, 4665
-        .long   4713, 4760, 4809, 4857, 4906, 4955, 5004, 5053
-        .long   5103, 5153, 5203, 5254, 5304, 5355, 5406, 5458
-        .long   5509, 5561, 5613, 5665, 5718, 5770, 5823, 5876
-        .long   5930, 5983, 6037, 6090, 6144, 6198, 6253, 6307
-        .long   6361, 6416, 6471, 6526, 6581, 6636, 6691, 6747
-        .long   6802, 6858, 6913, 6969, 7025, 7081, 7137, 7193
-        .long   7249, 7305, 7361, 7417, 7473, 7529, 7585, 7642
-        .long   7698, 7754, 7810, 7866, 7922, 7978, 8034, 8090
-        .long   8146, 8201, 8257, 8313, 8368, 8423, 8479, 8534
-        .long   8589, 8644, 8698, 8753, 8807, 8862, 8916, 8970
-        .long   9023, 9077, 9130, 9183, 9236, 9289, 9341, 9393
-        .long   9445, 9497, 9548, 9600, 9650, 9701, 9751, 9801
-        .long   9851, 9900, 9949, 9998, 10047, 10095, 10142, 10190
-        .long   10236, 10283, 10329, 10375, 10420, 10465, 10510, 10554
-        .long   10598, 10641, 10684, 10726, 10768, 10809, 10850, 10891
-        .long   10931, 10970, 11009, 11047, 11085, 11122
-O3_LADDER_K:
-        .long   4370, 4370, 4370, 4370, 4371, 4371, 4371, 4371
-        .long   4372, 4372, 4372, 4373, 4373, 4373, 4373, 4374
-        .long   4374, 4374, 4375, 4375, 4375, 4376, 4376, 4376
-        .long   4377, 4377, 4378, 4378, 4378, 4379, 4379, 4379
-        .long   4380, 4380, 4381, 4381, 4382, 4382, 4382, 4383
-        .long   4383, 4384, 4384, 4385, 4385, 4386, 4386, 4387
-        .long   4387, 4388, 4388, 4389, 4389, 4390, 4390, 4391
-        .long   4391, 4392, 4393, 4393, 4394, 4394, 4395, 4396
-        .long   4396, 4397, 4398, 4398, 4399, 4400, 4400, 4401
-        .long   4402, 4402, 4403, 4404, 4405, 4405, 4406, 4407
-        .long   4408, 4409, 4409, 4410, 4411, 4412, 4413, 4414
-        .long   4415, 4416, 4417, 4417, 4418, 4419, 4420, 4421
-        .long   4422, 4423, 4424, 4426, 4427, 4428, 4429, 4430
-        .long   4431, 4432, 4433, 4435, 4436, 4437, 4438, 4440
-        .long   4441, 4442, 4443, 4445, 4446, 4447, 4449, 4450
-        .long   4452, 4453, 4455, 4456, 4458, 4459, 4461, 4462
-        .long   4464, 4466, 4467, 4469, 4471, 4472, 4474, 4476
-        .long   4478, 4480, 4482, 4483, 4485, 4487, 4489, 4491
-        .long   4493, 4495, 4498, 4500, 4502, 4504, 4506, 4509
-        .long   4511, 4513, 4516, 4518, 4520, 4523, 4525, 4528
-        .long   4530, 4533, 4536, 4538, 4541, 4544, 4547, 4550
-        .long   4553, 4555, 4558, 4561, 4565, 4568, 4571, 4574
-        .long   4577, 4581, 4584, 4587, 4591, 4594, 4598, 4602
-        .long   4605, 4609, 4613, 4617, 4621, 4625, 4629, 4633
-        .long   4637, 4641, 4645, 4650, 4654, 4658, 4663, 4668
-        .long   4672, 4677, 4682, 4687, 4692, 4697, 4702, 4707
-        .long   4712, 4718, 4723, 4728, 4734, 4740, 4745, 4751
-        .long   4757, 4763, 4769, 4776, 4782, 4788, 4795, 4801
-        .long   4808, 4815, 4822, 4829, 4836, 4843, 4850, 4858
-        .long   4865, 4873, 4881, 4889, 4897, 4905, 4913, 4921
-        .long   4930, 4939, 4947, 4956, 4965, 4974, 4984, 4993
-        .long   5003, 5013, 5023, 5033, 5043, 5053, 5064, 5075
-        .long   5085, 5097, 5108, 5119, 5131, 5142, 5154, 5167
-        .long   5179, 5191, 5204, 5217, 5230, 5243, 5257, 5271
-        .long   5285, 5299, 5313, 5328, 5343, 5358, 5373, 5389
-        .long   5404, 5420, 5437, 5453, 5470, 5487, 5505, 5522
-        .long   5540, 5558, 5577, 5596, 5615, 5634, 5654, 5674
-        .long   5694, 5715, 5736, 5758, 5779, 5801, 5824, 5847
-        .long   5870, 5893, 5917, 5942, 5966, 5991, 6017, 6043
-        .long   6069, 6096, 6123, 6151, 6179, 6208, 6237, 6267
-        .long   6297, 6327, 6358, 6390, 6422, 6455, 6488, 6522
-        .long   6556, 6591, 6626, 6662, 6699, 6736, 6774, 6813
-        .long   6852, 6892, 6932, 6974, 7015, 7058, 7101, 7145
-        .long   7190, 7236, 7282, 7329, 7377, 7426, 7476, 7526
-        .long   7578, 7630, 7683, 7737, 7792, 7848, 7904, 7962
-        .long   8021, 8081, 8142, 8204, 8266, 8331, 8396, 8462
-        .long   8529, 8598, 8668, 8738, 8811, 8884, 8959, 9035
-        .long   9112, 9190, 9270, 9351, 9434, 9518, 9604, 9691
-        .long   9779, 9869, 9961, 10054, 10148, 10244, 10342, 10442
-        .long   10543, 10646, 10750, 10856, 10964, 11074, 11186, 11299
-        .long   11415, 11532, 11651, 11772, 11895, 12020, 12147, 12276
-        .long   12407, 12540, 12675, 12812, 12951, 13092, 13235, 13381
-        .long   13528, 13678, 13830, 13984, 14140, 14298, 14459, 14621
-        .long   14786, 14953, 15122, 15293, 15466, 15641, 15819, 15998
-        .long   16179, 16362, 16547, 16734, 16923, 17113, 17305, 17499
-        .long   17694, 17890, 18088, 18287, 18487, 18688
-O3_KF:
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10280, 10280, 10280, 10280, 10280, 10280, 10280
-        .long   10280, 10188, 10122, 10031, 9949, 9867, 9786, 9713
-        .long   9638, 9567, 9500, 9415, 9350, 9274, 9214, 9140
-        .long   9087, 9017, 8952, 8887, 8827, 8769, 8711, 8641
-        .long   8590, 8539, 8477, 8419, 8373, 8318, 8265, 8213
-        .long   8164, 8117, 8060, 8016, 7965, 7923, 7875, 7828
-        .long   7783, 7741, 7697, 7658, 7619, 7575, 7539, 7496
-        .long   7457, 7419, 7381, 7346, 7311, 7275, 7238, 7201
-        .long   7170, 7138, 7104, 7068, 7035, 7005, 6972, 6941
-        .long   6914, 6883, 6851, 6825, 6796, 6767, 6737, 6712
-        .long   6685, 6656, 6630, 6602, 6579, 6552, 6528, 6503
-        .long   6478, 6457, 6433, 6409, 6387, 6367, 6345, 6324
-        .long   6305, 6285, 6265, 6244, 6227, 6207, 6189, 6172
-        .long   6155, 6136, 6121, 6104, 6089, 6073, 6058, 6042
-        .long   6027, 6011, 5998, 5983, 5970, 5958, 5942, 5931
-        .long   5918, 5904, 5892, 5880, 5869, 5857, 5846, 5834
-        .long   5824, 5813, 5802, 5792, 5781, 5772, 5761, 5752
-        .long   5742, 5732, 5724, 5715, 5706, 5697, 5688, 5680
-        .long   5672, 5664, 5654, 5646, 5639, 5632, 5623, 5616
-        .long   5609, 5602, 5594, 5587, 5580, 5574, 5567, 5559
-        .long   5552, 5546, 5539, 5533, 5526, 5520, 5513, 5506
-        .long   5500, 5494, 5489, 5482, 5476, 5471, 5465, 5460
-        .long   5455, 5450, 5444, 5439, 5434, 5429, 5424, 5420
-        .long   5415, 5410, 5405, 5401, 5397, 5394, 5390, 5386
-        .long   5383, 5379, 5375, 5371, 5368, 5366, 5361, 5358
-        .long   5356, 5353, 5351, 5347, 5345, 5343, 5340, 5337
-        .long   5336, 5333, 5331, 5330, 5328, 5327, 5325, 5323
-        .long   5322, 5321, 5320, 5319, 5318, 5317, 5317, 5316
-        .long   5315, 5316, 5315, 5315, 5315, 5315, 5315, 5316
-        .long   5316, 5316, 5318, 5318, 5320, 5320, 5323, 5323
-        .long   5325, 5326, 5328, 5330, 5333, 5334, 5337, 5339
-        .long   5341, 5343, 5347, 5349, 5352, 5355, 5359, 5362
-        .long   5365, 5368, 5372, 5375, 5380, 5383, 5388, 5391
-        .long   5397, 5400, 5405, 5410, 5414, 5419, 5423, 5429
-        .long   5434, 5440, 5445, 5452, 5457, 5463, 5469, 5475
-        .long   5482, 5487, 5495, 5501, 5508, 5515, 5523, 5529
-        .long   5537, 5545, 5553, 5561, 5568, 5578, 5585, 5594
-        .long   5602, 5611, 5620, 5630, 5639, 5648, 5658, 5667
-        .long   5677, 5687, 5698, 5710, 5719, 5731, 5742, 5753
-        .long   5765, 5777, 5788, 5800, 5813, 5827, 5838, 5852
-        .long   5863, 5877, 5891, 5904, 5917, 5931, 5946, 5959
-        .long   5971, 5983, 5995, 6007, 6020, 6032, 6045, 6059
-        .long   6073, 6086, 6099, 6112, 6127, 6140
-O3_LG:
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2327, 2327, 2327, 2327, 2327, 2327, 2327, 2327
-        .long   2318, 2302, 2286, 2270, 2255, 2239, 2224, 2209
-        .long   2195, 2180, 2166, 2152, 2138, 2125, 2112, 2099
-        .long   2086, 2073, 2061, 2048, 2036, 2025, 2013, 2002
-        .long   1991, 1980, 1969, 1959, 1948, 1938, 1928, 1919
-        .long   1909, 1900, 1891, 1882, 1874, 1865, 1857, 1849
-        .long   1841, 1834, 1826, 1819, 1812, 1806, 1799, 1793
-        .long   1787, 1781, 1775, 1770, 1765, 1760, 1755, 1750
-        .long   1746, 1741, 1737, 1734, 1730, 1727, 1724, 1721
-        .long   1718, 1715, 1713, 1711, 1709, 1708, 1706, 1705
-        .long   1704, 1704, 1703, 1703, 1703, 1703, 1703, 1704
-        .long   1704, 1705, 1706, 1707, 1708, 1709, 1711, 1712
-        .long   1714, 1716, 1717, 1720, 1722, 1724, 1726, 1729
-        .long   1731, 1734, 1737, 1740, 1743, 1746, 1749, 1752
-        .long   1756, 1759, 1763, 1767, 1770, 1774, 1778, 1782
-        .long   1786, 1790, 1795, 1799, 1803, 1808, 1812, 1817
-        .long   1822, 1826, 1831, 1836, 1841, 1846, 1851, 1856
-        .long   1861, 1866, 1871, 1877, 1882, 1887, 1892, 1898
-        .long   1903, 1909, 1914, 1919, 1925, 1930, 1936, 1941
-        .long   1947, 1952, 1958, 1963, 1969, 1974, 1980, 1985
-        .long   1991, 1996, 2002, 2007, 2012, 2018, 2023, 2028
-        .long   2034, 2039, 2044, 2049, 2055, 2060, 2065, 2070
-        .long   2076, 2081, 2086, 2092, 2097, 2102, 2108, 2113
-        .long   2119, 2124, 2130, 2135, 2141, 2147, 2152, 2158
-        .long   2164, 2170, 2176, 2182, 2188, 2194, 2201, 2207
-        .long   2213, 2220, 2226, 2233, 2240, 2247, 2254, 2261
-        .long   2268, 2275, 2282, 2290, 2297, 2305, 2313, 2321
-        .long   2329, 2337, 2346, 2354, 2363, 2372, 2381, 2390
-        .long   2399, 2409, 2418, 2428, 2438, 2448, 2459, 2469
-        .long   2480, 2491, 2502, 2514, 2526, 2537, 2550, 2562
-        .long   2575, 2587, 2601, 2614, 2628, 2642, 2657, 2673
-        .long   2690, 2707, 2725, 2743, 2762, 2782, 2802, 2824
-        .long   2846, 2868, 2892, 2916, 2941, 2966, 2993, 3020
-        .long   3048, 3077, 3106, 3137, 3168, 3200, 3233, 3267
-        .long   3301, 3337, 3373, 3411, 3449, 3489, 3529, 3570
-        .long   3613, 3656, 3701, 3746, 3793, 3840, 3889, 3939
-        .long   3990, 4043, 4096, 4151, 4207, 4264, 4323, 4383
-        .long   4444, 4506, 4570, 4636, 4703, 4771, 4841, 4912
-        .long   4985, 5059, 5135, 5213, 5292, 5373, 5456, 5540
-        .long   5627, 5715, 5804, 5896, 5990, 6086, 6183, 6283
-        .long   6384, 6488, 6594, 6702, 6812, 6924, 7039, 7080
-        .long   7080, 7080, 7080, 7080, 7080, 7080, 7080, 7080
-        .long   7080, 7080, 7080, 7080, 7080, 7080
 O3_TB_UD:
         .long   0, 29, 57, 85, 113, 140, 167, 193
         .long   218, 244, 268, 292, 315, 337, 359, 379
@@ -4099,63 +4107,6 @@ O3_TB_UD:
         .long   585, 594, 601, 608, 615, 619, 623, 626
         .long   629, 631, 634, 636, 639, 641, 643, 645
         .long   647, 648, 650, 651, 652, 652, 653, 653
-O3_KD:
-        .long   78935, 76988, 75111, 73302, 71557, 69873, 68249, 66680
-        .long   65166, 63703, 62289, 60923, 59602, 58324, 57088, 54734
-        .long   53613, 52526, 51474, 50454, 48506, 47576, 46674, 44947
-        .long   44121, 43319, 41783, 41047, 40331, 38957, 38298, 37032
-        .long   36424, 35255, 34693, 33611, 33091, 32088, 31605, 30673
-        .long   29785, 29356, 28529, 27739, 26984, 26619, 25914, 25238
-        .long   24591, 23971, 23376, 22805, 22257, 21731, 21225, 20738
-        .long   20270, 19819, 19385, 18966, 18562, 17983, 17614, 17257
-        .long   16745, 16417, 16100, 15644, 15352, 14931, 14661, 14272
-        .long   13900, 13661, 13315, 12985, 12772, 12464, 12169, 11885
-        .long   11613, 11352, 11100, 10859, 10626, 10401, 10185, 9909
-        .long   9711, 9519, 9273, 9097, 8925, 8706, 8496, 8344
-        .long   8150, 8009, 7827, 7653, 7486, 7325, 7170, 7021
-        .long   6878, 6740, 6606, 6446, 6323, 6204, 6061, 5950
-        .long   5818, 5690, 5592, 5473, 5359, 5249, 5143, 5041
-        .long   4943, 4848, 4756, 4651, 4566, 4468, 4389, 4298
-        .long   4224, 4139, 4057, 3978, 3902, 3829, 3758, 3678
-        .long   3612, 3549, 3477, 3408, 3351, 3287, 3225, 3165
-        .long   3107, 3051, 2990, 2938, 2881, 2832, 2779, 2727
-        .long   2677, 2629, 2583, 2538, 2495, 2448, 2407, 2363
-        .long   2321, 2279, 2240, 2201, 2164, 2128, 2090, 2053
-        .long   2020, 1985, 1952, 1916, 1884, 1854, 1822, 1790
-        .long   1763, 1733, 1702, 1675, 1648, 1620, 1593, 1569
-        .long   1544, 1517, 1493, 1468, 1446, 1422, 1400, 1378
-        .long   1355, 1334, 1313, 1292, 1272, 1252, 1233, 1214
-        .long   1196, 1178, 1160, 1141, 1124, 1107, 1090, 1074
-        .long   1058, 1042, 1027, 1011, 997, 982, 967, 953
-        .long   939, 925, 912, 899, 887, 874, 861, 849
-        .long   837, 825, 814, 802, 791, 780, 769, 759
-        .long   748, 738, 728, 719, 709, 699, 690, 681
-        .long   672, 663, 654, 646, 637, 629, 621, 613
-        .long   605, 598, 590, 583, 575, 568, 561, 554
-        .long   547, 541, 534, 528, 521, 515, 509, 503
-        .long   497, 491, 486, 480, 475, 469, 464, 459
-        .long   453, 448, 443, 439, 434, 429, 424, 420
-        .long   415, 411, 407, 403, 398, 394, 390, 386
-        .long   383, 379, 375, 371, 368, 364, 361, 357
-        .long   354, 351, 348, 344, 341, 338, 335, 332
-        .long   329, 327, 324, 321, 319, 316, 313, 311
-        .long   308, 306, 304, 301, 299, 297, 295, 293
-        .long   291, 289, 287, 285, 283, 281, 279, 277
-        .long   276, 274, 272, 271, 269, 268, 266, 265
-        .long   263, 262, 261, 259, 258, 257, 256, 255
-        .long   254, 252, 251, 250, 250, 249, 248, 247
-        .long   246, 245, 245, 244, 243, 243, 242, 241
-        .long   241, 240, 240, 240, 239, 239, 239, 238
-        .long   238, 238, 238, 238, 237, 237, 237, 237
-        .long   237, 237, 238, 238, 238, 238, 238, 239
-        .long   239, 239, 240, 240, 241, 241, 242, 242
-        .long   243, 244, 244, 245, 246, 247, 248, 249
-        .long   250, 251, 252, 253, 254, 255, 256, 258
-        .long   259, 260, 262, 263, 265, 266, 268, 269
-        .long   271, 273, 275, 276, 278, 280, 282, 284
-        .long   286, 288, 291, 293, 295, 297, 300, 302
-        .long   305, 307, 310, 312, 315, 318, 320, 323
-        .long   326, 329, 332, 335, 338, 341
 O3_DRV_G:
         .long   4096, 4133, 4171, 4209, 4247, 4286, 4325, 4364
         .long   4404, 4444, 4485, 4526, 4567, 4608, 4650, 4693
@@ -4207,33 +4158,6 @@ O3_DRV_TH:
         .long   16366, 16366, 16367, 16368, 16368, 16369, 16369, 16369
         .long   16370, 16370, 16371, 16371, 16372, 16372, 16372, 16373
         .long   16373, 16373
-O3_CL_G:
-        .long   4096, 4053, 4011, 3968, 3925, 3883, 3840, 3797
-        .long   3755, 3712, 3669, 3627, 3584, 3541, 3499, 3456
-        .long   3413, 3371, 3328, 3285, 3243, 3200, 3157, 3115
-        .long   3072, 3029, 2987, 2944, 2901, 2859, 2816, 2773
-        .long   2731, 2688, 2645, 2603, 2560, 2517, 2475, 2432
-        .long   2389, 2347, 2304, 2261, 2219, 2176, 2133, 2091
-        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048
-        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048
-O3_CL_INV:
-        .long   4096, 4139, 4183, 4228, 4274, 4321, 4369, 4419
-        .long   4468, 4520, 4573, 4626, 4681, 4738, 4795, 4855
-        .long   4916, 4977, 5041, 5107, 5173, 5243, 5314, 5386
-        .long   5461, 5539, 5617, 5699, 5783, 5868, 5958, 6050
-        .long   6143, 6242, 6343, 6445, 6554, 6666, 6779, 6899
-        .long   7023, 7148, 7282, 7420, 7561, 7710, 7866, 8024
-        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192
-        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192
-O3_CL_LIM:
-        .long   1482910, 1498642, 1514335, 1530745, 1547515, 1564254, 1581770, 1599683
-        .long   1617576, 1636314, 1655491, 1674662, 1694754, 1715334, 1735924, 1757522
-        .long   1779665, 1801839, 1825120, 1849010, 1872956, 1898124, 1923978, 1949919
-        .long   1977213, 2005282, 2033478, 2063179, 2093760, 2124518, 2156960, 2190407
-        .long   2224093, 2259672, 2296408, 2333461, 2372656, 2413190, 2454141, 2497532
-        .long   2542486, 2587984, 2636284, 2686421, 2737268, 2791360, 2847632, 2904829
-        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
-        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
 O3_VP_W2:
         .long   0, 20, 41, 62, 85, 108, 132, 158
         .long   184, 211, 239, 269, 299, 330, 363, 397
@@ -5113,6 +5037,2541 @@ O3_AC_L69:
         .long   49093, 49288, 49482, 49675, 49866, 50056, 50244, 50431
         .long   50617, 50801, 50984, 51166, 51346, 51526, 51704, 51881
         .long   52056
+O3_NL_K:
+        .long   2130673551, -2130673551, -2144639084, -2147009859, -13062, 446035417, -24127812, 13984056
+        .long   2371299, 486847, 180403, 936985, 446230368, 108343, -24129030, 13984056
+        .long   486847, 108343, 2371299, 273115869, 936985, -251004582
+        .balign 16
+O3_NL_R:
+        .long   2139400059, 8075270, 8314, 6, 4404693, 2138670478, 4403940, 4534
+        .long   4535, 4403940, 2138666698, 4403934, 3, 4534, 4403934, 2138662164
+        .long   4045957, 4163, 3, 0, 476178899, 1134080907, -596857064, 472451460
+        .long   1125203535, -592184980, 0, 0, 0, 0, 0, 0
+        .long   2139282828, 8192258, 8557, 6, 4468504, 2138542744, 4467729, 4667
+        .long   4667, 4467729, 2138538854, 4467724, 3, 4667, 4467724, 2138534187
+        .long   4104695, 4284, 3, 0, 484115566, 1126152997, -588937912, 480326001
+        .long   1117337683, -584327817, 0, 0, 0, 0, 0, 0
+        .long   2139163901, 8310933, 8807, 6, 4533236, 2138413166, 4532439, 4803
+        .long   4804, 4532439, 2138409162, 4532433, 3, 4803, 4532433, 2138404359
+        .long   4164283, 4410, 3, 0, 491881329, 1118396066, -581189813, 488030975
+        .long   1109641473, -576640369, 0, 0, 0, 0, 0, 0
+        .long   2139043256, 8431321, 9065, 6, 4598902, 2138281717, 4598082, 4944
+        .long   4944, 4598082, 2138277596, 4598075, 4, 4944, 4598075, 2138272652
+        .long   4224735, 4539, 3, 0, 499478792, 1110807510, -573610163, 495568966
+        .long   1102112318, -569120051, 0, 0, 0, 0, 0, 0
+        .long   2138920867, 8553445, 9330, 7, 4665515, 2138148370, 4664671, 5088
+        .long   5089, 4664671, 2138144128, 4664664, 4, 5088, 4664664, 2138139040
+        .long   4286062, 4672, 3, 0, 506910499, 1103384783, -566196417, 502942499
+        .long   1094747695, -561764338, 0, 0, 0, 0, 0, 0
+        .long   2138796708, 8677330, 9603, 7, 4733089, 2138013098, 4732220, 5237
+        .long   5238, 4732220, 2138008732, 4732213, 4, 5237, 4732213, 2138003495
+        .long   4348278, 4808, 4, 0, 514179120, 1096125216, -558945903, 510154223
+        .long   1087544954, -554570580, 0, 0, 0, 0, 0, 0
+        .long   2138670755, 8803002, 9883, 7, 4801638, 2137875873, 4800743, 5390
+        .long   5391, 4800743, 2137871380, 4800736, 4, 5390, 4800736, 2137865990
+        .long   4411396, 4949, 4, 0, 521286970, 1089026493, -551856308, 517206434
+        .long   1080501799, -547536480, 0, 0, 0, 0, 0, 0
+        .long   2138542981, 8930487, 10172, 8, 4871175, 2137736668, 4870254, 5548
+        .long   5548, 4870254, 2137732043, 4870246, 4, 5548, 4870246, 2137726495
+        .long   4475427, 5094, 4, 0, 528236726, 1082085938, -544924953, 524101788
+        .long   1073615573, -540659383, 0, 0, 0, 0, 0, 0
+        .long   2138413362, 9059809, 10470, 8, 4941714, 2137595453, 4940766, 5710
+        .long   5711, 4940766, 2137590694, 4940758, 4, 5710, 4940758, 2137584984
+        .long   4540386, 5243, 4, 0, 535030751, 1075301186, -538149474, 530842631
+        .long   1066883931, -533936942, 0, 0, 0, 0, 0, 0
+        .long   2138281869, 9190995, 10776, 8, 5013270, 2137452201, 5012295, 5877
+        .long   5878, 5012295, 2137447303, 5012287, 5, 5877, 5012287, 2137441426
+        .long   4606286, 5396, 4, 0, 541671433, 1068669849, -531527483, 537431332
+        .long   1060304503, -527366786, 0, 0, 0, 0, 0, 0
+        .long   2138148476, 9324072, 11091, 9, 5085858, 2137306883, 5084854, 6049
+        .long   6049, 5084854, 2137301841, 5084845, 5, 6049, 5084845, 2137295792
+        .long   4673140, 5554, 4, 0, 548161233, 1062189466, -525056518, 543870331
+        .long   1053874847, -520946475, 0, 0, 0, 0, 0, 0
+        .long   2138013156, 9459067, 11415, 9, 5159491, 2137159468, 5158459, 6225
+        .long   6226, 5158459, 2137154278, 5158449, 5, 6225, 5158449, 2137148053
+        .long   4740962, 5717, 5, 0, 554502552, 1055857637, -518734178, 550162010
+        .long   1047592583, -514673625, 0, 0, 0, 0, 0, 0
+        .long   2137875882, 9596008, 11749, 10, 5234186, 2137009926, 5233123, 6407
+        .long   6408, 5233123, 2137004585, 5233114, 5, 6407, 5233114, 2136998177
+        .long   4809767, 5884, 5, 0, 560697680, 1049672069, -512558170, 556308645
+        .long   1041455434, -508545961, 0, 0, 0, 0, 0, 0
+        .long   2137736625, 9734921, 12092, 10, 5309957, 2136858228, 5308863, 6595
+        .long   6596, 5308863, 2136852730, 5308853, 5, 6595, 5308853, 2136846136
+        .long   4879568, 6056, 5, 0, 566748963, 1043630416, -506526148, 562312559
+        .long   1035461074, -502561157, 0, 0, 0, 0, 0, 0
+        .long   2137595356, 9875836, 12446, 10, 5386819, 2136704342, 5385694, 6788
+        .long   6788, 5385694, 2136698684, 5385683, 6, 6788, 5385683, 2136691896
+        .long   4950379, 6233, 5, 0, 572658732, 1037730348, -500635780, 568176067
+        .long   1029607191, -496716898, 0, 0, 0, 0, 0, 0
+        .long   2137452048, 10018780, 12809, 11, 5464789, 2136548237, 5463630, 6986
+        .long   6987, 5463630, 2136542413, 5463620, 6, 6986, 5463620, 2136535427
+        .long   5022216, 6416, 5, 0, 578429190, 1031969660, -494884863, 573901355
+        .long   1023891596, -491010997, 0, 0, 0, 0, 0, 0
+        .long   2137306670, 10163783, 13184, 11, 5543881, 2136389881, 5542689, 7190
+        .long   7191, 5542689, 2136383888, 5542678, 6, 7190, 5542678, 2136376698
+        .long   5095092, 6603, 6, 0, 584062661, 1026346028, -489271069, 579490729
+        .long   1018311985, -485441147, 0, 0, 0, 0, 0, 0
+        .long   2137159194, 10310873, 13569, 12, 5624113, 2136229243, 5622886, 7400
+        .long   7401, 5622886, 2136223074, 5622874, 6, 7400, 5622874, 2136215674
+        .long   5169024, 6796, 6, 0, 589561284, 1020857312, -483792260, 584946309
+        .long   1012866234, -480005226, 0, 0, 0, 0, 0, 0
+        .long   2137009588, 10460082, 13966, 12, 5705499, 2136066289, 5704236, 7616
+        .long   7618, 5704236, 2136059940, 5704224, 7, 7616, 5704224, 2136052324
+        .long   5244025, 6995, 6, 0, 594927330, 1015501241, -478446163, 590270351
+        .long   1007552088, -474700977, 0, 0, 0, 0, 0, 0
+        .long   2136857823, 10611438, 14374, 13, 5788057, 2135900987, 5786758, 7839
+        .long   7840, 5786758, 2135894452, 5786745, 7, 7839, 5786745, 2135886613
+        .long   5320112, 7200, 6, 0, 600162954, 1010275657, -473230621, 595464991
+        .long   1002367410, -469526261, 0, 0, 0, 0, 0, 0
+        .long   2136703868, 10764973, 14794, 14, 5871804, 2135733303, 5870466, 8068
+        .long   8069, 5870466, 2135726577, 5870452, 7, 8068, 5870452, 2135718509
+        .long   5397301, 7410, 7, 0, 605270265, 1005178453, -468143523, 600532324
+        .long   997310106, -464478984, 0, 0, 0, 0, 0, 0
+        .long   2136547690, 10920718, 15226, 14, 5956755, 2135563203, 5955379, 8304
+        .long   8305, 5955379, 2135556281, 5955364, 8, 8304, 5955364, 2135547977
+        .long   5475606, 7627, 7, 0, 610251415, 1000207475, -463182718, 605474482
+        .long   992378040, -459557011, 0, 0, 0, 0, 0, 0
+        .long   2136389259, 11078703, 15671, 15, 6042929, 2135390652, 6041512, 8546
+        .long   8548, 6041512, 2135383528, 6041498, 8, 8546, 6041498, 2135374981
+        .long   5555045, 7850, 7, 0, 615108462, 995360665, -458346143, 610293509
+        .long   987569169, -454758296, 0, 0, 0, 0, 0, 0
+        .long   2136228543, 11238961, 16129, 15, 6130342, 2135215616, 6128885, 8796
+        .long   8798, 6128885, 2135208284, 6128869, 8, 8796, 6128869, 2135199488
+        .long   5635633, 8080, 8, 0, 619843517, 990635909, -453631688, 614991499
+        .long   982881398, -450080744, 0, 0, 0, 0, 0, 0
+        .long   2136065507, 11401524, 16600, 16, 6219013, 2135038060, 6217513, 9053
+        .long   9055, 6217513, 2135030513, 6217497, 9, 9053, 6217497, 2135021460
+        .long   5717387, 8316, 8, 0, 624458650, 986031138, -449037279, 619570506
+        .long   978312672, -445522300, 0, 0, 0, 0, 0, 0
+        .long   2135900120, 11566426, 17085, 17, 6308959, 2134857946, 6307415, 9318
+        .long   9319, 6307415, 2134850179, 6307399, 9, 9318, 6307399, 2134840861
+        .long   5800323, 8559, 8, 0, 628955858, 981544355, -444560919, 624032510
+        .long   973861011, -441080980, 0, 0, 0, 0, 0, 0
+        .long   2135732348, 11733698, 17584, 18, 6400199, 2134675240, 6398610, 9590
+        .long   9591, 6398610, 2134667245, 6398592, 10, 9590, 6398592, 2134657655
+        .long   5884460, 8810, 9, 0, 633337134, 977173563, -440200611, 628379491
+        .long   969524432, -436754804, 0, 0, 0, 0, 0, 0
+        .long   2135562156, 11903375, 18098, 18, 6492750, 2134489903, 6491115, 9870
+        .long   9872, 6491115, 2134481675, 6491097, 10, 9870, 6491097, 2134471805
+        .long   5969813, 9067, 9, 0, 637604521, 972916720, -435954313, 632613473
+        .long   965300911, -432541745, 0, 0, 0, 0, 0, 0
+        .long   2135389510, 12075492, 18627, 19, 6586632, 2134301898, 6584949, 10158
+        .long   10160, 6584949, 2134293430, 6584930, 10, 10158, 6584930, 2134283272
+        .long   6056401, 9333, 10, 0, 641759887, 968771956, -431820151, 636736312
+        .long   961188592, -428439944, 0, 0, 0, 0, 0, 0
+        .long   2135214375, 12250082, 19171, 20, 6681863, 2134111188, 6680131, 10455
+        .long   10457, 6680131, 2134102473, 6680111, 11, 10455, 6680111, 2134092018
+        .long   6144242, 9605, 10, 0, 645805241, 964737262, -427796117, 640750000
+        .long   957185481, -424447410, 0, 0, 0, 0, 0, 0
+        .long   2135036716, 12427180, 19731, 21, 6778462, 2133917734, 6776680, 10760
+        .long   10762, 6776680, 2133908764, 6776659, 11, 10760, 6776659, 2133898004
+        .long   6233352, 9886, 10, 0, 649742496, 960810724, -423880295, 644656434
+        .long   953289678, -420562240, 0, 0, 0, 0, 0, 0
+        .long   2134856495, 12606824, 20307, 22, 6876449, 2133721497, 6874615, 11075
+        .long   11077, 6874615, 2133712265, 6874593, 12, 11075, 6874593, 2133701190
+        .long   6323752, 10175, 11, 0, 653573513, 956990477, -420070820, 648457463
+        .long   949499336, -416782585, 0, 0, 0, 0, 0, 0
+        .long   2134673678, 12789047, 20900, 23, 6975844, 2133522437, 6973956, 11398
+        .long   11400, 6973956, 2133512935, 6973933, 12, 11398, 6973933, 2133501537
+        .long   6415458, 10473, 11, 0, 657300165, 953274651, -416365819, 652154943
+        .long   945812597, -413106586, 0, 0, 0, 0, 0, 0
+        .long   2134488226, 12973888, 21511, 24, 7076666, 2133320515, 7074723, 11731
+        .long   11733, 7074723, 2133310735, 7074700, 13, 11731, 7074700, 2133299004
+        .long   6508490, 10779, 12, 0, 660924325, 949661369, -412763415, 655750734
+        .long   942227599, -409532381, 0, 0, 0, 0, 0, 0
+        .long   2134300102, 13161382, 22139, 25, 7178936, 2133115688, 7176937, 12074
+        .long   12076, 7176937, 2133105623, 7176912, 14, 12074, 7176912, 2133093549
+        .long   6602867, 11094, 12, 0, 664447840, 946148784, -409261761, 659246667
+        .long   938742510, -406058137, 0, 0, 0, 0, 0, 0
+        .long   2134109268, 13351569, 22786, 26, 7282674, 2132907917, 7280617, 12426
+        .long   12429, 7280617, 2132897558, 7280591, 14, 12426, 7280591, 2132885132
+        .long   6698609, 11419, 13, 0, 667872480, 942735124, -405859080, 662644500
+        .long   935355571, -402682092, 0, 0, 0, 0, 0, 0
+        .long   2133915685, 13544485, 23451, 27, 7387901, 2132697160, 7385784, 12789
+        .long   12791, 7385784, 2132686498, 7385757, 15, 12789, 7385757, 2132673709
+        .long   6795734, 11753, 14, 0, 671200044, 939418589, -402553574, 665946016
+        .long   932064997, -399402461, 0, 0, 0, 0, 0, 0
+        .long   2133719314, 13740170, 24136, 28, 7494638, 2132483373, 7492459, 13162
+        .long   13165, 7492459, 2132472400, 7492431, 15, 13162, 7492431, 2132459237
+        .long   6894263, 12096, 14, 0, 674432322, 936197387, -399343449, 669152993
+        .long   928869011, -396217463, 0, 0, 0, 0, 0, 0
+        .long   2133520116, 13938662, 24841, 30, 7602907, 2132266514, 7600664, 13547
+        .long   13549, 7600664, 2132255220, 7600635, 16, 13547, 7600635, 2132241674
+        .long   6994216, 12450, 15, 0, 677571031, 933069801, -396226986, 672267133
+        .long   925765907, -393125396, 0, 0, 0, 0, 0, 0
+        .long   2133318050, 14140002, 25566, 31, 7712728, 2132046540, 7710421, 13942
+        .long   13945, 7710421, 2132034916, 7710390, 17, 13942, 7710390, 2132020974
+        .long   7095613, 12814, 15, 0, 680617933, 930034067, -393202418, 675290184
+        .long   922753935, -390124504, 0, 0, 0, 0, 0, 0
+        .long   2133113074, 14344229, 26312, 32, 7824125, 2131823406, 7821750, 14349
+        .long   14352, 7821750, 2131811443, 7821718, 18, 14349, 7821718, 2131797093
+        .long   7198475, 13188, 16, 0, 683574716, 927088495, -390268058, 678223822
+        .long   919831421, -387213113, 0, 0, 0, 0, 0, 0
+        .long   2132905149, 14551385, 27081, 34, 7937119, 2131597067, 7934675, 14768
+        .long   14771, 7934675, 2131584755, 7934642, 18, 14768, 7934642, 2131569986
+        .long   7302823, 13574, 17, 0, 686443092, 924231372, -387422188, 681069745
+        .long   916996663, -384389520, 0, 0, 0, 0, 0, 0
+        .long   2132694231, 14761511, 27871, 35, 8051733, 2131367478, 8049218, 15199
+        .long   15202, 8049218, 2131354806, 8049183, 19, 15199, 8049183, 2131339607
+        .long   7408679, 13971, 18, 0, 689224688, 921461069, -384663179, 683829567
+        .long   914248046, -381652108, 0, 0, 0, 0, 0, 0
+        .long   2132480279, 14974648, 28685, 37, 8167990, 2131134593, 8165402, 15643
+        .long   15646, 8165402, 2131121551, 8165365, 20, 15643, 8165365, 2131105909
+        .long   7516064, 14379, 18, 0, 691921205, 918775885, -381989327, 686504976
+        .long   911583881, -378999187, 0, 0, 0, 0, 0, 0
+        .long   2132263248, 15190840, 29522, 38, 8285912, 2130898366, 8283249, 16099
+        .long   16103, 8283249, 2130884943, 8283211, 21, 16099, 8283211, 2130868844
+        .long   7624999, 14799, 19, 0, 694534239, 916174221, -379399033, 689097556
+        .long   909002582, -376429169, 0, 0, 0, 0, 0, 0
+        .long   2132043096, 15410128, 30384, 40, 8405525, 2130658748, 8402784, 16569
+        .long   16573, 8402784, 2130644933, 8402744, 22, 16569, 8402744, 2130628364
+        .long   7735508, 15232, 20, 0, 697065418, 913654448, -376890666, 691608921
+        .long   906502533, -373940437, 0, 0, 0, 0, 0, 0
+        .long   2131819777, 15632558, 31271, 42, 8526850, 2130415692, 8524030, 17053
+        .long   17057, 8524030, 2130401474, 8523988, 23, 17053, 8523988, 2130384422
+        .long   7847613, 15677, 21, 0, 699516339, 911214968, -374462626, 694040657
+        .long   904082149, -371531403, 0, 0, 0, 0, 0, 0
+        .long   2131593247, 15858174, 32183, 44, 8649913, 2130169150, 8647011, 17551
+        .long   17555, 8647011, 2130154517, 8646967, 24, 17551, 8646967, 2130136966
+        .long   7961336, 16135, 22, 0, 701888567, 908854212, -372113343, 696394316
+        .long   901739873, -369200510, 0, 0, 0, 0, 0, 0
+        .long   2131363461, 16087019, 33123, 45, 8774738, 2129919071, 8771751, 18063
+        .long   18067, 8771751, 2129904011, 8771706, 25, 18063, 8771706, 2129885949
+        .long   8076700, 16607, 23, 0, 704183666, 906570617, -369841253, 698671449
+        .long   899474153, -366946205, 0, 0, 0, 0, 0, 0
+        .long   2131130371, 16319140, 34089, 47, 8901349, 2129665407, 8898276, 18590
+        .long   18594, 8898276, 2129649907, 8898229, 26, 18590, 8898229, 2129631318
+        .long   8193731, 17092, 24, 0, 706403186, 904362631, -367644801, 700873595
+        .long   897283451, -364766946, 0, 0, 0, 0, 0, 0
+        .long   2130893931, 16554583, 35084, 50, 9029773, 2129408106, 9026610, 19132
+        .long   19137, 9026610, 2129392154, 9026561, 27, 19132, 9026561, 2129373022
+        .long   8312450, 17592, 25, 0, 708548623, 902228755, -365522486, 703002238
+        .long   895166279, -362661245, 0, 0, 0, 0, 0, 0
+        .long   2130654094, 16793395, 36108, 52, 9160033, 2129147117, 9156779, 19690
+        .long   19695, 9156779, 2129130699, 9156727, 28, 19690, 9156727, 2129111009
+        .long   8432883, 18106, 26, 0, 710621508, 900167459, -363472777, 705058896
+        .long   893121118, -360627581, 0, 0, 0, 0, 0, 0
+        .long   2130410811, 17035622, 37161, 54, 9292157, 2128882388, 9288809, 20265
+        .long   20270, 9288809, 2128865491, 9288755, 29, 20265, 9288755, 2128845227
+        .long   8555053, 18635, 27, 0, 712623299, 898177280, -361494210, 707045018
+        .long   891146518, -358664502, 0, 0, 0, 0, 0, 0
+        .long   2130164033, 17281313, 38245, 56, 9426171, 2128613866, 9422725, 20856
+        .long   20861, 9422725, 2128596476, 9422668, 31, 20856, 9422668, 2128575620
+        .long   8678987, 19179, 28, 0, 714555489, 896256724, -359585290, 708962083
+        .long   889240996, -356770524, 0, 0, 0, 0, 0, 0
+        .long   2129913711, 17530517, 39361, 59, 9562100, 2128341498, 9558554, 21464
+        .long   21470, 9558554, 2128323601, 9558495, 32, 21464, 9558495, 2128302137
+        .long   8804708, 19740, 30, 0, 716419509, 894404361, -357744582, 710811512
+        .long   887403132, -354944225, 0, 0, 0, 0, 0, 0
+        .long   2129659795, 17783282, 40509, 62, 9699972, 2128065229, 9696323, 22090
+        .long   22096, 9696323, 2128046810, 9696261, 34, 22090, 9696261, 2128024720
+        .long   8932243, 20316, 31, 0, 718216808, 892618736, -355970633, 712594743
+        .long   885631485, -353184162, 0, 0, 0, 0, 0, 0
+        .long   2129402233, 18039659, 41691, 64, 9839814, 2127785005, 9836059, 22735
+        .long   22741, 9836059, 2127766048, 9835995, 35, 22735, 9835995, 2127743314
+        .long   9061617, 20910, 32, 0, 719948791, 890898446, -354262036, 714313168
+        .long   883924661, -351488940, 0, 0, 0, 0, 0, 0
+        .long   2129140975, 18299699, 42907, 67, 9981654, 2127500769, 9977790, 23398
+        .long   23404, 9977790, 2127481260, 9977723, 37, 23398, 9977723, 2127457862
+        .long   9192857, 21521, 34, 0, 721616855, 889242091, -352617390, 715968175
+        .long   882281272, -349857167, 0, 0, 0, 0, 0, 0
+        .long   2128875967, 18563453, 44158, 70, 10125520, 2127212466, 10121544, 24080
+        .long   24086, 10121544, 2127192388, 10121473, 38, 24080, 10121473, 2127168308
+        .long   9325990, 22149, 35, 0, 723222384, 887648285, -351035307, 717561135
+        .long   880699942, -348287469, 0, 0, 0, 0, 0, 0
+        .long   2128607156, 18830972, 45446, 73, 10271439, 2126920039, 10267348, 24782
+        .long   24789, 10267348, 2126899375, 10267275, 40, 24782, 10267275, 2126874592
+        .long   9461042, 22796, 37, 0, 724766743, 886115661, -349514418, 719093406
+        .long   879179315, -346778485, 0, 0, 0, 0, 0, 0
+        .long   2128334490, 19102310, 46772, 76, 10419442, 2126623428, 10415232, 25505
+        .long   25512, 10415232, 2126602161, 10415155, 42, 25505, 10415155, 2126576656
+        .long   9598041, 23462, 38, 0, 726251280, 884642870, -348053372, 720566322
+        .long   877718053, -345328876, 0, 0, 0, 0, 0, 0
+        .long   2128057913, 19377520, 48135, 80, 10569556, 2126322575, 10565224, 26248
+        .long   26256, 10565224, 2126300689, 10565144, 43, 26248, 10565144, 2126274440
+        .long   9737015, 24148, 40, 0, 727677322, 883228583, -346650839, 721981201
+        .long   876314836, -343937322, 0, 0, 0, 0, 0, 0
+        .long   2127777369, 19656656, 49539, 83, 10721813, 2126017422, 10717354, 27014
+        .long   27021, 10717354, 2125994897, 10717271, 45, 27014, 10717271, 2125967883
+        .long   9877992, 24853, 42, 0, 729046190, 881871476, -345305494, 723339354
+        .long   874968353, -342602508, 0, 0, 0, 0, 0, 0
+        .long   2127492804, 19939773, 50983, 87, 10876240, 2125707907, 10871653, 27801
+        .long   27809, 10871653, 2125684724, 10871566, 47, 27801, 10871566, 2125656923
+        .long   10021001, 25579, 44, 0, 730359168, 880570264, -344016049, 724642054
+        .long   873677326, -341323156, 0, 0, 0, 0, 0, 0
+        .long   2127204160, 20226927, 52470, 91, 11032869, 2125393968, 11028149, 28612
+        .long   28620, 11028149, 2125370110, 11028058, 49, 28612, 11028058, 2125341499
+        .long   10166070, 26326, 45, 0, 731617544, 879323658, -342781213, 725890580
+        .long   872440479, -340097986, 0, 0, 0, 0, 0, 0
+        .long   2126911380, 20518174, 53999, 95, 11191731, 2125075545, 11186874, 29445
+        .long   29454, 11186874, 2125050992, 11186779, 52, 29445, 11186779, 2125021546
+        .long   10313229, 27095, 47, 0, 732822585, 878130388, -341599714, 727086188
+        .long   871256549, -338925736, 0, 0, 0, 0, 0, 0
+        .long   2126614405, 20813571, 55573, 99, 11352857, 2124752575, 11347859, 30304
+        .long   30313, 11347859, 2124727305, 11347760, 54, 30304, 11347760, 2124697001
+        .long   10462507, 27886, 50, 0, 733975532, 876989213, -340470310, 728230110
+        .long   870124307, -337805173, 0, 0, 0, 0, 0, 0
+        .long   2126313176, 21113176, 57193, 103, 11516278, 2124424992, 11511135, 31187
+        .long   31196, 11511135, 2124398986, 11511031, 56, 31187, 11511031, 2124367799
+        .long   10613936, 28700, 52, 0, 735077624, 875898891, -339391757, 729323575
+        .long   869042519, -336735062, 0, 0, 0, 0, 0, 0
+        .long   2126007633, 21417047, 58860, 108, 11682026, 2124092734, 11676734, 32096
+        .long   32105, 11676734, 2124065970, 11676626, 59, 32096, 11676626, 2124033874
+        .long   10767545, 29538, 54, 0, 736130063, 874858217, -338362849, 730367776
+        .long   868009992, -335714208, 0, 0, 0, 0, 0, 0
+        .long   2125697716, 21725244, 60575, 113, 11850133, 2123755734, 11844688, 33031
+        .long   33041, 11844688, 2123728190, 11844575, 61, 33031, 11844575, 2123695159
+        .long   10923367, 30400, 56, 0, 737134060, 873865980, -337382372, 731363914
+        .long   867025522, -334741406, 0, 0, 0, 0, 0, 0
+        .long   2125383362, 22037828, 62340, 118, 12020633, 2123413927, 12015030, 33993
+        .long   34004, 12015030, 2123385580, 12014913, 64, 33993, 12014913, 2123351586
+        .long   11081431, 31288, 59, 0, 738090789, 872921004, -336449149, 732313153
+        .long   866087943, -333815488, 0, 0, 0, 0, 0, 0
+        .long   2125064510, 22354859, 64157, 123, 12193559, 2123067244, 12187794, 34983
+        .long   34995, 12187794, 2123038071, 12187671, 67, 34983, 12187671, 2123003087
+        .long   11241771, 32201, 62, 0, 739001420, 872022116, -335562004, 733216657
+        .long   865196091, -332935288, 0, 0, 0, 0, 0, 0
+        .long   2124741095, 22676398, 66026, 128, 12368945, 2122715619, 12363012, 36003
+        .long   36014, 12363012, 2122685595, 12362884, 70, 36003, 12362884, 2122649592
+        .long   11404418, 33141, 64, 0, 739867101, 871168168, -334719789, 734075561
+        .long   864348828, -332099665, 0, 0, 0, 0, 0, 0
+        .long   2124413055, 23002510, 67950, 134, 12546824, 2122358981, 12540719, 37051
+        .long   37063, 12540719, 2122328082, 12540585, 73, 37051, 12540585, 2122291031
+        .long   11569406, 34109, 67, 0, 740688970, 870358019, -333921360, 734890997
+        .long   863545021, -331307487, 0, 0, 0, 0, 0, 0
+        .long   2124080323, 23333256, 69929, 140, 12727231, 2121997261, 12720950, 38130
+        .long   38143, 12720950, 2121965462, 12720810, 76, 38130, 12720810, 2121927332
+        .long   11736767, 35105, 70, 0, 741468141, 869590555, -333165602, 735664068
+        .long   862783564, -330557644, 0, 0, 0, 0, 0, 0
+        .long   2123742834, 23668702, 71966, 146, 12910201, 2121630388, 12903738, 39241
+        .long   39254, 12903738, 2121597663, 12903592, 80, 39241, 12903592, 2121558422
+        .long   11906536, 36129, 73, 0, 742205718, 868864668, -332451405, 736395871
+        .long   862063359, -329849038, 0, 0, 0, 0, 0, 0
+        .long   2123400521, 24008912, 74062, 152, 13095770, 2121258290, 13089120, 40384
+        .long   40397, 13089120, 2121224612, 13088968, 83, 40384, 13088968, 2121184228
+        .long   12078747, 37184, 76, 0, 742902786, 868179271, -331777681, 737087483
+        .long   861383328, -329180587, 0, 0, 0, 0, 0, 0
+        .long   2123053317, 24353953, 76219, 159, 13283974, 2120880895, 13277132, 41559
+        .long   41574, 13277132, 2120846236, 13276973, 87, 41559, 13276973, 2120804677
+        .long   12253434, 38269, 80, 0, 743560419, 867533291, -331143354, 737739968
+        .long   860742404, -328551226, 0, 0, 0, 0, 0, 0
+        .long   2122701153, 24703891, 78438, 166, 13474849, 2120498129, 13467809, 42769
+        .long   42785, 13467809, 2120462460, 13467643, 91, 42769, 13467643, 2120419691
+        .long   12430633, 39386, 83, 0, 744179669, 866925673, -330547367, 738354371
+        .long   860139543, -327959905, 0, 0, 0, 0, 0, 0
+        .long   2122343959, 25058793, 80722, 173, 13668433, 2120109917, 13661189, 44015
+        .long   44030, 13661189, 2120073209, 13661016, 95, 44015, 13661016, 2120029194
+        .long   12610380, 40535, 87, 0, 744761577, 866355374, -329988677, 738931724
+        .long   859573707, -327405588, 0, 0, 0, 0, 0, 0
+        .long   2121981664, 25418730, 83073, 181, 13864762, 2119716183, 13857308, 45296
+        .long   45312, 13857308, 2119678406, 13857127, 99, 45296, 13857127, 2119633110
+        .long   12792710, 41718, 91, 0, 745307165, 865821371, -329466259, 739473041
+        .long   859043884, -326887259, 0, 0, 0, 0, 0, 0
+        .long   2121614198, 25783769, 85491, 189, 14063874, 2119316851, 14056205, 46614
+        .long   46631, 14056205, 2119277974, 14056016, 103, 46614, 14056016, 2119231360
+        .long   12977660, 42935, 95, 0, 745817444, 865322651, -328979098, 739979326
+        .long   858549068, -326403911, 0, 0, 0, 0, 0, 0
+        .long   2121241488, 26153982, 87980, 197, 14265809, 2118911843, 14257918, 47971
+        .long   47989, 14257918, 2118871834, 14257721, 108, 47971, 14257721, 2118823863
+        .long   13165267, 44188, 99, 0, 746293405, 864858221, -328526200, 740451561
+        .long   858088274, -325954558, 0, 0, 0, 0, 0, 0
+        .long   2120863461, 26529440, 90540, 206, 14470604, 2118501080, 14462485, 49367
+        .long   49386, 14462485, 2118459906, 14462279, 112, 49367, 14462279, 2118410539
+        .long   13355570, 45477, 103, 0, 746736023, 864427105, -328106586, 740890715
+        .long   857660533, -325538229, 0, 0, 0, 0, 0, 0
+        .long   2120480042, 26910215, 93176, 215, 14678299, 2118084482, 14669946, 50803
+        .long   50823, 14669946, 2118042110, 14669731, 117, 50803, 14669731, 2117991306
+        .long   13548606, 46803, 108, 0, 747146265, 864028336, -327719288, 741297745
+        .long   857264885, -325153963, 0, 0, 0, 0, 0, 0
+        .long   2120091156, 27296380, 95887, 225, 14888934, 2117661969, 14880340, 52282
+        .long   52302, 14880340, 2117618364, 14880115, 122, 52282, 14880115, 2117566082
+        .long   13744415, 48169, 113, 0, 747525072, 863660968, -327363360, 741673587
+        .long   856900393, -324800821, 0, 0, 0, 0, 0, 0
+        .long   2119696727, 27688009, 98677, 234, 15102550, 2117233459, 15093708, 53803
+        .long   53824, 15093708, 2117188585, 15093473, 128, 53803, 15093473, 2117134782
+        .long   13943034, 49574, 118, 0, 747873378, 863324068, -327037866, 742019166
+        .long   856566130, -324477876, 0, 0, 0, 0, 0, 0
+        .long   2119296677, 28085178, 101548, 245, 15319188, 2116798869, 15310090, 55368
+        .long   55390, 15310090, 2116752688, 15309845, 134, 55368, 15309845, 2116697321
+        .long   14144505, 51020, 123, 0, 748192097, 863016720, -326741889, 742335390
+        .long   856261188, -324184215, 0, 0, 0, 0, 0, 0
+        .long   2118890928, 28487962, 104502, 256, 15538888, 2116358115, 15529527, 56978
+        .long   57001, 15529527, 2116310590, 15529272, 139, 56978, 15529272, 2116253612
+        .long   14348868, 52508, 128, 0, 748482131, 862738021, -326474525, 742623154
+        .long   855984670, -323918944, 0, 0, 0, 0, 0, 0
+        .long   2118479400, 28896438, 107542, 267, 15761693, 2115911111, 15752062, 58635
+        .long   58659, 15752062, 2115862204, 15751796, 146, 58635, 15751796, 2115803569
+        .long   14556163, 54039, 134, 0, 748744363, 862487086, -326234887, 742883334
+        .long   855735699, -323681181, 0, 0, 0, 0, 0, 0
+        .long   2118062014, 29310685, 110670, 279, 15987646, 2115457772, 15977737, 60340
+        .long   60366, 15977737, 2115407442, 15977459, 152, 60340, 15977459, 2115347101
+        .long   14766432, 55615, 140, 0, 748979666, 862263041, -326022100, 743116795
+        .long   855513408, -323470060, 0, 0, 0, 0, 0, 0
+        .long   2117638687, 29730781, 113889, 291, 16216790, 2114998010, 16206595, 62095
+        .long   62121, 16206595, 2114946216, 16206304, 159, 62095, 16206304, 2114884121
+        .long   14979717, 57236, 146, 0, 749188895, 862065029, -325835306, 743324385
+        .long   855316947, -323284728, 0, 0, 0, 0, 0, 0
+        .long   2117209337, 30156806, 117201, 304, 16449167, 2114531736, 16438678, 63900
+        .long   63928, 16438678, 2114478436, 16438374, 166, 63900, 16438374, 2114414536
+        .long   15196061, 58905, 152, 0, 749372889, 861892211, -325673663, 743506940
+        .long   855145481, -323124351, 0, 0, 0, 0, 0, 0
+        .long   2116773880, 30588842, 120609, 317, 16684823, 2114058862, 16674032, 65758
+        .long   65787, 16674032, 2114004011, 16673714, 173, 65758, 16673714, 2113938254
+        .long   15415507, 60622, 159, 0, 749532474, 861743759, -325536343, 743665275
+        .long   854998191, -322988106, 0, 0, 0, 0, 0, 0
+        .long   2116332231, 31026970, 124115, 331, 16923802, 2113579296, 16912699, 67669
+        .long   67699, 16912699, 2113522850, 16912368, 181, 67669, 16912368, 2113455181
+        .long   15638098, 62390, 166, 0, 749668459, 861618862, -325422536, 743800196
+        .long   854874272, -322875189, 0, 0, 0, 0, 0, 0
+        .long   2115884304, 31471274, 127723, 346, 17166150, 2113092946, 17154727, 69636
+        .long   69667, 17154727, 2113034859, 17154381, 189, 69636, 17154381, 2112965223
+        .long   15863880, 64208, 174, 0, 749781643, 861516722, -325331439, 743912493
+        .long   854772932, -322784806, 0, 0, 0, 0, 0, 0
+        .long   2115430013, 31921838, 131436, 361, 17411912, 2112599720, 17400160, 71659
+        .long   71692, 17400160, 2112539944, 17399799, 197, 71659, 17399799, 2112468284
+        .long   16092897, 66080, 181, 0, 749872803, 861436559, -325262273, 744002940
+        .long   854693396, -322716181, 0, 0, 0, 0, 0, 0
+        .long   2114969269, 32378746, 135256, 377, 17661134, 2112099522, 17649044, 73741
+        .long   73776, 17649044, 2112038008, 17648667, 205, 73741, 17648667, 2111964267
+        .long   16325195, 68006, 189, 0, 749942707, 861377604, -325214267, 744072297
+        .long   854634902, -322668551, 0, 0, 0, 0, 0, 0
+        .long   2114501982, 32842085, 139186, 393, 17913865, 2111592258, 17901426, 75884
+        .long   75920, 17901426, 2111528956, 17901033, 215, 75884, 17901033, 2111453072
+        .long   16560820, 69988, 197, 0, 749992107, 861339105, -325186669, 744121310
+        .long   854596705, -322641169, 0, 0, 0, 0, 0, 0
+        .long   2114028063, 33311943, 143230, 411, 18170151, 2111077830, 18157354, 78088
+        .long   78126, 18157354, 2111012688, 18156943, 224, 78088, 18156943, 2110934600
+        .long   16799820, 72027, 206, 0, 750021741, 861320323, -325178738, 744150712
+        .long   854578070, -322633300, 0, 0, 0, 0, 0, 0
+        .long   2113547419, 33788408, 147391, 429, 18430041, 2110556141, 18416875, 80356
+        .long   80395, 18416875, 2110489106, 18416447, 234, 80356, 18416447, 2110408749
+        .long   17042240, 74126, 215, 0, 750032329, 861320535, -325189751, 744161217
+        .long   854578280, -322644227, 0, 0, 0, 0, 0, 0
+        .long   2113059957, 34271569, 151673, 448, 18693583, 2110027091, 18680039, 82690
+        .long   82731, 18680039, 2109958108, 18679591, 244, 82690, 18679591, 2109875418
+        .long   17288131, 76286, 225, 0, 750024582, 861339032, -325218997, 744153531
+        .long   854596632, -322673244, 0, 0, 0, 0, 0, 0
+        .long   2112565584, 34761517, 156078, 467, 18960828, 2109490580, 18946894, 85091
+        .long   85134, 18946894, 2109419592, 18946426, 255, 85091, 18946426, 2109334501
+        .long   17537540, 78508, 235, 1, 749999193, 861375118, -325265781, 744128340
+        .long   854632436, -322719662, 0, 0, 0, 0, 0, 0
+        .long   2112064203, 35258345, 160611, 488, 19231824, 2108946505, 19217489, 87562
+        .long   87606, 19217489, 2108873456, 19217002, 266, 87562, 19217002, 2108785894
+        .long   17790517, 80795, 245, 1, 749956841, 861428114, -325329421, 744086320
+        .long   854685017, -322782804, 0, 0, 0, 0, 0, 0
+        .long   2111555719, 35762143, 165275, 509, 19506624, 2108394765, 19491876, 90104
+        .long   90150, 19491876, 2108319594, 19491367, 278, 90104, 19491367, 2108229490
+        .long   18047113, 83149, 256, 1, 749898193, 861497352, -325409249, 744028132
+        .long   854753713, -322862006, 0, 0, 0, 0, 0, 0
+        .long   2111040033, 36273008, 170073, 532, 19785277, 2107835255, 19770106, 92719
+        .long   92767, 19770106, 2107757900, 19769574, 290, 92719, 19769574, 2107665181
+        .long   18307378, 85570, 267, 1, 749823901, 861582179, -325504612, 743954421
+        .long   854837876, -322956623, 0, 0, 0, 0, 0, 0
+        .long   2110517047, 36791034, 175011, 555, 20067837, 2107267868, 20052229, 95410
+        .long   95460, 20052229, 2107188267, 20051674, 303, 95410, 20051674, 2107092857
+        .long   18571363, 88062, 279, 1, 749734603, 861681958, -325614871, 743865822
+        .long   854936874, -323066019, 0, 0, 0, 0, 0, 0
+        .long   2109986659, 37316317, 180091, 579, 20354355, 2106692498, 20338299, 98179
+        .long   98231, 20338299, 2106610586, 20337720, 316, 98179, 20337720, 2106512407
+        .long   18839121, 90627, 291, 1, 749630923, 861796063, -325739400, 743762953
+        .long   855050086, -323189573, 0, 0, 0, 0, 0, 0
+        .long   2109448769, 37848956, 185317, 605, 20644885, 2106109037, 20628368, 101027
+        .long   101082, 20628368, 2106024747, 20627763, 330, 101027, 20627763, 2105923719
+        .long   19110706, 93266, 304, 1, 749513469, 861923884, -325877589, 743646419
+        .long   855176906, -323326681, 0, 0, 0, 0, 0, 0
+        .long   2108903272, 38389048, 190695, 632, 20939481, 2105517374, 20922489, 103958
+        .long   104015, 20922489, 2105430637, 20921858, 345, 103958, 20921858, 2105326679
+        .long   19386169, 95981, 317, 1, 749382842, 862064822, -326028838, 743516814
+        .long   855316741, -323476746, 0, 0, 0, 0, 0, 0
+        .long   2108350066, 38936694, 196228, 659, 21238197, 2104917399, 21220717, 106973
+        .long   107033, 21220717, 2104828145, 21220058, 360, 106973, 21220058, 2104721172
+        .long   19665567, 98776, 331, 1, 749239622, 862218295, -326192565, 743374716
+        .long   855469013, -323639191, 0, 0, 0, 0, 0, 0
+        .long   2107789043, 39491995, 201920, 688, 21541088, 2104309000, 21523107, 110076
+        .long   110138, 21523107, 2104217155, 21522419, 375, 110076, 21522419, 2104107080
+        .long   19948954, 101651, 346, 1, 749084380, 862383733, -326368198, 743220689
+        .long   855633156, -323813449, 0, 0, 0, 0, 0, 0
+        .long   2107220097, 40055053, 207777, 719, 21848211, 2103692062, 21829714, 113268
+        .long   113333, 21829714, 2103597552, 21828995, 392, 113268, 21828995, 2103484285
+        .long   20236385, 104610, 361, 1, 748917673, 862560577, -326555179, 743055287
+        .long   855808616, -323998967, 0, 0, 0, 0, 0, 0
+        .long   2106643121, 40625973, 213803, 750, 22159621, 2103066470, 22140594, 116551
+        .long   116620, 22140594, 2102969219, 22139844, 409, 116551, 22139844, 2102852667
+        .long   20527918, 107655, 377, 1, 748740044, 862748285, -326752966, 742879048
+        .long   855994854, -324195205, 0, 0, 0, 0, 0, 0
+        .long   2106058002, 41204858, 220002, 783, 22475377, 2102432108, 22455804, 119930
+        .long   120001, 22455804, 2102332035, 22455021, 427, 119930, 22455021, 2102212105
+        .long   20823610, 110787, 394, 1, 748552023, 862946325, -326961026, 742692499
+        .long   856191344, -324401636, 0, 0, 0, 0, 0, 0
+        .long   2105464632, 41791815, 226381, 818, 22795536, 2101788857, 22775402, 123406
+        .long   123480, 22775402, 2101685882, 22774584, 446, 123406, 22774584, 2101562476
+        .long   21123519, 114011, 411, 1, 748354129, 863154180, -327178841, 742496154
+        .long   856397572, -324617747, 0, 0, 0, 0, 0, 0
+        .long   2104862897, 42386952, 232943, 854, 23120156, 2101136597, 23099445, 126982
+        .long   127060, 23099445, 2101030637, 23098591, 466, 126982, 23098591, 2100903654
+        .long   21427704, 117329, 429, 1, 748146865, 863371345, -327405908, 742290513
+        .long   856613037, -324843036, 0, 0, 0, 0, 0, 0
+        .long   2104252683, 42990377, 239694, 891, 23449297, 2100475209, 23427992, 130661
+        .long   130742, 23427992, 2100366176, 23427101, 486, 130661, 23427101, 2100235514
+        .long   21736225, 120742, 448, 1, 747930725, 863597328, -327641733, 742076064
+        .long   856837251, -325077015, 0, 0, 0, 0, 0, 0
+        .long   2103633874, 43602201, 246641, 930, 23783019, 2099804569, 23761104, 134447
+        .long   134531, 23761104, 2099692375, 23760174, 507, 134447, 23760174, 2099557928
+        .long   22049141, 124254, 468, 1, 747706186, 863831650, -327885837, 741853283
+        .long   857069738, -325319209, 0, 0, 0, 0, 0, 0
+        .long   2103006354, 44222533, 253787, 971, 24121382, 2099124553, 24098840, 138341
+        .long   138429, 24098840, 2099009107, 24097869, 530, 138341, 24097869, 2098870766
+        .long   22366516, 127869, 488, 1, 747473717, 864073842, -328137753, 741622633
+        .long   857310035, -325569152, 0, 0, 0, 0, 0, 0
+        .long   2102370005, 44851488, 261139, 1014, 24464448, 2098435036, 24441261, 142347
+        .long   142439, 24441261, 2098316244, 24440247, 553, 142347, 24440247, 2098173897
+        .long   22688409, 131588, 510, 1, 747233772, 864323451, -328397025, 741384567
+        .long   857557690, -325826395, 0, 0, 0, 0, 0, 0
+        .long   2101724705, 45489179, 268702, 1058, 24812279, 2097735890, 24788429, 146469
+        .long   146565, 24788429, 2097613657, 24787371, 577, 146469, 24787371, 2097467188
+        .long   23014886, 135414, 532, 2, 746986794, 864580034, -328663213, 741139522
+        .long   857812264, -326090499, 0, 0, 0, 0, 0, 0
+        .long   2101070335, 46135721, 276484, 1105, 25164939, 2097026988, 25140406, 150709
+        .long   150809, 25140406, 2096901213, 25139301, 603, 150709, 25139301, 2096750504
+        .long   23346008, 139352, 556, 2, 746733213, 864843160, -328935885, 740887926
+        .long   858073331, -326361037, 0, 0, 0, 0, 0, 0
+        .long   2100406771, 46791230, 284489, 1153, 25522489, 2096308199, 25497256, 155071
+        .long   155176, 25497256, 2096178781, 25496102, 629, 155071, 25496102, 2096023710
+        .long   23681842, 143403, 580, 2, 746473449, 865112410, -329214622, 740630196
+        .long   858340474, -326637592, 0, 0, 0, 0, 0, 0
+        .long   2099733889, 47455826, 292725, 1204, 25884996, 2095579392, 25859041, 159559
+        .long   159668, 25859041, 2095446225, 25857837, 657, 159559, 25857837, 2095286666
+        .long   24022452, 147572, 606, 2, 746207909, 865387379, -329499018, 740366734
+        .long   858613289, -326919762, 0, 0, 0, 0, 0, 0
+        .long   2099051563, 48129626, 301198, 1257, 26252523, 2094840432, 26225827, 164176
+        .long   164290, 26225827, 2094703410, 26224570, 686, 164176, 26224570, 2094539234
+        .long   24367904, 151862, 632, 2, 745936988, 865667669, -329788679, 740097934
+        .long   858891386, -327207155, 0, 0, 0, 0, 0, 0
+        .long   2098359665, 48812752, 309915, 1312, 26625138, 2094091186, 26597679, 168925
+        .long   169044, 26597679, 2093950197, 26596367, 716, 168925, 26596367, 2093781272
+        .long   24718267, 156276, 660, 2, 745661071, 865952899, -330083221, 739824177
+        .long   859174383, -327499391, 0, 0, 0, 0, 0, 0
+        .long   2097658066, 49505326, 318882, 1370, 27002905, 2093331518, 26974663, 173811
+        .long   173935, 26974663, 2093186447, 26973293, 747, 173811, 26973293, 2093012636
+        .long   25073608, 160817, 689, 2, 745380531, 866242693, -330382270, 739545833
+        .long   859461909, -327796100, 0, 0, 0, 0, 0, 0
+        .long   2096946636, 50207471, 328107, 1430, 27385893, 2092561288, 27356845, 178837
+        .long   178967, 27356845, 2092412019, 27355415, 780, 178837, 27355415, 2092233181
+        .long   25433996, 165490, 720, 2, 745095730, 866536693, -330685468, 739263261
+        .long   859753607, -328096924, 0, 0, 0, 0, 0, 0
+        .long   2096225242, 50919312, 337596, 1492, 27774170, 2091780357, 27744294, 184008
+        .long   184144, 27744294, 2091626769, 27742801, 814, 184008, 27742801, 2091442761
+        .long   25799501, 170298, 751, 2, 744807018, 866834547, -330992463, 738976809
+        .long   860049129, -328401517, 0, 0, 0, 0, 0, 0
+        .long   2095493751, 51640975, 347359, 1558, 28167805, 2090988585, 28137076, 189327
+        .long   189469, 28137076, 2090830553, 28135518, 850, 189327, 28135518, 2090641226
+        .long   26170194, 175245, 784, 3, 744514736, 867135915, -331302917, 738686815
+        .long   860348138, -328709540, 0, 0, 0, 0, 0, 0
+        .long   2094752026, 52372588, 357402, 1626, 28566866, 2090185828, 28535262, 194799
+        .long   194947, 28535262, 2090023225, 28533636, 887, 194799, 28533636, 2089828426
+        .long   26546147, 180336, 819, 3, 744219213, 867440468, -331616502, 738393606
+        .long   860650308, -329020670, 0, 0, 0, 0, 0, 0
+        .long   2093999931, 53114280, 367733, 1698, 28971426, 2089371942, 28938921, 200427
+        .long   200582, 28938921, 2089204636, 28937224, 926, 200427, 28937224, 2089004208
+        .long   26927432, 185573, 855, 3, 743920770, 867747889, -331932899, 738097498
+        .long   860955322, -329334591, 0, 0, 0, 0, 0, 0
+        .long   2093237326, 53866182, 378361, 1772, 29381554, 2088546779, 29348124, 206218
+        .long   206379, 29348124, 2088374636, 29346352, 967, 206218, 29346352, 2088168418
+        .long   27314123, 190962, 892, 3, 743619714, 868057868, -332251802, 737798799
+        .long   861262874, -329650997, 0, 0, 0, 0, 0, 0
+        .long   2092464072, 54628426, 389294, 1850, 29797323, 2087710194, 29762942, 212174
+        .long   212342, 29762942, 2087533074, 29761092, 1009, 212174, 29761092, 2087320900
+        .long   27706295, 196507, 932, 3, 743316345, 868370108, -332572913, 737497805
+        .long   861572670, -329969595, 0, 0, 0, 0, 0, 0
+        .long   2091680026, 55401144, 400540, 1931, 30218806, 2086862035, 30183446, 218301
+        .long   218476, 30183446, 2086679796, 30181515, 1053, 218301, 30181515, 2086461495
+        .long   28104023, 202212, 972, 4, 743010951, 868684321, -332895945, 737194802
+        .long   861884424, -330290098, 0, 0, 0, 0, 0, 0
+        .long   2090885044, 56184472, 412109, 2016, 30646076, 2086002151, 30609711, 224604
+        .long   224787, 30609711, 2085814646, 30607695, 1099, 224604, 30607695, 2085590042
+        .long   28507383, 208081, 1015, 4, 742703812, 869000229, -333220622, 736890067
+        .long   862197859, -330612233, 0, 0, 0, 0, 0, 0
+        .long   2090078980, 56978546, 424010, 2104, 31079207, 2085130390, 31041808, 231087
+        .long   231278, 31041808, 2084937467, 31039704, 1148, 231087, 31039704, 2084706381
+        .long   28916455, 214121, 1060, 4, 742395197, 869317563, -333546675, 736583867
+        .long   862512709, -330935734, 0, 0, 0, 0, 0, 0
+        .long   2089261687, 57783505, 436251, 2196, 31518275, 2084246597, 31479814, 237756
+        .long   237955, 31479814, 2084048101, 31477618, 1198, 237756, 31477618, 2083810345
+        .long   29331315, 220334, 1106, 4, 742085366, 869636064, -333873847, 736276462
+        .long   862828717, -331260345, 0, 0, 0, 0, 0, 0
+        .long   2088433016, 58599487, 448844, 2292, 31963356, 2083350614, 31923803, 244615
+        .long   244824, 31923803, 2083146386, 31921510, 1250, 244615, 31921510, 2082901771
+        .long   29752043, 226727, 1155, 4, 741774570, 869955484, -334201889, 735968099
+        .long   863145636, -331585820, 0, 0, 0, 0, 0, 0
+        .long   2087592816, 59426633, 461796, 2393, 32414527, 2082442284, 32373851, 251671
+        .long   251889, 32373851, 2082232159, 32371458, 1305, 251671, 32371458, 2081980488
+        .long   30178721, 233305, 1206, 5, 741463051, 870275580, -334530563, 735659018
+        .long   863463227, -331911921, 0, 0, 0, 0, 0, 0
+        .long   2086740934, 60265086, 475120, 2498, 32871865, 2081521447, 32830035, 258929
+        .long   259156, 32830035, 2081305256, 32827537, 1362, 258929, 32827537, 2081046327
+        .long   30611429, 240073, 1259, 5, 741151041, 870596122, -334859637, 735349450
+        .long   863781260, -332238419, 0, 0, 0, 0, 0, 0
+        .long   2085877216, 61114989, 488825, 2607, 33335448, 2080587940, 33292432, 266395
+        .long   266632, 33292432, 2080365510, 33289825, 1422, 266395, 33289825, 2080099115
+        .long   31050251, 247036, 1314, 5, 740838765, 870916887, -335188891, 735039619
+        .long   864099514, -332565096, 0, 0, 0, 0, 0, 0
+        .long   2085001505, 61976488, 502922, 2721, 33805357, 2079641600, 33761121, 274074
+        .long   274321, 33761121, 2079412752, 33758400, 1484, 274074, 33758400, 2079138678
+        .long   31495271, 254199, 1372, 6, 740526438, 871237661, -335518112, 734729736
+        .long   864417777, -332891739, 0, 0, 0, 0, 0, 0
+        .long   2084113643, 62849729, 517423, 2841, 34281671, 2078682262, 34236182, 281972
+        .long   282231, 34236182, 2078446812, 34233341, 1549, 281972, 34233341, 2078164839
+        .long   31946572, 261570, 1432, 6, 740214267, 871558238, -335847095, 734420009
+        .long   864735845, -333218147, 0, 0, 0, 0, 0, 0
+        .long   2083213471, 63734862, 532338, 2965, 34764470, 2077709758, 34717693, 290097
+        .long   290366, 34717693, 2077467517, 34714728, 1617, 290097, 34714728, 2077177421
+        .long   32404241, 269152, 1495, 6, 739902451, 871878421, -336175645, 734110634
+        .long   865053521, -333544126, 0, 0, 0, 0, 0, 0
+        .long   2082300825, 64632036, 547679, 3095, 35253838, 2076723920, 35205737, 298453
+        .long   298734, 35205737, 2076474693, 35202642, 1688, 298453, 35202642, 2076176241
+        .long   32868365, 276954, 1561, 7, 739591181, 872198021, -336503574, 733801800
+        .long   865370619, -333869488, 0, 0, 0, 0, 0, 0
+        .long   2081375544, 65541402, 563458, 3230, 35749856, 2075724575, 35700394, 307047
+        .long   307341, 35700394, 2075468164, 35697164, 1762, 307047, 35697164, 2075161117
+        .long   33339032, 284980, 1629, 7, 739280639, 872516856, -336830703, 733493690
+        .long   865686958, -334194056, 0, 0, 0, 0, 0, 0
+        .long   2080437460, 66463113, 579688, 3372, 36252607, 2074711552, 36201747, 315887
+        .long   316194, 36201747, 2074447751, 36198376, 1839, 315887, 36198376, 2074131864
+        .long   33816332, 293238, 1701, 7, 738971002, 872834752, -337156859, 733186477
+        .long   866002367, -334517659, 0, 0, 0, 0, 0, 0
+        .long   2079486406, 67397325, 596382, 3519, 36762177, 2073684676, 36709880, 324979
+        .long   325299, 36709880, 2073413274, 36706361, 1919, 324979, 36706361, 2073088294
+        .long   34300354, 301734, 1775, 8, 738662437, 873151545, -337481879, 732880327
+        .long   866316679, -334840134, 0, 0, 0, 0, 0, 0
+        .long   2078522214, 68344193, 613552, 3673, 37278651, 2072643770, 37224877, 334331
+        .long   334665, 37224877, 2072364549, 37221204, 2003, 334331, 37221204, 2072030219
+        .long   34791191, 310474, 1853, 8, 738355104, 873467075, -337805605, 732575399
+        .long   866629739, -335161327, 0, 0, 0, 0, 0, 0
+        .long   2077544711, 69303874, 631211, 3834, 37802113, 2071588656, 37746821, 343949
+        .long   344297, 37746821, 2071301394, 37742988, 2091, 343949, 37742988, 2070957445
+        .long   35288934, 319466, 1934, 9, 738049156, 873781190, -338127889, 732271847
+        .long   866941396, -335481088, 0, 0, 0, 0, 0, 0
+        .long   2076553725, 70276529, 649374, 4001, 38332652, 2070519154, 38275800, 353840
+        .long   354204, 38275800, 2070223620, 38271799, 2183, 353840, 38271799, 2069869780
+        .long   35793678, 328716, 2019, 9, 737744740, 874093748, -338448588, 731969813
+        .long   867251507, -335799276, 0, 0, 0, 0, 0, 0
+        .long   2075549080, 71262317, 668055, 4176, 38870355, 2069435081, 38811900, 364014
+        .long   364394, 38811900, 2069131040, 38807724, 2278, 364014, 38807724, 2068767026
+        .long   36305517, 338233, 2108, 10, 737441995, 874404610, -338767567, 731669438
+        .long   867559935, -336115758, 0, 0, 0, 0, 0, 0
+        .long   2074530599, 72261401, 687268, 4359, 39415310, 2068336254, 39355208, 374477
+        .long   374874, 39355208, 2068023463, 39350850, 2378, 374477, 39350850, 2067648986
+        .long   36824549, 348024, 2200, 10, 737141053, 874713645, -339084696, 731370852
+        .long   867866552, -336430405, 0, 0, 0, 0, 0, 0
+        .long   2073498103, 73273946, 707028, 4549, 39967607, 2067222487, 39905813, 385238
+        .long   385652, 39905813, 2066900696, 39901263, 2481, 385238, 39901263, 2066515458
+        .long   37350870, 358097, 2297, 11, 736842042, 875020731, -339399856, 731074181
+        .long   868171234, -336743098, 0, 0, 0, 0, 0, 0
+        .long   2072451410, 74300116, 727351, 4748, 40527336, 2066093591, 40463803, 396305
+        .long   396737, 40463803, 2065762545, 40459055, 2590, 396305, 40459055, 2065366240
+        .long   37884578, 368459, 2398, 12, 736545080, 875325749, -339712929, 730779544
+        .long   868473864, -337053720, 0, 0, 0, 0, 0, 0
+        .long   2071390337, 75340078, 748252, 4956, 41094588, 2064949377, 41029268, 407687
+        .long   408137, 41029268, 2064608812, 41024313, 2703, 407687, 41024313, 2064201125
+        .long   38425774, 379119, 2503, 12, 736250281, 875628587, -340023807, 730487053
+        .long   868774331, -337362165, 0, 0, 0, 0, 0, 0
+        .long   2070314700, 76394002, 769748, 5172, 41669455, 2063789653, 41602300, 419392
+        .long   419862, 41602300, 2063439298, 41597127, 2821, 419392, 41597127, 2063019906
+        .long   38974559, 390085, 2612, 13, 735957754, 875929141, -340332387, 730196815
+        .long   869072533, -337668330, 0, 0, 0, 0, 0, 0
+        .long   2069224311, 77462057, 791854, 5398, 42252031, 2062614227, 42182989, 431430
+        .long   431920, 42182989, 2062253802, 42177591, 2944, 431430, 42177591, 2061822372
+        .long   39531035, 401367, 2727, 14, 735667600, 876227310, -340638572, 729908932
+        .long   869368368, -337972118, 0, 0, 0, 0, 0, 0
+        .long   2068118981, 78544415, 814589, 5634, 42842408, 2061422901, 42771427, 443809
+        .long   444321, 42771427, 2061052121, 42765794, 3073, 443809, 42765794, 2060608312
+        .long   40095306, 412973, 2846, 15, 735379914, 876523002, -340942271, 729623499
+        .long   869661746, -338273439, 0, 0, 0, 0, 0, 0
+        .long   2066998518, 79641249, 837970, 5880, 43440681, 2060215479, 43367709, 456540
+        .long   457074, 43367709, 2059834049, 43361830, 3207, 456540, 43361830, 2059377509
+        .long   40667476, 424911, 2971, 16, 735094789, 876816128, -341243398, 729340606
+        .long   869952577, -338572209, 0, 0, 0, 0, 0, 0
+        .long   2065862730, 80752735, 862014, 6136, 44046946, 2058991761, 43971928, 469632
+        .long   470190, 43971928, 2058599379, 43965792, 3347, 469632, 43965792, 2058129747
+        .long   41247652, 437193, 3101, 17, 734812309, 877106606, -341541873, 729060337
+        .long   870240781, -338868347, 0, 0, 0, 0, 0, 0
+        .long   2064711420, 81879048, 886741, 6404, 44661299, 2057751547, 44584179, 483095
+        .long   483677, 44584179, 2057347901, 44577775, 3493, 483095, 44577775, 2056864806
+        .long   41835941, 449827, 3237, 17, 734532554, 877394357, -341837621, 728782772
+        .long   870526280, -339161780, 0, 0, 0, 0, 0, 0
+        .long   2063544391, 83020367, 912169, 6684, 45283837, 2056494632, 45204558, 496939
+        .long   497547, 45204558, 2056079402, 45197874, 3646, 496939, 45197874, 2055582463
+        .long   42432452, 462824, 3379, 19, 734255600, 877679310, -342130573, 728507985
+        .long   870809002, -339452439, 0, 0, 0, 0, 0, 0
+        .long   2062361444, 84176871, 938318, 6975, 45914657, 2055220811, 45833160, 511176
+        .long   511810, 45833160, 2054793669, 45826185, 3805, 511176, 45826185, 2054282493
+        .long   43037295, 476193, 3527, 20, 733981516, 877961398, -342420664, 728236047
+        .long   871088882, -339740259, 0, 0, 0, 0, 0, 0
+        .long   2061162377, 85348741, 965208, 7279, 46553859, 2053929878, 46470083, 525815
+        .long   526477, 46470083, 2053490485, 46462804, 3971, 525815, 46462804, 2052964670
+        .long   43650581, 489946, 3681, 21, 733710369, 878240557, -342707834, 727967022
+        .long   871365855, -340025182, 0, 0, 0, 0, 0, 0
+        .long   2059946986, 86536161, 992860, 7597, 47201542, 2052621623, 47115426, 540869
+        .long   541560, 47115426, 2052169632, 47107829, 4144, 540869, 47107829, 2051628763
+        .long   44272424, 504093, 3842, 22, 733442219, 878516729, -342992030, 727700971
+        .long   871639866, -340307153, 0, 0, 0, 0, 0, 0
+        .long   2058715066, 87739313, 1021295, 7928, 47857807, 2051295835, 47769286, 556349
+        .long   557070, 47769286, 2050830889, 47761358, 4324, 556349, 47761358, 2050274540
+        .long   44902936, 518645, 4011, 23, 733177122, 878789862, -343273199, 727437950
+        .long   871910861, -340586121, 0, 0, 0, 0, 0, 0
+        .long   2057466408, 88958384, 1050534, 8274, 48522755, 2049952300, 48431765, 572266
+        .long   573018, 48431765, 2049474033, 48423491, 4513, 572266, 48423491, 2048901766
+        .long   45542235, 533614, 4186, 25, 732915132, 879059906, -343551297, 727178010
+        .long   872178791, -340862042, 0, 0, 0, 0, 0, 0
+        .long   2056200801, 90193560, 1080600, 8634, 49196488, 2048590805, 49102961, 588633
+        .long   589418, 49102961, 2048098838, 49094327, 4709, 588633, 49094327, 2047510205
+        .long   46190436, 549012, 4369, 26, 732656295, 879326817, -343826281, 726921200
+        .long   872443612, -341134874, 0, 0, 0, 0, 0, 0
+        .long   2054918035, 91445032, 1111516, 9010, 49879108, 2047211132, 49782976, 605462
+        .long   606281, 49782976, 2046705078, 49773966, 4915, 605462, 49773966, 2046099616
+        .long   46847658, 564851, 4560, 28, 732400657, 879590553, -344098114, 726667562
+        .long   872705284, -341404579, 0, 0, 0, 0, 0, 0
+        .long   2053617894, 92712988, 1143305, 9403, 50570721, 2045813061, 50471913, 622766
+        .long   623621, 50471913, 2045292523, 50462510, 5129, 622766, 50462510, 2044669756
+        .long   47514020, 581143, 4760, 29, 732148257, 879851077, -344366763, 726417138
+        .long   872963769, -341671125, 0, 0, 0, 0, 0, 0
+        .long   2052300162, 93997620, 1175992, 9812, 51271429, 2044396374, 51169873, 640558
+        .long   641450, 51169873, 2043860940, 51160061, 5352, 640558, 51160061, 2043220382
+        .long   48189644, 597901, 4968, 31, 731899132, 880108357, -344632199, 726169963
+        .long   873219035, -341934483, 0, 0, 0, 0, 0, 0
+        .long   2050964619, 95299123, 1209601, 10239, 51981340, 2042960845, 51876961, 658852
+        .long   659782, 51876961, 2042410096, 51866722, 5585, 658852, 51866722, 2041751244
+        .long   48874653, 615138, 5185, 33, 731653315, 880362364, -344894394, 725926070
+        .long   873471053, -342194626, 0, 0, 0, 0, 0, 0
+        .long   2049611046, 96617689, 1244158, 10685, 52700558, 2041506252, 52593280, 677661
+        .long   678632, 52593280, 2040939754, 52582596, 5828, 677661, 52582596, 2040262093
+        .long   49569169, 632868, 5412, 35, 731410835, 880613070, -345153327, 725685489
+        .long   873719797, -342451532, 0, 0, 0, 0, 0, 0
+        .long   2048239219, 97953516, 1279690, 11150, 53429190, 2040032367, 53318937, 696999
+        .long   698013, 53318937, 2039449676, 53307787, 6082, 696999, 53307787, 2038752677
+        .long   50273320, 651105, 5648, 37, 731171719, 880860454, -345408980, 725448245
+        .long   873965245, -342705184, 0, 0, 0, 0, 0, 0
+        .long   2046848913, 99306800, 1316222, 11635, 54167346, 2038538961, 54054035, 716882
+        .long   717939, 54054035, 2037939621, 54042401, 6346, 716882, 54042401, 2037222739
+        .long   50987230, 669863, 5895, 39, 730935990, 881104497, -345661336, 725214361
+        .long   874207377, -342955564, 0, 0, 0, 0, 0, 0
+        .long   2045439900, 100677742, 1353783, 12141, 54915132, 2037025805, 54798683, 737324
+        .long   738427, 54798683, 2036409345, 54786542, 6622, 737324, 54786542, 2035672022
+        .long   51711030, 689156, 6153, 41, 730703667, 881345183, -345910384, 724983857
+        .long   874446179, -343202663, 0, 0, 0, 0, 0, 0
+        .long   2044011951, 102066540, 1392401, 12669, 55672658, 2035492666, 55552986, 758340
+        .long   759492, 55552986, 2034858605, 55540318, 6910, 758340, 55540318, 2034100265
+        .long   52444849, 709000, 6422, 44, 730474768, 881582497, -346156115, 724756749
+        .long   874681636, -343446470, 0, 0, 0, 0, 0, 0
+        .long   2042564834, 103473397, 1432105, 13219, 56440035, 2033939309, 56317054, 779947
+        .long   781148, 56317054, 2033287151, 56303835, 7210, 779947, 56303835, 2032507204
+        .long   53188818, 729411, 6702, 46, 730249307, 881816431, -346398522, 724533053
+        .long   874913739, -343686980, 0, 0, 0, 0, 0, 0
+        .long   2041098315, 104898517, 1472925, 13794, 57217373, 2032365500, 57090994, 802160
+        .long   803414, 57090994, 2031694734, 57077201, 7524, 802160, 57077201, 2030892574
+        .long   53943070, 750403, 6995, 49, 730027296, 882046977, -346637602, 724312780
+        .long   875142480, -343924189, 0, 0, 0, 0, 0, 0
+        .long   2039612158, 106342102, 1514892, 14393, 58004783, 2030770998, 57874916, 824996
+        .long   826304, 57874916, 2030081103, 57860523, 7851, 824996, 57860523, 2029256107
+        .long   54707739, 771994, 7300, 52, 729808743, 882274130, -346873356, 724095938
+        .long   875367855, -344158097, 0, 0, 0, 0, 0, 0
+        .long   2038106124, 107804360, 1558036, 15018, 58802378, 2029155566, 58668930, 848473
+        .long   849838, 58668930, 2028446002, 58653912, 8192, 848473, 58653912, 2027597530
+        .long   55482963, 794201, 7619, 55, 729593655, 882497888, -347105784, 723882534
+        .long   875589861, -344388706, 0, 0, 0, 0, 0, 0
+        .long   2036579974, 109285496, 1602391, 15670, 59610271, 2027518961, 59473146, 872607
+        .long   874031, 59473146, 2026789177, 59457476, 8547, 872607, 59457476, 2025916570
+        .long   56268877, 817040, 7951, 58, 729382037, 882718252, -347334893, 723672572
+        .long   875808500, -344616021, 0, 0, 0, 0, 0, 0
+        .long   2035033465, 110785720, 1647989, 16350, 60428575, 2025860939, 60287676, 897417
+        .long   898903, 60287676, 2025110367, 60271326, 8918, 897417, 60271326, 2024212950
+        .long   57065621, 840529, 8298, 62, 729173890, 882935223, -347560689, 723466054
+        .long   876023773, -344840049, 0, 0, 0, 0, 0, 0
+        .long   2033466352, 112305242, 1694865, 17060, 61257404, 2024181256, 61112631, 922921
+        .long   924472, 61112631, 2023409312, 61095571, 9305, 922921, 61095571, 2022486391
+        .long   57873336, 864688, 8660, 65, 728969214, 883148808, -347783181, 723262980
+        .long   876235685, -345060800, 0, 0, 0, 0, 0, 0
+        .long   2031878387, 113844270, 1743053, 17800, 62096875, 2022479664, 61948124, 949138
+        .long   950756, 61948124, 2021685749, 61930325, 9709, 949138, 61930325, 2020736611
+        .long   58692164, 889533, 9038, 69, 728768006, 883359012, -348002382, 723063348
+        .long   876444244, -345278285, 0, 0, 0, 0, 0, 0
+        .long   2030269322, 115403019, 1792590, 18572, 62947101, 2020755914, 62794269, 976088
+        .long   977776, 62794269, 2019939413, 62775697, 10130, 976088, 62775697, 2018963325
+        .long   59522249, 915086, 9432, 73, 728570264, 883565845, -348218306, 722867153
+        .long   876649458, -345492519, 0, 0, 0, 0, 0, 0
+        .long   2028638905, 116981700, 1843511, 19377, 63808200, 2019009757, 63651177, 1003790
+        .long   1005551, 63651177, 2018170035, 63631801, 10569, 1003790, 63631801, 2017166246
+        .long   60363736, 941364, 9843, 77, 728375980, 883769318, -348430968, 722674391
+        .long   876851338, -345703516, 0, 0, 0, 0, 0, 0
+        .long   2026986883, 118580529, 1895855, 20217, 64680288, 2017240938, 64518965, 1032265
+        .long   1034103, 64518965, 2016377348, 64498749, 11027, 1032265, 64498749, 2015345083
+        .long   61216772, 968390, 10272, 82, 728185148, 883969444, -348640387, 722485052
+        .long   877049897, -345911296, 0, 0, 0, 0, 0, 0
+        .long   2025313001, 120199720, 1949661, 21093, 65563484, 2015449205, 65397747, 1061534
+        .long   1063451, 65397747, 2014561078, 65376654, 11505, 1061534, 65376654, 2013499544
+        .long   62081507, 996183, 10720, 87, 727997758, 884166236, -348846582, 722299129
+        .long   877245150, -346115877, 0, 0, 0, 0, 0, 0
+        .long   2023617001, 121839490, 2004968, 22006, 66457903, 2013634302, 66287637, 1091618
+        .long   1093619, 66287637, 2012720953, 66265631, 12003, 1091618, 66265631, 2011629334
+        .long   62958089, 1024766, 11187, 92, 727813799, 884359712, -349049576, 722116610
+        .long   877437111, -346317281, 0, 0, 0, 0, 0, 0
+        .long   2021898622, 123500056, 2061817, 22959, 67363667, 2011795971, 67188752, 1122540
+        .long   1124627, 67188752, 2010856695, 67165793, 12523, 1122540, 67165793, 2009734154
+        .long   63846672, 1054159, 11674, 97, 727633259, 884549890, -349249390, 721937483
+        .long   877625800, -346515532, 0, 0, 0, 0, 0, 0
+        .long   2020157603, 125181637, 2120249, 23953, 68280893, 2009933954, 68101208, 1154322
+        .long   1156500, 68101208, 2008968026, 68077255, 13065, 1154322, 68077255, 2007813704
+        .long   64747409, 1084386, 12182, 103, 727456125, 884736787, -349446051, 721761735
+        .long   877811234, -346710653, 0, 0, 0, 0, 0, 0
+        .long   2018393680, 126884452, 2180309, 24989, 69209701, 2008047989, 69025122, 1186988
+        .long   1189259, 69025122, 2007054668, 69000132, 13631, 1186988, 69000132, 2005867680
+        .long   65660455, 1115471, 12713, 109, 727282381, 884920426, -349639584, 721589352
+        .long   877993435, -346902671, 0, 0, 0, 0, 0, 0
+        .long   2016606586, 128608722, 2242039, 26070, 70150212, 2006137815, 69960610, 1220560
+        .long   1222930, 69960610, 2005116336, 69934540, 14220, 1220560, 69934540, 2003895776
+        .long   66585967, 1147436, 13266, 115, 727112012, 885100827, -349830018, 721420316
+        .long   878172424, -347091614, 0, 0, 0, 0, 0, 0
+        .long   2014796054, 130354667, 2305485, 27198, 71102545, 2004203167, 70907791, 1255065
+        .long   1257537, 70907791, 2003152747, 70880593, 14835, 1255065, 70880593, 2001897683
+        .long   67524103, 1180306, 13843, 122, 726945001, 885278014, -350017381, 721254612
+        .long   878348225, -347277511, 0, 0, 0, 0, 0, 0
+        .long   2012961814, 132122509, 2370693, 28374, 72066823, 2002243782, 71866782, 1290526
+        .long   1293105, 71866782, 2001163615, 71838409, 15476, 1290526, 71838409, 1999873089
+        .long   68475025, 1214108, 14445, 129, 726781329, 885452012, -350201705, 721092222
+        .long   878520860, -347460392, 0, 0, 0, 0, 0, 0
+        .long   2011103592, 133912472, 2437711, 29600, 73043167, 2000259391, 72837702, 1326969
+        .long   1329660, 72837702, 1999148650, 72808102, 16145, 1326969, 72808102, 1997821681
+        .long   69438893, 1248865, 15073, 137, 726620978, 885622845, -350383021, 720933126
+        .long   878690357, -347640288, 0, 0, 0, 0, 0, 0
+        .long   2009221115, 135724778, 2506587, 30878, 74031697, 1998249728, 73820669, 1364422
+        .long   1367229, 73820669, 1997107563, 73789790, 16843, 1364422, 73789790, 1995743141
+        .long   70415873, 1284606, 15729, 145, 726463928, 885790541, -350561362, 720777305
+        .long   878856740, -347817233, 0, 0, 0, 0, 0, 0
+        .long   2007314106, 137559653, 2577371, 32212, 75032538, 1996214522, 74815801, 1402911
+        .long   1405839, 74815801, 1995040061, 74783590, 17570, 1402911, 74783590, 1993637150
+        .long   71406128, 1321357, 16412, 153, 726310157, 885955126, -350736762, 720624738
+        .long   879020037, -347991260, 0, 0, 0, 0, 0, 0
+        .long   2005382287, 139417319, 2650115, 33602, 76045810, 1994153503, 75823219, 1442463
+        .long   1445517, 75823219, 1992945850, 75789617, 18328, 1442463, 75789617, 1991503387
+        .long   72409827, 1359147, 17126, 162, 726159646, 886116629, -350909256, 720475405
+        .long   879180275, -348162405, 0, 0, 0, 0, 0, 0
+        .long   2003425377, 141298003, 2724872, 35052, 77071638, 1992066398, 76843042, 1483107
+        .long   1486294, 76843042, 1990824633, 76807990, 19119, 1483107, 76807990, 1989341526
+        .long   73427139, 1398003, 17870, 172, 726012371, 886275079, -351078881, 720329283
+        .long   879337485, -348330701, 0, 0, 0, 0, 0, 0
+        .long   2001443095, 143201931, 2801694, 36564, 78110144, 1989952935, 77875389, 1524873
+        .long   1528197, 77875389, 1988676114, 77838825, 19944, 1524873, 77838825, 1987151241
+        .long   74458233, 1437956, 18646, 182, 725868310, 886430505, -351245673, 720186350
+        .long   879491694, -348496188, 0, 0, 0, 0, 0, 0
+        .long   1999435157, 145129328, 2880637, 38141, 79161452, 1987812838, 78920380, 1567789
+        .long   1571257, 78920380, 1986499990, 78882239, 20804, 1567789, 78882239, 1984932201
+        .long   75503282, 1479037, 19455, 192, 725727441, 886582939, -351409670, 720046583
+        .long   879642935, -348658901, 0, 0, 0, 0, 0, 0
+        .long   1997401276, 147080422, 2961759, 39785, 80225685, 1985645833, 79978134, 1611888
+        .long   1615505, 79978134, 1984295962, 79938350, 21701, 1611888, 79938350, 1982684074
+        .long   76562461, 1521275, 20300, 204, 725589739, 886732410, -351570911, 719909959
+        .long   879791236, -348818880, 0, 0, 0, 0, 0, 0
+        .long   1995341164, 149055438, 3045116, 41499, 81302966, 1983451642, 81048773, 1657200
+        .long   1660972, 81048773, 1982063726, 81007275, 22636, 1657200, 81007275, 1980406526
+        .long   77635946, 1564704, 21181, 216, 725455180, 886878952, -351729436, 719776454
+        .long   879936630, -348976164, 0, 0, 0, 0, 0, 0
+        .long   1993254532, 151054605, 3130769, 43286, 82393421, 1981229987, 82132416, 1703757
+        .long   1707692, 82132416, 1979802975, 82089130, 23610, 1703757, 82089130, 1978099218
+        .long   78723913, 1609355, 22099, 228, 725323741, 887022595, -351885283, 719646044
+        .long   880079149, -349130792, 0, 0, 0, 0, 0, 0
+        .long   1991141088, 153078149, 3218778, 45149, 83497172, 1978980590, 83229183, 1751593
+        .long   1755697, 83229183, 1977513405, 83184034, 24627, 1751593, 83184034, 1975761812
+        .long   79826543, 1655263, 23058, 242, 725195397, 887163373, -352038496, 719518704
+        .long   880218826, -349282805, 0, 0, 0, 0, 0, 0
+        .long   1989000540, 155126298, 3309207, 47092, 84614344, 1976703171, 84339194, 1800741
+        .long   1805022, 84339194, 1975194705, 84292102, 25687, 1800741, 84292102, 1973393964
+        .long   80944017, 1702463, 24058, 256, 725070124, 887301319, -352189113, 719394411
+        .long   880355691, -349432243, 0, 0, 0, 0, 0, 0
+        .long   1986832591, 157199279, 3402119, 49118, 85745061, 1974397449, 85462569, 1851236
+        .long   1855701, 85462569, 1972846566, 85413451, 26792, 1851236, 85413451, 1970995330
+        .long   82076518, 1750989, 25100, 271, 724947895, 887436466, -352337179, 719273140
+        .long   880489780, -349579150, 0, 0, 0, 0, 0, 0
+        .long   1984636946, 159297320, 3497579, 51230, 86889447, 1972063142, 86599429, 1903113
+        .long   1907771, 86599429, 1970468676, 86548199, 27943, 1903113, 86548199, 1968565563
+        .long   83224230, 1800879, 26188, 287, 724828688, 887568847, -352482735, 719154866
+        .long   880621126, -349723566, 0, 0, 0, 0, 0, 0
+        .long   1982413306, 161420647, 3595656, 53431, 88047626, 1969699969, 87749892, 1956410
+        .long   1961267, 87749892, 1968060723, 87696461, 29144, 1956410, 87696461, 1966104313
+        .long   84387340, 1852169, 27322, 303, 724712476, 887698498, -352625824, 719039563
+        .long   880749761, -349865535, 0, 0, 0, 0, 0, 0
+        .long   1980161372, 163569489, 3696419, 55727, 89219721, 1967307647, 88914079, 2011162
+        .long   2016228, 88914079, 1965622391, 88858353, 30396, 2011162, 88858353, 1963611228
+        .long   85566037, 1904899, 28505, 321, 724599235, 887825451, -352766489, 718927208
+        .long   880875721, -350005099, 0, 0, 0, 0, 0, 0
+        .long   1977880842, 165744070, 3799937, 58120, 90405857, 1964885892, 90092109, 2067409
+        .long   2072693, 90092109, 1963153364, 90033990, 31702, 2067409, 90033990, 1961085955
+        .long   86760510, 1959107, 29739, 340, 724488939, 887949742, -352904775, 718817776
+        .long   880999039, -350142303, 0, 0, 0, 0, 0, 0
+        .long   1975571412, 167944619, 3906284, 60614, 91606156, 1962434420, 91284101, 2125190
+        .long   2130700, 91284101, 1960653326, 91223487, 33062, 2125190, 91223487, 1958528136
+        .long   87970953, 2014835, 31026, 360, 724381565, 888071405, -353040726, 718711242
+        .long   881119749, -350277190, 0, 0, 0, 0, 0, 0
+        .long   1973232779, 170171360, 4015533, 63215, 92820742, 1959952946, 92490174, 2184544
+        .long   2190291, 92490174, 1958121957, 92426960, 34481, 2184544, 92426960, 1955937413
+        .long   89197557, 2072123, 32368, 381, 724277087, 888190474, -353174386, 718607582
+        .long   881237886, -350409804, 0, 0, 0, 0, 0, 0
+        .long   1970864636, 172424519, 4127761, 65925, 94049738, 1957441186, 93710446, 2245513
+        .long   2251506, 93710446, 1955558938, 93644521, 35959, 2245513, 93644521, 1953313425
+        .long   90440520, 2131014, 33768, 403, 724175480, 888306984, -353305801, 718506771
+        .long   881353485, -350540190, 0, 0, 0, 0, 0, 0
+        .long   1968466677, 174704321, 4243046, 68751, 95293266, 1954898855, 94945035, 2308139
+        .long   2314389, 94945035, 1952963948, 94876284, 37501, 2308139, 94876284, 1950655809
+        .long   91700038, 2191553, 35228, 426, 724076722, 888420971, -353435015, 718408786
+        .long   881466579, -350668393, 0, 0, 0, 0, 0, 0
+        .long   1966038593, 177010988, 4361468, 71697, 96551448, 1952325668, 96194058, 2372465
+        .long   2378982, 96194058, 1950336664, 96122362, 39107, 2372465, 96122362, 1947964200
+        .long   92976311, 2253784, 36750, 451, 723980788, 888532468, -353562075, 718313602
+        .long   881577203, -350794457, 0, 0, 0, 0, 0, 0
+        .long   1963580074, 179344745, 4483108, 74767, 97824406, 1949721338, 97457633, 2438534
+        .long   2445331, 97457633, 1947676764, 97382866, 40782, 2438534, 97382866, 1945238230
+        .long   94269539, 2317752, 38338, 477, 723887653, 888641510, -353687025, 718221197
+        .long   881685392, -350918429, 0, 0, 0, 0, 0, 0
+        .long   1961090809, 181705813, 4608049, 77967, 99112262, 1947085580, 98735875, 2506394
+        .long   2513482, 98735875, 1944983924, 98657909, 42527, 2506394, 98657909, 1942477531
+        .long   95579926, 2383507, 39994, 505, 723797296, 888748132, -353809912, 718131547
+        .long   881791179, -351040354, 0, 0, 0, 0, 0, 0
+        .long   1958570486, 184094412, 4736379, 81302, 100415134, 1944418109, 100028901, 2576088
+        .long   2583479, 100028901, 1942257819, 99947599, 44346, 2576088, 99947599, 1939681730
+        .long   96907676, 2451095, 41720, 535, 723709693, 888852368, -353930782, 718044630
+        .long   881894599, -351160278, 0, 0, 0, 0, 0, 0
+        .long   1956018791, 186510763, 4868184, 84778, 101733144, 1941718640, 101336824, 2647666
+        .long   2655373, 101336824, 1939498122, 101252046, 46243, 2647666, 101252046, 1936850456
+        .long   98252996, 2520567, 43520, 566, 723624822, 888954253, -354049681, 717960424
+        .long   881995687, -351278247, 0, 0, 0, 0, 0, 0
+        .long   1953435411, 188955084, 5003555, 88401, 103066410, 1938986888, 102659760, 2721175
+        .long   2729212, 102659760, 1936704508, 102571359, 48219, 2721175, 102571359, 1933983333
+        .long   99616093, 2591974, 45398, 599, 723542661, 889053821, -354166656, 717878906
+        .long   882094475, -351394306, 0, 0, 0, 0, 0, 0
+        .long   1950820030, 191427591, 5142582, 92177, 104415050, 1936222567, 103997821, 2796665
+        .long   2805045, 103997821, 1933876650, 103905644, 50278, 2796665, 103905644, 1931079984
+        .long   100997178, 2665369, 47355, 633, 723463189, 889151106, -354281753, 717800056
+        .long   882190999, -351508502, 0, 0, 0, 0, 0, 0
+        .long   1948172333, 193928500, 5285362, 96112, 105779182, 1933425394, 105351119, 2874187
+        .long   2882925, 105351119, 1931014219, 105255007, 52425, 2874187, 105255007, 1928140032
+        .long   102396462, 2740804, 49397, 670, 723386385, 889246141, -354395019, 717723852
+        .long   882285290, -351620882, 0, 0, 0, 0, 0, 0
+        .long   1945492001, 196458025, 5431990, 100213, 107158923, 1930595085, 106719767, 2953793
+        .long   2962904, 106719767, 1928116888, 106619554, 54662, 2953793, 106619554, 1925163095
+        .long   103814159, 2818336, 51525, 709, 723312228, 889338961, -354506502, 717650276
+        .long   882377383, -351731492, 0, 0, 0, 0, 0, 0
+        .long   1942778719, 199016376, 5582565, 104487, 108554387, 1927731357, 108103874, 3035537
+        .long   3045035, 108103874, 1925184328, 107999387, 56993, 3035537, 107999387, 1922148792
+        .long   105250485, 2898021, 53744, 751, 723240699, 889429598, -354616247, 717579307
+        .long   882467311, -351840378, 0, 0, 0, 0, 0, 0
+        .long   1940032167, 201603764, 5737188, 108940, 109965690, 1924833928, 109503549, 3119471
+        .long   3129375, 109503549, 1922216211, 109394609, 59422, 3119471, 109394609, 1919096740
+        .long   106705657, 2979916, 56058, 794, 723171779, 889518086, -354724303, 717510927
+        .long   882555106, -351947588, 0, 0, 0, 0, 0, 0
+        .long   1937252028, 204220397, 5895962, 113581, 111392944, 1921902516, 110918900, 3205654
+        .long   3215979, 110918900, 1919212208, 110805320, 61953, 3205654, 110805320, 1916006554
+        .long   108179893, 3064083, 58471, 840, 723105450, 889604457, -354830716, 717445117
+        .long   882640801, -352053168, 0, 0, 0, 0, 0, 0
+        .long   1934437980, 206866480, 6058993, 118416, 112836262, 1918936842, 112350035, 3294140
+        .long   3304906, 112350035, 1916171989, 112231619, 64591, 3294140, 112231619, 1912877849
+        .long   109673414, 3150580, 60986, 889, 723041695, 889688743, -354935533, 717381861
+        .long   882724427, -352157165, 0, 0, 0, 0, 0, 0
+        .long   1931589706, 209542215, 6226391, 123455, 114295754, 1915936627, 113797057, 3384990
+        .long   3396213, 113797057, 1913095226, 113673602, 67339, 3384990, 113673602, 1909710236
+        .long   111186443, 3239472, 63609, 941, 722980495, 889770977, -355038802, 717321140
+        .long   882806018, -352259625, 0, 0, 0, 0, 0, 0
+        .long   1928706885, 212247804, 6398264, 128705, 115771529, 1912901592, 115260071, 3478262
+        .long   3489962, 115260071, 1909981590, 115131367, 70202, 3478262, 115131367, 1906503328
+        .long   112719204, 3330823, 66343, 995, 722921836, 889851191, -355140570, 717262940
+        .long   882885604, -352360597, 0, 0, 0, 0, 0, 0
+        .long   1925789197, 214983444, 6574727, 134174, 117263697, 1909831462, 116739180, 3574017
+        .long   3586215, 116739180, 1906830752, 116605006, 73186, 3574017, 116605006, 1903256735
+        .long   114271923, 3424697, 69193, 1053, 722865702, 889929415, -355240884, 717207246
+        .long   882963215, -352460126, 0, 0, 0, 0, 0, 0
+        .long   1922836321, 217749329, 6755896, 139873, 118772361, 1906725962, 118234484, 3672318
+        .long   3685034, 118234484, 1903642384, 118094610, 76295, 3672318, 118094610, 1899970066
+        .long   115844827, 3521164, 72165, 1114, 722812079, 890005681, -355339793, 717154042
+        .long   883038884, -352558260, 0, 0, 0, 0, 0, 0
+        .long   1919847938, 220545653, 6941889, 145811, 120297629, 1903584818, 119746081, 3773229
+        .long   3786485, 119746081, 1900416158, 119600271, 79533, 3773229, 119600271, 1896642929
+        .long   117438147, 3620292, 75263, 1179, 722760953, 890080019, -355437343, 717103316
+        .long   883112640, -352655046, 0, 0, 0, 0, 0, 0
+        .long   1916823727, 223372603, 7132827, 151996, 121839602, 1900407760, 121274070, 3876815
+        .long   3890633, 121274070, 1897151747, 121122074, 82907, 3876815, 121122074, 1893274932
+        .long   119052112, 3722151, 78492, 1247, 722712311, 890152459, -355533581, 717055056
+        .long   883184513, -352750532, 0, 0, 0, 0, 0, 0
+        .long   1913763368, 226230366, 7328836, 158440, 123398381, 1897194518, 122818545, 3983143
+        .long   3997547, 122818545, 1893848825, 122660105, 86422, 3983143, 122660105, 1889865682
+        .long   120686956, 3826816, 81859, 1319, 722666142, 890223031, -355628557, 717009248
+        .long   883254533, -352844763, 0, 0, 0, 0, 0, 0
+        .long   1910666542, 229119122, 7530040, 165153, 124974066, 1893944825, 124379601, 4092281
+        .long   4107295, 124379601, 1890507066, 124214448, 90083, 4092281, 124214448, 1886414785
+        .long   122342914, 3934361, 85368, 1396, 722622436, 890291764, -355722316, 716965883
+        .long   883322728, -352937789, 0, 0, 0, 0, 0, 0
+        .long   1907532929, 232039050, 7736571, 172146, 126566754, 1890658417, 125957327, 4204298
+        .long   4219948, 125957327, 1887126145, 125785182, 93898, 4204298, 125785182, 1882921847
+        .long   124020221, 4044861, 89026, 1477, 722581181, 890358687, -355814907, 716924952
+        .long   883389127, -353029655, 0, 0, 0, 0, 0, 0
+        .long   1904362210, 234990324, 7948560, 179430, 128176540, 1887335032, 127551815, 4319266
+        .long   4335578, 127551815, 1883705738, 127372385, 97871, 4319266, 127372385, 1879386472
+        .long   125719115, 4158396, 92839, 1562, 722542370, 890423828, -355906378, 716886444
+        .long   883453759, -353120410, 0, 0, 0, 0, 0, 0
+        .long   1901154069, 237973114, 8166143, 187017, 129803517, 1883974409, 129163149, 4437259
+        .long   4454260, 129163149, 1880245524, 128976132, 102009, 4437259, 128976132, 1875808266
+        .long   127439836, 4275046, 96813, 1652, 722505994, 890487216, -355996777, 716850353
+        .long   883516650, -353210101, 0, 0, 0, 0, 0, 0
+        .long   1897908186, 240987586, 8389460, 194920, 131447774, 1880576293, 130791416, 4558349
+        .long   4576069, 130791416, 1876745182, 130596496, 106320, 4558349, 130596496, 1872186833
+        .long   129182624, 4394894, 100956, 1748, 722472047, 890548876, -356086151, 716816672
+        .long   883577827, -353298775, 0, 0, 0, 0, 0, 0
+        .long   1894624247, 244033902, 8618650, 203151, 133109401, 1877140428, 132436697, 4682613
+        .long   4701082, 132436697, 1873204392, 132233546, 110810, 4682613, 132233546, 1868521779
+        .long   130947723, 4518023, 105274, 1849, 722440523, 890608836, -356174548, 716785395
+        .long   883637318, -353386481, 0, 0, 0, 0, 0, 0
+        .long   1891301935, 247112219, 8853859, 211723, 134788483, 1873666565, 134099072, 4810130
+        .long   4829377, 134099072, 1869622837, 133887349, 115486, 4810130, 133887349, 1864812707
+        .long   132735377, 4644520, 109774, 1956, 722411418, 890667123, -356262016, 716756517
+        .long   883695149, -353473264, 0, 0, 0, 0, 0, 0
+        .long   1887940937, 250222688, 9095234, 220652, 136485102, 1870154457, 135778618, 4940978
+        .long   4961037, 135778618, 1866000200, 135557967, 120355, 4940978, 135557967, 1861059223
+        .long   134545831, 4774475, 114464, 2069, 722384728, 890723762, -356348604, 716730036
+        .long   883751345, -353559174, 0, 0, 0, 0, 0, 0
+        .long   1884540939, 253365455, 9342927, 229949, 138199339, 1866603858, 137475409, 5075238
+        .long   5096142, 137475409, 1862336169, 137245460, 125427, 5075238, 137245460, 1857260931
+        .long   136379332, 4907978, 119351, 2188, 722360450, 890778779, -356434360, 716705949
+        .long   883805930, -353644259, 0, 0, 0, 0, 0, 0
+        .long   1881101631, 256540664, 9597092, 239632, 139931271, 1863014530, 139189517, 5212993
+        .long   5234777, 139189517, 1858630431, 138949884, 130708, 5212993, 138949884, 1853417438
+        .long   138236130, 5045122, 124445, 2315, 722338585, 890832197, -356519331, 716684255
+        .long   883858931, -353728565, 0, 0, 0, 0, 0, 0
+        .long   1877622702, 259748449, 9857885, 249715, 141680972, 1859386235, 140921009, 5354327
+        .long   5377028, 140921009, 1854882677, 140671294, 136208, 5354327, 140671294, 1849528350
+        .long   140116475, 5186002, 129754, 2448, 722319132, 890884042, -356603568, 716664954
+        .long   883910370, -353812142, 0, 0, 0, 0, 0, 0
+        .long   1874103845, 262988941, 10125469, 260215, 143448513, 1855718743, 142669951, 5499327
+        .long   5522983, 142669951, 1851092601, 142409736, 141935, 5499327, 142409736, 1845593274
+        .long   142020618, 5330717, 135286, 2589, 722302092, 890934337, -356687117, 716648047
+        .long   883960271, -353895038, 0, 0, 0, 0, 0, 0
+        .long   1870544753, 266262264, 10400007, 271147, 145233962, 1852011824, 144436405, 5648081
+        .long   5672731, 144436405, 1847259898, 144165258, 147899, 5648081, 144165258, 1841611817
+        .long   143948814, 5479366, 141051, 2739, 722287468, 890983104, -356770028, 716633538
+        .long   884008656, -353977300, 0, 0, 0, 0, 0, 0
+        .long   1866945122, 269568536, 10681666, 282530, 147037383, 1848265255, 146220430, 5800679
+        .long   5826363, 146220430, 1843384268, 145937900, 154108, 5800679, 145937900, 1837583589
+        .long   145901315, 5632052, 147058, 2896, 722275264, 891030367, -356852351, 716621430
+        .long   884055549, -354058978, 0, 0, 0, 0, 0, 0
+        .long   1863304651, 272907870, 10970619, 294382, 148858838, 1844478818, 148022081, 5957212
+        .long   5983974, 148022081, 1839465411, 147727699, 160572, 5957212, 147727699, 1833508200
+        .long   147878379, 5788881, 153317, 3063, 722265486, 891076148, -356934133, 716611728
+        .long   884100972, -354140120, 0, 0, 0, 0, 0, 0
+        .long   1859623039, 276280370, 11267039, 306721, 150698384, 1840652299, 149841410, 6117774
+        .long   6145658, 149841410, 1835503034, 149534689, 167303, 6117774, 149534689, 1829385261
+        .long   149880263, 5949959, 159839, 3239, 722258139, 891120467, -357015425, 716604439
+        .long   884144944, -354220775, 0, 0, 0, 0, 0, 0
+        .long   1855899990, 279686134, 11571105, 319567, 152556073, 1836785490, 151678464, 6282460
+        .long   6311512, 151678464, 1831496845, 151358897, 174310, 6282460, 151358897, 1825214385
+        .long   151907226, 6115397, 166635, 3426, 722253232, 891163345, -357096275, 716599570
+        .long   884187487, -354300993, 0, 0, 0, 0, 0, 0
+        .long   1852135210, 283125254, 11882998, 332941, 154431957, 1832878186, 153533288, 6451368
+        .long   6481635, 153533288, 1827446556, 153200347, 181604, 6451368, 153200347, 1820995188
+        .long   153959526, 6285308, 173716, 3623, 722250775, 891204804, -357176734, 716597132
+        .long   884228620, -354380822, 0, 0, 0, 0, 0, 0
+        .long   1848328407, 286597812, 12202905, 346862, 156326079, 1828930191, 155405922, 6624597
+        .long   6656130, 155405922, 1823351883, 155059060, 189197, 6624597, 155059060, 1816727286
+        .long   156037427, 6459807, 181093, 3831, 722250778, 891244861, -357256852, 716597135
+        .long   884268364, -354460313, 0, 0, 0, 0, 0, 0
+        .long   1844479293, 290103886, 12531014, 361353, 158238483, 1824941311, 157296402, 6802248
+        .long   6835099, 157296402, 1819212546, 156935049, 197102, 6802248, 156935049, 1812410297
+        .long   158141190, 6639013, 188778, 4051, 722253253, 891283537, -357336679, 716599591
+        .long   884306737, -354539515, 0, 0, 0, 0, 0, 0
+        .long   1840587583, 293643542, 12867519, 376437, 160169205, 1820911363, 159204759, 6984425
+        .long   7018647, 159204759, 1815028269, 158828323, 205329, 6984425, 158828323, 1808043844
+        .long   160271079, 6823046, 196785, 4283, 722258215, 891320849, -357416266, 716604514
+        .long   884343758, -354618479, 0, 0, 0, 0, 0, 0
+        .long   1836652996, 297216841, 13212616, 392136, 162118277, 1816840165, 161131023, 7171233
+        .long   7206881, 161131023, 1810798781, 160738886, 213892, 7171233, 160738886, 1803627549
+        .long   162427358, 7012032, 205127, 4529, 722265679, 891356816, -357495663, 716611919
+        .long   884379443, -354697255, 0, 0, 0, 0, 0, 0
+        .long   1832675253, 300823834, 13566506, 408476, 164085728, 1812727544, 163075214, 7362778
+        .long   7399913, 163075214, 1806523816, 162666738, 222805, 7362778, 162666738, 1799161038
+        .long   164610294, 7206097, 213816, 4789, 722275661, 891391454, -357574922, 716621824
+        .long   884413810, -354775893, 0, 0, 0, 0, 0, 0
+        .long   1828654081, 304464564, 13929394, 425482, 166071580, 1808573335, 165037353, 7559171
+        .long   7597852, 165037353, 1802203112, 164611871, 232081, 7559171, 164611871, 1794643941
+        .long   166820154, 7405370, 222868, 5064, 722288181, 891424781, -357654095, 716634246
+        .long   884446876, -354854446, 0, 0, 0, 0, 0, 0
+        .long   1824589209, 308139063, 14301489, 443180, 168075853, 1804377379, 167017452, 7760523
+        .long   7800812, 167017452, 1797836413, 166574272, 241734, 7760523, 166574272, 1790075890
+        .long   169057205, 7609985, 232297, 5354, 722303259, 891456812, -357733234, 716649205
+        .long   884478656, -354932965, 0, 0, 0, 0, 0, 0
+        .long   1820480371, 311847357, 14683002, 461597, 170098559, 1800139522, 169015520, 7966947
+        .long   8008910, 169015520, 1793423467, 168553923, 251780, 7966947, 168553923, 1785456520
+        .long   171321717, 7820079, 242119, 5660, 722320915, 891487561, -357812390, 716666723
+        .long   884509165, -355011502, 0, 0, 0, 0, 0, 0
+        .long   1816327307, 315589460, 15074151, 480761, 172139706, 1795859620, 171031562, 8178558
+        .long   8222264, 171031562, 1788964028, 170550801, 262233, 8178558, 170550801, 1780785470
+        .long   173613960, 8035789, 252349, 5984, 722341175, 891517045, -357891618, 716686824
+        .long   884538418, -355090110, 0, 0, 0, 0, 0, 0
+        .long   1812129760, 319365377, 15475155, 500702, 174199297, 1791537538, 173065575, 8395475
+        .long   8440994, 173065575, 1784457858, 172564872, 273110, 8395475, 172564872, 1776062382
+        .long   175934204, 8257260, 263004, 6327, 722364063, 891545278, -357970970, 716709533
+        .long   884566429, -355168841, 0, 0, 0, 0, 0, 0
+        .long   1807887478, 323175103, 15886241, 521451, 176277329, 1787173145, 175117553, 8617818
+        .long   8665222, 175117553, 1779904722, 174596102, 284428, 8617818, 174596102, 1771286904
+        .long   178282721, 8484636, 274102, 6688, 722389606, 891572271, -358050501, 716734877
+        .long   884593212, -355247749, 0, 0, 0, 0, 0, 0
+        .long   1803600213, 327018620, 16307636, 543038, 178373793, 1782766322, 177187483, 8845707
+        .long   8895074, 177187483, 1775304393, 176644445, 296203, 8845707, 176644445, 1766458686
+        .long   180659784, 8718067, 285660, 7070, 722417834, 891598039, -358130264, 716762884
+        .long   884618778, -355326888, 0, 0, 0, 0, 0, 0
+        .long   1799267726, 330895904, 16739573, 565497, 180488675, 1778316956, 179275348, 9079268
+        .long   9130676, 179275348, 1770656651, 178709852, 308453, 9079268, 178709852, 1761577383
+        .long   183065667, 8957706, 297696, 7474, 722448777, 891622593, -358210316, 716793584
+        .long   884643140, -355406313, 0, 0, 0, 0, 0, 0
+        .long   1794889780, 334806916, 17182291, 588861, 182621954, 1773824946, 181381124, 9318626
+        .long   9372159, 181381124, 1765961281, 180792264, 321197, 9318626, 180792264, 1756642655
+        .long   185500642, 9203708, 310232, 7901, 722482468, 891645946, -358290711, 716827011
+        .long   884666309, -355486079, 0, 0, 0, 0, 0, 0
+        .long   1790466145, 338751606, 17636030, 613165, 184773603, 1769290197, 183504782, 9563910
+        .long   9619653, 183504782, 1761218077, 182891616, 334454, 9563910, 182891616, 1751654167
+        .long   187964985, 9456234, 323285, 8351, 722518941, 891668107, -358371506, 716863199
+        .long   884688297, -355566241, 0, 0, 0, 0, 0, 0
+        .long   1785996597, 342729915, 18101036, 638447, 186943590, 1764712624, 185646285, 9815252
+        .long   9873292, 185646285, 1756426840, 185007838, 348244, 9815252, 185007838, 1746611588
+        .long   190458972, 9715446, 336878, 8827, 722558233, 891689086, -358452758, 716902184
+        .long   884709112, -355646857, 0, 0, 0, 0, 0, 0
+        .long   1781480918, 346741768, 18577559, 664743, 189131874, 1760092153, 187805592, 10072783
+        .long   10133214, 187805592, 1751587377, 187140849, 362587, 10072783, 187140849, 1741514595
+        .long   192982877, 9981512, 351032, 9330, 722600384, 891708894, -358534524, 716944004
+        .long   884728765, -355727984, 0, 0, 0, 0, 0, 0
+        .long   1776918898, 350787081, 19065853, 692093, 191338408, 1755428720, 189982654, 10336638
+        .long   10399556, 189982654, 1746699505, 189290561, 377505, 10336638, 189290561, 1736362867
+        .long   195536978, 10254603, 365769, 9861, 722645432, 891727540, -358616864, 716988700
+        .long   884747265, -355809679, 0, 0, 0, 0, 0, 0
+        .long   1772310332, 354865757, 19566177, 720538, 193563140, 1750722269, 192177417, 10606957
+        .long   10672460, 192177417, 1741763049, 191456879, 393021, 10606957, 191456879, 1731156092
+        .long   198121551, 10534893, 381114, 10422, 722693423, 891745030, -358699835, 717036315
+        .long   884764618, -355892001, 0, 0, 0, 0, 0, 0
+        .long   1767655023, 358977683, 20078793, 750119, 195806009, 1745972757, 194389820, 10883876
+        .long   10952069, 194389820, 1736777840, 193639701, 409156, 10883876, 193639701, 1725893964
+        .long   200736873, 10822561, 397089, 11015, 722744400, 891761374, -358783499, 717086893
+        .long   884780834, -355975010, 0, 0, 0, 0, 0, 0
+        .long   1762952780, 363122735, 20603970, 780881, 198066946, 1741180152, 196619793, 11167540
+        .long   11238529, 196619793, 1731743722, 195838913, 425935, 11167540, 195838913, 1720576182
+        .long   203383222, 11117788, 413722, 11641, 722798410, 891776577, -358867916, 717140481
+        .long   884795918, -356058766, 0, 0, 0, 0, 0, 0
+        .long   1758203422, 367300776, 21141979, 812867, 200345878, 1736344431, 198867262, 11458091
+        .long   11531988, 198867262, 1726660543, 198054395, 443382, 11458091, 198054395, 1715202452
+        .long   206060875, 11420762, 431037, 12302, 722855505, 891790645, -358953148, 717197128
+        .long   884809876, -356143330, 0, 0, 0, 0, 0, 0
+        .long   1753406773, 371511654, 21693095, 846126, 202642721, 1731465583, 201132144, 11755677
+        .long   11832597, 201132144, 1721528165, 200286018, 461523, 11755677, 200286018, 1709772488
+        .long   208770111, 11731674, 449063, 13000, 722915735, 891803585, -359039257, 717256887
+        .long   884822715, -356228765, 0, 0, 0, 0, 0, 0
+        .long   1748562666, 375755203, 22257599, 880706, 204957383, 1726543611, 203414350, 12060445
+        .long   12140509, 203414350, 1716346456, 202533644, 480385, 12060445, 202533644, 1704286012
+        .long   211511208, 12050717, 467827, 13737, 722979155, 891815400, -359126307, 717319810
+        .long   884834438, -356315134, 0, 0, 0, 0, 0, 0
+        .long   1743670944, 380031240, 22835777, 916656, 207289767, 1721578528, 205713782, 12372546
+        .long   12455878, 205713782, 1711115297, 204797126, 499994, 12372546, 204797126, 1698742751
+        .long   214284443, 12378091, 487359, 14516, 723045821, 891826095, -359214364, 717385955
+        .long   884845049, -356402502, 0, 0, 0, 0, 0, 0
+        .long   1738731457, 384339572, 23427916, 954028, 209639766, 1716570359, 208030335, 12692133
+        .long   12778863, 208030335, 1705834576, 207076306, 520379, 12692133, 207076306, 1693142443
+        .long   217090095, 12713999, 507689, 15338, 723115794, 891835673, -359303493, 717455380
+        .long   884854552, -356490933, 0, 0, 0, 0, 0, 0
+        .long   1733744063, 388679985, 24034311, 992878, 212007265, 1711519143, 210363897, 13019362
+        .long   13109624, 210363897, 1700504195, 209371019, 541570, 13019362, 209371019, 1687484833
+        .long   219928442, 13058650, 528850, 16206, 723189135, 891844137, -359393760, 717528146
+        .long   884862949, -356580493, 0, 0, 0, 0, 0, 0
+        .long   1728708632, 393052254, 24655259, 1033259, 214392139, 1706424932, 212714347, 13354390
+        .long   13448323, 212714347, 1695124064, 211681088, 563596, 13354390, 211681088, 1681769673
+        .long   222799762, 13412254, 550873, 17122, 723265908, 891851487, -359485235, 717604319
+        .long   884870242, -356671252, 0, 0, 0, 0, 0, 0
+        .long   1723625042, 397456135, 25291063, 1075229, 216794256, 1701287791, 215081557, 13697377
+        .long   13795125, 215081557, 1689694105, 214006327, 586489, 13697377, 214006327, 1675996728
+        .long   225704333, 13775029, 573794, 18089, 723346182, 891857726, -359577986, 717683964
+        .long   884876432, -356763277, 0, 0, 0, 0, 0, 0
+        .long   1718493179, 401891369, 25942029, 1118850, 219213474, 1696107797, 217465389, 14048484
+        .long   14150197, 217465389, 1684214252, 216346540, 610282, 14048484, 216346540, 1670165768
+        .long   228642431, 14147197, 597647, 19111, 723430025, 891862853, -359672084, 717767151
+        .long   884881519, -356856639, 0, 0, 0, 0, 0, 0
+        .long   1713312941, 406357680, 26608468, 1164181, 221649644, 1690885043, 219865700, 14407875
+        .long   14513710, 219865700, 1678684451, 218701519, 635008, 14407875, 218701519, 1664276576
+        .long   231614336, 14528982, 622469, 20189, 723517512, 891866869, -359767601, 717853953
+        .long   884885503, -356951408, 0, 0, 0, 0, 0, 0
+        .long   1708084237, 410854775, 27290695, 1211286, 224102605, 1685619636, 222282334, 14775716
+        .long   14885833, 222282334, 1673104658, 221071048, 660702, 14775716, 221071048, 1658328941
+        .long   234620322, 14920616, 648298, 21328, 723608718, 891869771, -359864611, 717944445
+        .long   884888382, -357047659, 0, 0, 0, 0, 0, 0
+        .long   1702806984, 415382343, 27989029, 1260233, 226572187, 1680311696, 224715130, 15152176
+        .long   15266743, 224715130, 1667474843, 223454897, 687400, 15152176, 223454897, 1652322667
+        .long   237660667, 15322335, 675175, 22529, 723703722, 891871557, -359963189, 718038706
+        .long   884890155, -357145465, 0, 0, 0, 0, 0, 0
+        .long   1697481113, 419940057, 28703794, 1311089, 229058213, 1674961359, 227163916, 15537425
+        .long   15656615, 227163916, 1661794990, 225852827, 715139, 15537425, 225852827, 1646257565
+        .long   240735646, 15734378, 703139, 23797, 723802606, 891872226, -360063410, 718136816
+        .long   884890818, -357244902, 0, 0, 0, 0, 0, 0
+        .long   1692106564, 424527569, 29435319, 1363924, 231560492, 1669568777, 229628513, 15931635
+        .long   16055628, 229628513, 1656065094, 228264588, 743959, 15931635, 228264588, 1640133458
+        .long   243845534, 16156992, 732234, 25136, 723905456, 891871773, -360165354, 718238860
+        .long   884890369, -357346047, 0, 0, 0, 0, 0, 0
+        .long   1686683289, 429144515, 30183933, 1418813, 234078827, 1664134115, 232108731, 16334980
+        .long   16463963, 232108731, 1650285163, 230689918, 773898, 16334980, 230689918, 1633950182
+        .long   246990605, 16590425, 762504, 26549, 724012359, 891870194, -360269098, 718344927
+        .long   884888802, -357448980, 0, 0, 0, 0, 0, 0
+        .long   1681211253, 433790513, 30949974, 1475829, 236613007, 1658657556, 234604371, 16747638
+        .long   16881804, 234604371, 1644455219, 233128542, 804998, 16747638, 233128542, 1627707582
+        .long   250171133, 17034935, 793994, 28040, 724123408, 891867483, -360374725, 718455107
+        .long   884886112, -357553780, 0, 0, 0, 0, 0, 0
+        .long   1675690431, 438465159, 31733781, 1535052, 239162814, 1653139297, 237115226, 17169785
+        .long   17309335, 237115226, 1638575301, 235580174, 837301, 17169785, 235580174, 1621405516
+        .long   253387390, 17490781, 826752, 29613, 724238698, 891863634, -360482318, 718569494
+        .long   884882294, -357660531, 0, 0, 0, 0, 0, 0
+        .long   1670120811, 443168031, 32535698, 1596561, 241728017, 1647579553, 239641078, 17601602
+        .long   17746744, 239641078, 1632645457, 238044516, 870852, 17601602, 238044516, 1615043855
+        .long   256639649, 17958230, 860827, 31273, 724358329, 891858641, -360591962, 718688188
+        .long   884877339, -357769316, 0, 0, 0, 0, 0, 0
+        .long   1664502396, 447898688, 33356072, 1660441, 244308375, 1641978555, 242181700, 18043272
+        .long   18194221, 242181700, 1626665755, 240521259, 905695, 18043272, 240521259, 1608622483
+        .long   259928179, 18437553, 896271, 33025, 724482402, 891852495, -360703743, 718811290
+        .long   884871242, -357880222, 0, 0, 0, 0, 0, 0
+        .long   1658835199, 452656669, 34195255, 1726777, 246903638, 1636336551, 244736857, 18494978
+        .long   18651957, 244736857, 1620636273, 243010079, 941879, 18494978, 243010079, 1602141295
+        .long   263253250, 18929026, 933136, 34874, 724611024, 891845187, -360817751, 718938905
+        .long   884863991, -357993337, 0, 0, 0, 0, 0, 0
+        .long   1653119249, 457441491, 35053602, 1795659, 249513541, 1630653805, 247306300, 18956905
+        .long   19120147, 247306300, 1614557108, 245510641, 979450, 18956905, 245510641, 1595600203
+        .long   266615131, 19432931, 971477, 36824, 724744305, 891836709, -360934075, 719071143
+        .long   884855579, -358108751, 0, 0, 0, 0, 0, 0
+        .long   1647354585, 462252652, 35931472, 1867177, 252137810, 1624930601, 249889773, 19429241
+        .long   19598985, 249889773, 1608428371, 248022596, 1018460, 19429241, 248022596, 1588999129
+        .long   270014088, 19949556, 1011351, 38881, 724882359, 891827049, -361052809, 719208117
+        .long   884845995, -358226556, 0, 0, 0, 0, 0, 0
+        .long   1641541264, 467089629, 36829226, 1941427, 254776161, 1619167239, 252487010, 19912175
+        .long   20088669, 252487010, 1602250188, 250545583, 1058960, 19912175, 250545583, 1582338013
+        .long   273450386, 20479194, 1052816, 41051, 725025305, 891816196, -361174048, 719349943
+        .long   884835227, -358346846, 0, 0, 0, 0, 0, 0
+        .long   1635679354, 471951876, 37747230, 2018507, 257428296, 1613364036, 255097733, 20405897
+        .long   20589398, 255097733, 1596022703, 253079227, 1101004, 20405897, 253079227, 1575616806
+        .long   276924291, 21022144, 1095935, 43341, 725173265, 891804137, -361297890, 719496745
+        .long   884823262, -358469719, 0, 0, 0, 0, 0, 0
+        .long   1629768940, 476838827, 38685852, 2098517, 260093906, 1607521329, 257721656, 20910600
+        .long   21101374, 257721656, 1589746077, 255623139, 1144646, 20910600, 255623139, 1568835477
+        .long   280436065, 21578711, 1140770, 45756, 725326365, 891790859, -361424435, 719648647
+        .long   884810088, -358595272, 0, 0, 0, 0, 0, 0
+        .long   1623810120, 481749895, 39645465, 2181563, 262772670, 1601639474, 260358480, 21426475
+        .long   21624799, 260358480, 1583420484, 258176917, 1189943, 21426475, 258176917, 1561994009
+        .long   283985968, 22149204, 1187387, 48303, 725484738, 891776347, -361553784, 719805780
+        .long   884795690, -358723609, 0, 0, 0, 0, 0, 0
+        .long   1617803008, 486684468, 40626443, 2267751, 265464255, 1595718843, 263007898, 21953719
+        .long   22159878, 263007898, 1577046119, 260740146, 1236955, 21953719, 260740146, 1555092401
+        .long   287574260, 22733940, 1235854, 50989, 725648518, 891760586, -361686042, 719968279
+        .long   884780052, -358854832, 0, 0, 0, 0, 0, 0
+        .long   1611747734, 491641914, 41629163, 2357193, 268168317, 1589759831, 265669589, 22492526
+        .long   22706816, 265669589, 1570623193, 263312396, 1285742, 22492526, 263312396, 1548130668
+        .long   291201198, 23333241, 1286241, 53822, 725817847, 891743559, -361821318, 720136282
+        .long   884763159, -358989049, 0, 0, 0, 0, 0, 0
+        .long   1605644442, 496621578, 42654006, 2450003, 270884497, 1583762848, 268343225, 23043094
+        .long   23265821, 268343225, 1564151936, 265893222, 1336365, 23043094, 265893222, 1541108842
+        .long   294867037, 23947434, 1338620, 56809, 725992871, 891725249, -361959721, 720309935
+        .long   884744992, -359126368, 0, 0, 0, 0, 0, 0
+        .long   1599493294, 501622781, 43701355, 2546299, 273612426, 1577728326, 271028466, 23605621
+        .long   23837102, 271028466, 1557632592, 268482167, 1388891, 23605621, 268482167, 1534026971
+        .long   298572032, 24576855, 1393068, 59959, 726173738, 891705637, -362101364, 720489387
+        .long   884725533, -359266902, 0, 0, 0, 0, 0, 0
+        .long   1593294468, 506644822, 44771594, 2646203, 276351721, 1571656717, 273724960, 24180305
+        .long   24420869, 273724960, 1551065428, 271078757, 1443384, 24180305, 271078757, 1526885123
+        .long   302316433, 25221842, 1449663, 63281, 726360606, 891684702, -362246363, 720674792
+        .long   884704762, -359410767, 0, 0, 0, 0, 0, 0
+        .long   1587048156, 511686976, 45865110, 2749841, 279101987, 1565548491, 276432345, 24767347
+        .long   25017333, 276432345, 1544450728, 273682504, 1499913, 24767347, 273682504, 1519683381
+        .long   306100489, 25882743, 1508485, 66783, 726553636, 891662425, -362394837, 720866311
+        .long   884682659, -359558079, 0, 0, 0, 0, 0, 0
+        .long   1580754570, 516748496, 46982293, 2857340, 281862816, 1559404139, 279150248, 25366947
+        .long   25626706, 279150248, 1537788793, 276292907, 1558549, 25366947, 276292907, 1512421846
+        .long   309924449, 26559910, 1569619, 70474, 726752993, 891638782, -362546910, 721064108
+        .long   884659202, -359708961, 0, 0, 0, 0, 0, 0
+        .long   1574413938, 521828608, 48123534, 2968836, 284633786, 1553224174, 281878285, 25979306
+        .long   26249200, 281878285, 1531079946, 278909448, 1619365, 25979306, 278909448, 1505100640
+        .long   313788556, 27253701, 1633150, 74366, 726958851, 891613751, -362702705, 721268354
+        .long   884634367, -359863536, 0, 0, 0, 0, 0, 0
+        .long   1568026505, 526926517, 49289225, 3084465, 287414464, 1547009126, 284616060, 26604626
+        .long   26885032, 284616060, 1524324527, 281531596, 1682435, 26604626, 281531596, 1497719901
+        .long   317693053, 27964482, 1699169, 78468, 727171387, 891587307, -362862352, 721479226
+        .long   884608129, -360021934, 0, 0, 0, 0, 0, 0
+        .long   1561592535, 532041402, 50479759, 3204368, 290204401, 1540759549, 287363169, 27243108
+        .long   27534414, 287363169, 1517522898, 284158801, 1747837, 27243108, 284158801, 1490279790
+        .long   321638180, 28692623, 1767768, 82792, 727390785, 891559423, -363025983, 721696907
+        .long   884580464, -360184284, 0, 0, 0, 0, 0, 0
+        .long   1555112309, 537172419, 51695531, 3328691, 293003138, 1534476015, 290119194, 27894954
+        .long   28197562, 290119194, 1510675438, 286790503, 1815650, 27894954, 286790503, 1482780484
+        .long   325624173, 29438504, 1839044, 87349, 727617237, 891530073, -363193734, 721921586
+        .long   884551344, -360350722, 0, 0, 0, 0, 0, 0
+        .long   1548586125, 542318699, 52936937, 3457583, 295810200, 1528159118, 292883705, 28560367
+        .long   28874693, 292883705, 1503782548, 289426122, 1885954, 28560367, 289426122, 1475222181
+        .long   329651268, 30202507, 1913095, 92152, 727850938, 891499228, -363365746, 722153458
+        .long   884520740, -360521387, 0, 0, 0, 0, 0, 0
+        .long   1542014302, 547479349, 54204372, 3591199, 298625099, 1521809474, 295656265, 29239549
+        .long   29566021, 295656265, 1496844650, 292065066, 1958836, 29239549, 292065066, 1467605101
+        .long   333719696, 30985023, 1990025, 97213, 728092093, 891466858, -363542161, 722392726
+        .long   884488623, -360696421, 0, 0, 0, 0, 0, 0
+        .long   1535397177, 552653449, 55498234, 3729698, 301447336, 1515427718, 298436422, 29932700
+        .long   30271764, 298436422, 1489862185, 294706725, 2034381, 29932700, 294706725, 1459929485
+        .long   337829686, 31786451, 2069940, 102545, 728340912, 891432932, -363723127, 722639597
+        .long   884454963, -360875971, 0, 0, 0, 0, 0, 0
+        .long   1528735104, 557840057, 56818917, 3873242, 304276395, 1509014508, 301223716, 30640024
+        .long   30992137, 301223716, 1482835615, 297350474, 2112677, 30640024, 297350474, 1452195591
+        .long   341981464, 32607192, 2152949, 108164, 728597613, 891397416, -363908797, 722894288
+        .long   884419725, -361060187, 0, 0, 0, 0, 0, 0
+        .long   1522028459, 563038205, 58166818, 4021999, 307111748, 1502570523, 304017673, 31361719
+        .long   31727355, 304017673, 1475765424, 299995674, 2193818, 31361719, 299995674, 1444403705
+        .long   346175253, 33447659, 2239167, 114084, 728862419, 891360277, -364099326, 723157022
+        .long   884382877, -361249225, 0, 0, 0, 0, 0, 0
+        .long   1515277635, 568246899, 59542333, 4176141, 309952854, 1496096462, 306817810, 32097987
+        .long   32477636, 306817810, 1468652116, 302641669, 2277895, 32097987, 302641669, 1436554129
+        .long   350411274, 34308267, 2328710, 120320, 729135565, 891321479, -364294874, 723428029
+        .long   884344382, -361443243, 0, 0, 0, 0, 0, 0
+        .long   1508483046, 573465123, 60945855, 4335847, 312799158, 1489593046, 309623633, 32849026
+        .long   33243194, 309623633, 1461496217, 305287786, 2365007, 32849026, 305287786, 1428647191
+        .long   354689742, 35189441, 2421701, 126889, 729417290, 891280983, -364495608, 723707549
+        .long   884304204, -361642405, 0, 0, 0, 0, 0, 0
+        .long   1501645125, 578691832, 62377777, 4501298, 315650090, 1483061019, 312434636, 33615033
+        .long   34024242, 312434636, 1454298275, 307933339, 2455253, 33615033, 307933339, 1420683241
+        .long   359010872, 36091610, 2518265, 133808, 729707842, 891238752, -364701697, 723995827
+        .long   884262303, -361846881, 0, 0, 0, 0, 0, 0
+        .long   1494764326, 583925960, 63838492, 4672680, 318505069, 1476501143, 315250304, 34396206
+        .long   34820995, 315250304, 1447058857, 310577624, 2548735, 34396206, 310577624, 1412662651
+        .long   363374874, 37015213, 2618531, 141095, 730007479, 891194743, -364913317, 724293118
+        .long   884218639, -362056844, 0, 0, 0, 0, 0, 0
+        .long   1487841121, 589166412, 65328387, 4850187, 321363497, 1469914204, 318070110, 35192740
+        .long   35633666, 318070110, 1439778557, 313219922, 2645557, 35192740, 313219922, 1404585817
+        .long   367781954, 37960691, 2722634, 148770, 730316465, 891148915, -365130646, 724599686
+        .long   884173169, -362272473, 0, 0, 0, 0, 0, 0
+        .long   1480876006, 594412072, 66847851, 5034016, 324224766, 1463301009, 320893516, 36004826
+        .long   36462464, 320893516, 1432457985, 315859500, 2745827, 36004826, 315859500, 1396453158
+        .long   372232317, 38928497, 2830711, 156852, 730635076, 891101222, -365353872, 724915802
+        .long   884125850, -362493951, 0, 0, 0, 0, 0, 0
+        .long   1473869494, 599661796, 68397267, 5224368, 327088252, 1456662386, 323719974, 36832657
+        .long   37307600, 323719974, 1425097776, 318495606, 2849656, 36832657, 318495606, 1388265119
+        .long   376726163, 39919086, 2942907, 165361, 730963594, 891051619, -365583185, 725241749
+        .long   884076635, -362721468, 0, 0, 0, 0, 0, 0
+        .long   1466822121, 604914417, 69977016, 5421453, 329953318, 1449999182, 326548928, 37676422
+        .long   38169281, 326548928, 1417698588, 321127475, 2957156, 37676422, 321127475, 1380022167
+        .long   381263687, 40932923, 3059368, 174321, 731302314, 891000057, -365818781, 725577817
+        .long   884025477, -362955220, 0, 0, 0, 0, 0, 0
+        .long   1459734441, 610168744, 71587475, 5625482, 332819315, 1443312269, 329379807, 38536306
+        .long   39047714, 329379807, 1410261100, 323754325, 3068445, 38536306, 323754325, 1371724794
+        .long   385845082, 41970479, 3180247, 183753, 731651538, 890946486, -366060863, 725924308
+        .long   883972325, -363195407, 0, 0, 0, 0, 0, 0
+        .long   1452607031, 615423559, 73229018, 5836675, 335685578, 1436602536, 332212035, 39412494
+        .long   39943101, 332212035, 1402786012, 326375360, 3183641, 39412494, 326375360, 1363373518
+        .long   390470539, 43032231, 3305702, 193682, 732011580, 890890854, -366309640, 726281531
+        .long   883917129, -363442237, 0, 0, 0, 0, 0, 0
+        .long   1445440490, 620677623, 74902014, 6055255, 338551431, 1429870895, 335045023, 40305166
+        .long   40855644, 335045023, 1395274047, 328989768, 3302866, 40305166, 328989768, 1354968881
+        .long   395140242, 44118662, 3435894, 204134, 732382763, 890833106, -366565327, 726649809
+        .long   883859832, -363695923, 0, 0, 0, 0, 0, 0
+        .long   1438235434, 625929669, 76606826, 6281452, 341416183, 1423118278, 337878173, 41214500
+        .long   41785541, 337878173, 1387725953, 331596721, 3426246, 41214500, 331596721, 1346511452
+        .long   399854372, 45230265, 3570993, 215133, 732765423, 890773185, -366828146, 727029474
+        .long   883800381, -363956684, 0, 0, 0, 0, 0, 0
+        .long   1430992504, 631178411, 78343813, 6515501, 344279133, 1416345637, 340710878, 42140670
+        .long   42732989, 340710878, 1380142495, 334195377, 3553910, 42140670, 334195377, 1338001825
+        .long   404613108, 46367536, 3711170, 226710, 733159907, 890711033, -367098324, 727420870
+        .long   883738714, -364224748, 0, 0, 0, 0, 0, 0
+        .long   1423712361, 636422535, 80113327, 6757643, 347139564, 1409553945, 343542522, 43083847
+        .long   43698178, 343542522, 1372524466, 336784879, 3685987, 43083847, 336784879, 1329440619
+        .long   409416624, 47530980, 3856604, 238891, 733566573, 890646587, -367376099, 727824352
+        .long   883674773, -364500348, 0, 0, 0, 0, 0, 0
+        .long   1416395686, 641660706, 81915714, 7008124, 349996749, 1402744193, 346372479, 44044196
+        .long   44681299, 346372479, 1364872676, 339364355, 3822613, 44044196, 339364355, 1320828480
+        .long   414265089, 48721108, 4007480, 251709, 733985791, 890579784, -367661711, 728240288
+        .long   883608494, -364783725, 0, 0, 0, 0, 0, 0
+        .long   1409043183, 646891566, 83751314, 7267197, 352849945, 1395917394, 349200115, 45021880
+        .long   45682535, 349200115, 1357187961, 341932918, 3963926, 45021880, 341932918, 1312166080
+        .long   419158669, 49938437, 4163987, 265194, 734417944, 890510558, -367955413, 728669059
+        .long   883539810, -365075127, 0, 0, 0, 0, 0, 0
+        .long   1401655576, 652113733, 85620458, 7535120, 355698400, 1389074577, 352024787, 46017057
+        .long   46702068, 352024787, 1349471176, 344489667, 4110065, 46017057, 344489667, 1303454119
+        .long   424097527, 51183491, 4326321, 279381, 734863429, 890438840, -368257461, 729111057
+        .long   883468653, -365374811, 0, 0, 0, 0, 0, 0
+        .long   1394233610, 657325806, 87523469, 7812156, 358541349, 1382216793, 354845846, 47029878
+        .long   47740074, 354845846, 1341723202, 347033689, 4261176, 47029878, 347033689, 1294693324
+        .long   429081820, 52456801, 4494685, 294304, 735322657, 890364557, -368568123, 729566690
+        .long   883394951, -365683042, 0, 0, 0, 0, 0, 0
+        .long   1386778052, 662526358, 89460663, 8098576, 361378014, 1375345109, 357662631, 48060491
+        .long   48796726, 357662631, 1333944936, 349564055, 4417405, 48060491, 349564055, 1285884445
+        .long   434111703, 53758905, 4669286, 309999, 735796050, 890287636, -368887674, 730036378
+        .long   883318632, -366000091, 0, 0, 0, 0, 0, 0
+        .long   1379289690, 667713945, 91432347, 8394654, 364207606, 1368460611, 360474477, 49109039
+        .long   49872189, 360474477, 1326137303, 352079823, 4578902, 49109039, 352079823, 1277028264
+        .long   439187326, 55090346, 4850340, 326506, 736284049, 890207998, -369216396, 730520556
+        .long   883239617, -366326240, 0, 0, 0, 0, 0, 0
+        .long   1371769332, 672887099, 93438815, 8700673, 367029327, 1361564403, 363280711, 50175656
+        .long   50966626, 363280711, 1318301245, 354580038, 4745822, 50175656, 354580038, 1268125589
+        .long   444308833, 56451675, 5038066, 343865, 736787107, 890125562, -369554583, 731019676
+        .long   883157827, -366661780, 0, 0, 0, 0, 0, 0
+        .long   1364217807, 678044334, 95480354, 9016920, 369842364, 1354657606, 366080651, 51260473
+        .long   52080193, 366080651, 1310437726, 357063732, 4918320, 51260473, 357063732, 1259177253
+        .long   449476367, 57843447, 5232693, 362117, 737305694, 890040246, -369902538, 731534204
+        .long   883073178, -367007010, 0, 0, 0, 0, 0, 0
+        .long   1356635968, 683184142, 97557239, 9343687, 372645896, 1347741358, 368873612, 52363613
+        .long   53213039, 368873612, 1302547732, 359529925, 5096557, 52363613, 359529925, 1250184119
+        .long   454690066, 59266226, 5434456, 381306, 737840297, 889951961, -370260571, 732064622
+        .long   882985585, -367362241, 0, 0, 0, 0, 0, 0
+        .long   1349024683, 688304998, 99669733, 9681275, 375439090, 1340816810, 371658901, 53485193
+        .long   54365309, 371658901, 1294632270, 361977626, 5280695, 53485193, 361977626, 1241147077
+        .long   459950062, 60720580, 5643596, 401479, 738391418, 889860617, -370629005, 732611429
+        .long   882894956, -367727791, 0, 0, 0, 0, 0, 0
+        .long   1341384845, 693405359, 101818088, 10029987, 378221105, 1333885133, 374435817, 54625322
+        .long   55537139, 374435817, 1286692367, 364405830, 5470902, 54625322, 364405830, 1232067045
+        .long   465256486, 62207084, 5860362, 422684, 738959579, 889766121, -371008172, 733175143
+        .long   882801199, -368103990, 0, 0, 0, 0, 0, 0
+        .long   1333717365, 698483663, 104002542, 10390136, 380991089, 1326947509, 377203659, 55784101
+        .long   56728659, 377203659, 1278729069, 366813523, 5667347, 55784101, 366813523, 1222944967
+        .long   470609463, 63726321, 6085011, 444971, 739545320, 889668373, -371398418, 733756298
+        .long   882704217, -368491181, 0, 0, 0, 0, 0, 0
+        .long   1326023175, 703538330, 106223320, 10762037, 383748180, 1320005138, 379961716, 56961626
+        .long   57939993, 379961716, 1270743443, 369199680, 5870202, 56961626, 369199680, 1213781818
+        .long   476009113, 65278876, 6317805, 468393, 740149198, 889567273, -371800095, 734355449
+        .long   882603908, -368889714, 0, 0, 0, 0, 0, 0
+        .long   1318303227, 708567766, 108480633, 11146013, 386491509, 1313059229, 382709276, 58157980
+        .long   59171254, 382709276, 1262736577, 371563264, 6079643, 58157980, 371563264, 1204578596
+        .long   481455554, 66865343, 6559016, 493005, 740771793, 889462714, -372213573, 734973171
+        .long   882500168, -369299955, 0, 0, 0, 0, 0, 0
+        .long   1310558491, 713570362, 110774677, 11542391, 389220197, 1306111009, 385445622, 59373243
+        .long   60422551, 385445622, 1254709575, 373903231, 6295850, 59373243, 373903231, 1195336332
+        .long   486948900, 68486321, 6808923, 518864, 741413703, 889354587, -372639229, 735610056
+        .long   882392887, -369722279, 0, 0, 0, 0, 0, 0
+        .long   1302789958, 718544491, 113105632, 11951506, 391933359, 1299161712, 388170032, 60607481
+        .long   61693981, 388170032, 1246663561, 376218526, 6519003, 60607481, 376218526, 1186056080
+        .long   492489259, 70142414, 7067814, 546030, 742075548, 889242777, -373077455, 736266721
+        .long   882281953, -370157075, 0, 0, 0, 0, 0, 0
+        .long   1294998637, 723488517, 115473663, 12373697, 394630100, 1292212588, 390881783, 61860753
+        .long   62985634, 390881783, 1238599677, 378508087, 6749289, 61860753, 378508087, 1176738924
+        .long   498076736, 71834231, 7335983, 574567, 742757973, 889127166, -373528658, 736943804
+        .long   882167246, -370604746, 0, 0, 0, 0, 0, 0
+        .long   1287185555, 728400787, 117878917, 12809308, 397309520, 1285264893, 393580150, 63133109
+        .long   64297591, 393580150, 1230519085, 380770842, 6986895, 63133109, 380770842, 1167385976
+        .long   503711434, 73562388, 7613735, 604540, 743461642, 889007630, -373993255, 737641965
+        .long   882048646, -371065707, 0, 0, 0, 0, 0, 0
+        .long   1279351760, 733279639, 120321525, 13258688, 399970712, 1278319897, 396264403, 64424587
+        .long   65629923, 396264403, 1222422960, 383005715, 7232012, 64424587, 383005715, 1157998373
+        .long   509393449, 75327505, 7901380, 636018, 744187247, 888884041, -374471682, 738361890
+        .long   881926025, -371540388, 0, 0, 0, 0, 0, 0
+        .long   1271498314, 738123399, 122801597, 13722194, 402612763, 1271378877, 398933814, 65735217
+        .long   66982689, 398933814, 1214312497, 385211621, 7484833, 65735217, 385211621, 1148577280
+        .long   515122875, 77130208, 8199241, 669072, 744935502, 888756266, -374964386, 739104288
+        .long   881799249, -372029235, 0, 0, 0, 0, 0, 0
+        .long   1263626300, 742930383, 125319226, 14200185, 405234755, 1264443116, 401587653, 67065016
+        .long   68355942, 401587653, 1206188905, 387387468, 7745555, 67065016, 387387468, 1139123889
+        .long   520899803, 78971129, 8507646, 703777, 745707150, 888624165, -375471831, 739869895
+        .long   881668182, -372532708, 0, 0, 0, 0, 0, 0
+        .long   1255736814, 747698901, 127874485, 14693025, 407835764, 1257513906, 404225188, 68413990
+        .long   69749719, 404225188, 1198053411, 389532163, 8014378, 68413990, 389532163, 1129639421
+        .long   526724318, 80850901, 8826935, 740211, 746502959, 888487594, -375994499, 740659474
+        .long   881532681, -373051285, 0, 0, 0, 0, 0, 0
+        .long   1247830973, 752427251, 130467427, 15201086, 410414864, 1250592547, 406845691, 69782134
+        .long   71164051, 406845691, 1189907254, 391644604, 8291502, 69782134, 391644604, 1120125120
+        .long   532596503, 82770166, 9157454, 778455, 747323726, 888346404, -376532886, 741473817
+        .long   881392596, -373585457, 0, 0, 0, 0, 0, 0
+        .long   1239909906, 757113729, 133098082, 15724741, 412971125, 1243680339, 409448430, 71169432
+        .long   72598954, 409448430, 1181751689, 393723690, 8577131, 71169432, 393723690, 1110582257
+        .long   538516439, 84729567, 9499561, 818595, 748170280, 888200438, -377087507, 742313744
+        .long   881247772, -374135737, 0, 0, 0, 0, 0, 0
+        .long   1231974760, 761756622, 135766460, 16264368, 415503612, 1236778590, 412032680, 72575854
+        .long   74054433, 412032680, 1173587984, 395768312, 8871473, 72575854, 395768312, 1101012130
+        .long   544484199, 86729755, 9853622, 860719, 749043477, 888049534, -377658897, 743180106
+        .long   881098050, -374702654, 0, 0, 0, 0, 0, 0
+        .long   1224026695, 766354217, 138472547, 16820351, 418011391, 1229888610, 414597714, 74001357
+        .long   75530480, 414597714, 1165417420, 397777364, 9174737, 74001357, 397777364, 1091416063
+        .long   550499859, 88771382, 10220014, 904919, 749944209, 887893523, -378247608, 744073787
+        .long   880943260, -375286757, 0, 0, 0, 0, 0, 0
+        .long   1216066887, 770904795, 141216307, 17393075, 420493524, 1223011709, 417142810, 75445888
+        .long   77027076, 417142810, 1157241290, 399749735, 9487132, 75445888, 399749735, 1081795403
+        .long   556563486, 90855105, 10599122, 951292, 750873400, 887732230, -378854212, 744995704
+        .long   880783230, -375888613, 0, 0, 0, 0, 0, 0
+        .long   1208096525, 775406637, 143997677, 17982931, 422949075, 1216149201, 419667248, 76909376
+        .long   78544188, 419667248, 1149060899, 401684317, 9808872, 76909376, 401684317, 1072151523
+        .long   562675147, 92981586, 10991343, 999939, 751832008, 887565472, -379479305, 745946808
+        .long   880617777, -376508812, 0, 0, 0, 0, 0, 0
+        .long   1200116812, 779858024, 146816574, 18590313, 425377104, 1209302395, 422170313, 78391739
+        .long   80081768, 422170313, 1140877560, 403580000, 10140171, 78391739, 403580000, 1062485821
+        .long   568834907, 95151489, 11397082, 1050963, 752821029, 887393060, -380123500, 746928088
+        .long   880446714, -377147965, 0, 0, 0, 0, 0, 0
+        .long   1192128960, 784257238, 149672885, 19215617, 427776675, 1202472603, 424651295, 79892881
+        .long   81639755, 424651295, 1132692599, 405435678, 10481245, 79892881, 405435678, 1052799718
+        .long   575042825, 97365481, 11816756, 1104474, 753841498, 887214794, -380787438, 747940569
+        .long   880269844, -377806706, 0, 0, 0, 0, 0, 0
+        .long   1184134197, 788602565, 152566473, 19859241, 430146854, 1195661131, 427109488, 81412691
+        .long   83218076, 427109488, 1124507349, 407250246, 10832313, 81412691, 407250246, 1043094658
+        .long   581298960, 99624235, 12250792, 1160586, 754894489, 887030470, -381471780, 748985317
+        .long   880086963, -378485691, 0, 0, 0, 0, 0, 0
+        .long   1176133760, 792892293, 155497173, 20521589, 432486705, 1188869282, 429544193, 82951041
+        .long   84816640, 429544193, 1116323150, 409022604, 11193594, 82951041, 409022604, 1033372110
+        .long   587603368, 101928424, 12699627, 1219416, 755981117, 886839873, -382177215, 750063439
+        .long   879897858, -379185604, 0, 0, 0, 0, 0, 0
+        .long   1168128896, 797124719, 158464793, 21203062, 434795301, 1182098354, 431954717, 84507790
+        .long   86435342, 431954717, 1108141352, 410751655, 11565307, 84507790, 410751655, 1023633561
+        .long   593956102, 104278726, 13163709, 1281089, 757102542, 886642781, -382904456, 751176086
+        .long   879702308, -379907152, 0, 0, 0, 0, 0, 0
+        .long   1160120861, 801298143, 161469113, 21904067, 437071714, 1175349637, 434340377, 86082783
+        .long   88074061, 434340377, 1099963307, 412436310, 11947673, 86082783, 412436310, 1013880525
+        .long   600357213, 106675820, 13643498, 1345732, 758259970, 886438961, -383654244, 752324454
+        .long   879500084, -380651071, 0, 0, 0, 0, 0, 0
+        .long   1152110922, 805410877, 164509882, 22625010, 439315024, 1168624414, 436700494, 87675844
+        .long   89732663, 436700494, 1091790376, 414075484, 12340915, 87675844, 414075484, 1004114532
+        .long   606806750, 109120387, 14139462, 1413479, 759454654, 886228172, -384427349, 753509786
+        .long   879290945, -381418124, 0, 0, 0, 0, 0, 0
+        .long   1144100351, 809461241, 167586822, 23366298, 441524313, 1161923960, 439034401, 89286785
+        .long   91410994, 439034401, 1083623922, 415668103, 12745253, 89286785, 415668103, 994337137
+        .long   613304760, 111613112, 14652084, 1484468, 760687897, 886010162, -385224572, 754733375
+        .long   879074641, -382209107, 0, 0, 0, 0, 0, 0
+        .long   1136090429, 813447570, 170699624, 24128338, 443698675, 1155249535, 441341439, 90915400
+        .long   93108886, 441341439, 1075465312, 417213101, 13160912, 90915400, 417213101, 984549911
+        .long   619851290, 114154680, 15181856, 1558843, 761961054, 885784669, -386046744, 755996567
+        .long   878850913, -383024843, 0, 0, 0, 0, 0, 0
+        .long   1128082441, 817368210, 173847946, 24911539, 445837206, 1148602393, 443620959, 92561467
+        .long   94826152, 443620959, 1067315914, 418709420, 13588112, 92561467, 418709420, 974754447
+        .long   626446383, 116745780, 15729281, 1636756, 763275537, 885551421, -386894730, 757300760
+        .long   878619491, -383866191, 0, 0, 0, 0, 0, 0
+        .long   1120077680, 821221523, 177031417, 25716305, 447939012, 1141983769, 445872323, 94224745
+        .long   96562591, 445872323, 1059177097, 420156017, 14027076, 94224745, 420156017, 964952352
+        .long   633090083, 119387099, 16294876, 1718362, 764632813, 885310133, -387769431, 758647412
+        .long   878380092, -384734045, 0, 0, 0, 0, 0, 0
+        .long   1112077441, 825005886, 180249632, 26543044, 450003210, 1135394887, 448094904, 95904977
+        .long   98317981, 448094904, 1051050233, 421551860, 14478024, 95904977, 421551860, 955145255
+        .long   639782430, 122079327, 16879167, 1803822, 766034411, 885060509, -388671782, 760038038
+        .long   878132422, -385629332, 0, 0, 0, 0, 0, 0
+        .long   1104083024, 828719697, 183502155, 27392158, 452028926, 1128836955, 450288089, 97601888
+        .long   100092085, 450288089, 1042936688, 422895931, 14941177, 97601888, 422895931, 945334800
+        .long   646523467, 124823156, 17482692, 1893307, 767481922, 884802242, -389602758, 761474218
+        .long   877876177, -386553021, 0, 0, 0, 0, 0, 0
+        .long   1096095730, 832361374, 186788515, 28264050, 454015295, 1122311159, 452451275, 99315186
+        .long   101884645, 452451275, 1034837830, 424187225, 15416755, 99315186, 424187225, 935522644
+        .long   653313235, 127619276, 18106004, 1986989, 768977003, 884535010, -390563374, 762957596
+        .long   877611036, -387506118, 0, 0, 0, 0, 0, 0
+        .long   1088116863, 835929354, 190108210, 29159117, 455961466, 1115818672, 454583874, 101044558
+        .long   103695387, 454583874, 1026755021, 425424757, 15904973, 101044558, 425424757, 925710463
+        .long   660151772, 130468379, 18749663, 2085052, 770521382, 884258478, -391554690, 764489886
+        .long   877336669, -388489673, 0, 0, 0, 0, 0, 0
+        .long   1080147725, 839422100, 193460700, 30077755, 457866600, 1109360643, 456685312, 102789677
+        .long   105524018, 456685312, 1018689620, 426607557, 16406048, 102789677, 426607557, 915899943
+        .long   667039119, 133371157, 19414246, 2187684, 772116860, 883972297, -392577806, 766072875
+        .long   877052729, -389504781, 0, 0, 0, 0, 0, 0
+        .long   1072189620, 842838101, 196845413, 31020354, 459729873, 1102938199, 458755029, 104550193
+        .long   107370225, 458755029, 1010642979, 427734675, 16920193, 104550193, 427734675, 906092786
+        .long   673975316, 136328301, 20100338, 2295080, 773765314, 883676104, -393633874, 767708425
+        .long   876758854, -390552583, 0, 0, 0, 0, 0, 0
+        .long   1064243848, 846175870, 200261741, 31987300, 461550475, 1096552446, 460792480, 106325740
+        .long   109233677, 460792480, 1002616446, 428805180, 17447618, 106325740, 428805180, 896290705
+        .long   680960403, 139340503, 20808538, 2407444, 775468700, 883369521, -394724094, 769398477
+        .long   876454671, -391634268, 0, 0, 0, 0, 0, 0
+        .long   1056311710, 849433951, 203709041, 32978974, 463327610, 1090204464, 462797137, 108115934
+        .long   111114022, 462797137, 994611357, 429818163, 17988531, 108115934, 429818163, 886495423
+        .long   687994421, 142408452, 21539459, 2524986, 777229063, 883052152, -395849718, 771145060
+        .long   876139786, -392751081, 0, 0, 0, 0, 0, 0
+        .long   1048394499, 852610918, 207186634, 33995748, 465060501, 1083895307, 464768487, 109920369
+        .long   113010891, 464768487, 986629042, 430772739, 18543135, 109920369, 430772739, 876708673
+        .long   695077413, 145532839, 22293723, 2647925, 779048532, 882723585, -397012054, 772950287
+        .long   875813791, -393904319, 0, 0, 0, 0, 0, 0
+        .long   1040493506, 855705375, 210693805, 35037990, 466748387, 1077626002, 466706035, 111738622
+        .long   114923893, 466706035, 978670819, 431668045, 19111631, 111738622, 431668045, 866932197
+        .long   702209420, 148714350, 23071967, 2776486, 780929335, 882383391, -398212470, 774816368
+        .long   875476260, -395095338, 0, 0, 0, 0, 0, 0
+        .long   1032610016, 858715964, 214229801, 36106058, 468390526, 1071397547, 468609303, 113570250
+        .long   116852619, 468609303, 970737996, 432503244, 19694214, 113570250, 432503244, 857167746
+        .long   709390488, 151953672, 23874838, 2910904, 782873795, 882031123, -399452394, 776745606
+        .long   875126750, -396325556, 0, 0, 0, 0, 0, 0
+        .long   1024745306, 861641357, 217793836, 37200304, 469986195, 1065210911, 470477830, 115414792
+        .long   118796638, 470477830, 962831867, 433277526, 20291075, 115414792, 433277526, 847417075
+        .long   716620661, 155251490, 24702998, 3051423, 784884340, 881666314, -400733321, 778740414
+        .long   874764797, -397596456, 0, 0, 0, 0, 0, 0
+        .long   1016900645, 864480269, 221385082, 38321066, 471534692, 1059067029, 472311175, 117271766
+        .long   120755499, 472311175, 954953713, 433990109, 20902400, 117271766, 433990109, 837681946
+        .long   723899988, 158608486, 25557119, 3198293, 786963509, 881288478, -402056816, 780803307
+        .long   874389918, -398909591, 0, 0, 0, 0, 0, 0
+        .long   1009077293, 867231449, 225002679, 39468675, 473035336, 1052966805, 474108915, 119140673
+        .long   122728734, 474108915, 947104798, 434640240, 21528368, 119140673, 434640240, 827964125
+        .long   731228519, 162025341, 26437888, 3351775, 789113954, 880897105, -403424517, 782936919
+        .long   874001609, -400266586, 0, 0, 0, 0, 0, 0
+        .long   1001276502, 869893690, 228645728, 40643450, 474487467, 1046911109, 475870647, 121020992
+        .long   124715852, 475870647, 939286374, 435227196, 22169155, 121020992, 435227196, 818265381
+        .long   738606305, 165502732, 27346003, 3512139, 791338452, 880491668, -404838141, 785144004
+        .long   873599346, -401669144, 0, 0, 0, 0, 0, 0
+        .long   993499510, 872465823, 232313292, 41845698, 475890449, 1040900776, 477595985, 122912186
+        .long   126716341, 477595985, 931499670, 435750287, 22824926, 122912186, 435750287, 808587484
+        .long   746033402, 169041332, 28282175, 3679663, 793639907, 880071614, -406299486, 787427443
+        .long   873182579, -403119050, 0, 0, 0, 0, 0, 0
+        .long   985747542, 874946727, 236004397, 43075712, 477243669, 1034936602, 479284567, 124813697
+        .long   128729671, 479284567, 923745902, 436208855, 23495843, 124813697, 436208855, 798932205
+        .long   753509867, 172641815, 29247126, 3854635, 796021358, 879636366, -407810441, 789790253
+        .long   872750738, -404618178, 0, 0, 0, 0, 0, 0
+        .long   978021814, 877335324, 239718033, 44333771, 478546540, 1029019348, 480936049, 126724948
+        .long   130755291, 480936049, 916026263, 436602278, 24182057, 126724948, 436602278, 789301315
+        .long   761035763, 176304846, 30241591, 4037353, 798485991, 879185323, -409372988, 792235593
+        .long   872303226, -406168494, 0, 0, 0, 0, 0, 0
+        .long   970323522, 879630583, 243453154, 45620139, 479798500, 1023149735, 482550107, 128645344
+        .long   132792629, 482550107, 908341925, 436929968, 24883712, 128645344, 436929968, 779696581
+        .long   768611154, 180031091, 31266320, 4228125, 801037141, 878717857, -410989208, 794766773
+        .long   871839420, -407772062, 0, 0, 0, 0, 0, 0
+        .long   962653850, 881831520, 247208674, 46935066, 480999011, 1017328443, 484126440, 130574271
+        .long   134841095, 484126440, 900694040, 437191375, 25600945, 130574271, 437191375, 770119769
+        .long   776236109, 183821210, 32322071, 4427269, 803678304, 878233316, -412661287, 797387262
+        .long   871358671, -409431052, 0, 0, 0, 0, 0, 0
+        .long   955013963, 883937203, 250983474, 48278780, 482147565, 1011556112, 485664766, 132511097
+        .long   136900077, 485664766, 893083735, 437385986, 26333880, 132511097, 437385986, 760572638
+        .long   783910701, 187675859, 33409618, 4635114, 806413148, 877731014, -414391528, 800100698
+        .long   870860301, -411147749, 0, 0, 0, 0, 0, 0
+        .long   947405010, 885946750, 254776396, 49651497, 483243682, 1005833340, 487164826, 134455171
+        .long   138968943, 487164826, 885512115, 437513329, 27082635, 134455171, 437513329, 751056944
+        .long   791635007, 191595688, 34529744, 4851998, 809245520, 877210239, -416182351, 802910899
+        .long   870343603, -412924554, 0, 0, 0, 0, 0, 0
+        .long   939828121, 887859329, 258586247, 51053409, 484286907, 1000160680, 488626380, 136405825
+        .long   141047044, 488626380, 877980258, 437572971, 27847314, 136405825, 437572971, 741574433
+        .long   799409109, 195581345, 35683246, 5078271, 812179458, 876670248, -418036306, 805821870
+        .long   869807839, -414763997, 0, 0, 0, 0, 0, 0
+        .long   932284404, 889674166, 262411800, 52484690, 485276818, 994538643, 490049213, 138362374
+        .long   143133709, 490049213, 870489217, 437564522, 28628013, 138362374, 437564522, 732126843
+        .long   807233094, 199633472, 36870933, 5314294, 815219203, 876110264, -419956082, 808837821
+        .long   869252238, -416668745, 0, 0, 0, 0, 0, 0
+        .long   924774948, 891390539, 266251791, 53945493, 486213021, 988967694, 491433127, 140324114
+        .long   145228250, 491433127, 863040017, 437487634, 29424814, 140324114, 437487634, 722715903
+        .long   815107054, 203752704, 38093624, 5560438, 818369211, 875529475, -421944512, 811963171
+        .long   868675995, -418641610, 0, 0, 0, 0, 0, 0
+        .long   917300819, 893007782, 270104923, 55435948, 487095154, 983448252, 492777950, 142290326
+        .long   147329958, 492777950, 855633655, 437342003, 30237790, 142290326, 437342003, 713343329
+        .long   823031089, 207939674, 39352151, 5817088, 821634166, 874927035, -424004589, 815202569
+        .long   868078271, -420685561, 0, 0, 0, 0, 0, 0
+        .long   909863063, 894525286, 273969862, 56956160, 487922883, 977980689, 494083529, 144260274
+        .long   149438107, 494083529, 848271100, 437127368, 31066996, 144260274, 437127368, 704010826
+        .long   831005300, 212195007, 40647357, 6084639, 825018997, 874302062, -426139472, 818560903
+        .long   867458190, -422803733, 0, 0, 0, 0, 0, 0
+        .long   902462697, 895942502, 277845245, 58506213, 488695910, 972565331, 495349731, 146233205
+        .long   151551952, 495349731, 840953291, 436843518, 31912480, 146233205, 436843518, 694720085
+        .long   839029798, 216519323, 41980098, 6363496, 828528888, 873653632, -428352503, 822043320
+        .long   866814836, -424999440, 0, 0, 0, 0, 0, 0
+        .long   895100717, 897258937, 281729674, 60086162, 489413966, 967202455, 496576447, 148208353
+        .long   153670731, 496576447, 833681133, 436490285, 32774270, 148208353, 436490285, 685472780
+        .long   847104700, 220913235, 43351238, 6654079, 832169300, 872980781, -430647214, 825655235
+        .long   866147252, -427276189, 0, 0, 0, 0, 0, 0
+        .long   887778094, 898474161, 285621720, 61696038, 490076815, 961892290, 497763588, 150184935
+        .long   155793665, 497763588, 826455505, 436067551, 33652384, 150184935, 436067551, 676270570
+        .long   855230128, 225377351, 44761654, 6956818, 835945986, 872282505, -433027348, 829402359
+        .long   865454442, -429637691, 0, 0, 0, 0, 0, 0
+        .long   880495768, 899587803, 289519922, 63335841, 490684256, 956635016, 498911086, 152162154
+        .long   157919957, 498911086, 819277248, 435575245, 34546823, 152162154, 435575245, 667115094
+        .long   863406212, 229912272, 46212234, 7272157, 839865013, 871557752, -435496868, 833290708
+        .long   864735362, -432087880, 0, 0, 0, 0, 0, 0
+        .long   873254657, 900599554, 293422790, 65005546, 491236120, 951430764, 500018892, 154139199
+        .long   160048794, 500018892, 812147174, 435013346, 35457571, 154139199, 435013346, 658007975
+        .long   871633089, 234518593, 47703875, 7600551, 843932778, 870805424, -438059978, 837326631
+        .long   863988923, -434630927, 0, 0, 0, 0, 0, 0
+        .long   866055646, 901509166, 297328804, 66705096, 491732272, 946279615, 501086979, 156115248
+        .long   162179348, 501086979, 805066059, 434381883, 36384598, 156115248, 434381883, 648950811
+        .long   879910903, 239196902, 49237484, 7942468, 848156036, 870024376, -440721139, 841516830
+        .long   863213989, -437271257, 0, 0, 0, 0, 0, 0
+        .long   858899594, 902316455, 301236418, 68434401, 492172612, 941181599, 502115338, 158089464
+        .long   164310774, 502115338, 798034645, 433680937, 37327855, 158089464, 433680937, 639945181
+        .long   888239807, 243947780, 50813980, 8298390, 852541921, 869213409, -443485090, 845868383
+        .long   862409370, -440013572, 0, 0, 0, 0, 0, 0
+        .long   851787330, 903021298, 305144058, 70193343, 492557072, 936136698, 503103981, 160061000
+        .long   166442213, 503103981, 791053640, 432910638, 38287278, 160061000, 432910638, 630992640
+        .long   896619960, 248771801, 52434291, 8668810, 857097973, 868371272, -446356869, 850388772
+        .long   861573825, -442862871, 0, 0, 0, 0, 0, 0
+        .long   844719651, 903623638, 309050123, 71981768, 492885621, 931144842, 504052938, 162028997
+        .long   168572794, 504052938, 784123716, 432071170, 39262782, 162028997, 432071170, 622094719
+        .long   905051530, 253669532, 54099352, 9054234, 861832170, 867496657, -449341835, 855085910
+        .long   860706056, -445824472, 0, 0, 0, 0, 0, 0
+        .long   837697325, 904123480, 312952988, 73799488, 493158262, 926205911, 504962256, 163992586
+        .long   170701630, 504962256, 777245508, 431162769, 40254266, 163992586, 431162769, 613252923
+        .long   913534694, 258641532, 55810111, 9455183, 866752953, 866588197, -452445698, 859968174
+        .long   859804708, -448904039, 0, 0, 0, 0, 0, 0
+        .long   830721086, 904520893, 316851008, 75646281, 493375032, 921319737, 505832003, 165950888
+        .long   172827822, 505832003, 770419617, 430185722, 41261608, 165950888, 430185722, 604468729
+        .long   922069636, 263688355, 57567521, 9872190, 871869265, 865644462, -455674542, 865044437
+        .long   858868361, -452107607, 0, 0, 0, 0, 0, 0
+        .long   823791638, 904816009, 320742511, 77521888, 493536005, 916486098, 506662261, 167903016
+        .long   174950461, 506662261, 763646603, 429140373, 42284666, 167903016, 429140373, 595743587
+        .long   930656550, 268810546, 59372545, 10305801, 877190585, 864663959, -459034856, 870324103
+        .long   857895533, -455441618, 0, 0, 0, 0, 0, 0
+        .long   816909652, 905009025, 324625809, 79426014, 493641286, 911704727, 507453129, 169848076
+        .long   177068623, 507453129, 756926995, 428027116, 43323280, 169848076, 428027116, 587078918
+        .long   939295639, 274008641, 61226156, 10756574, 882726971, 863645125, -462533573, 875817151
+        .long   856884674, -458912947, 0, 0, 0, 0, 0, 0
+        .long   810075763, 905100201, 328499192, 81358324, 493691019, 906975304, 508204723, 171785166
+        .long   179181377, 508204723, 750261279, 426846399, 44377268, 171785166, 426846399, 578476113
+        .long   947987114, 279283172, 63129330, 11225084, 888489100, 862586324, -466178099, 881534175
+        .long   855834161, -462528945, 0, 0, 0, 0, 0, 0
+        .long   803290577, 905089860, 332360933, 83318446, 493685378, 902297462, 508917173, 173713377
+        .long   181287782, 508917173, 743649906, 425598727, 45446425, 173713377, 425598727, 569936529
+        .long   956731197, 284634661, 65083055, 11711916, 894488319, 861485845, -469976360, 887486433
+        .long   854742296, -466297474, 0, 0, 0, 0, 0, 0
+        .long   796554661, 904978388, 336209291, 85305968, 493624576, 897670784, 509590623, 175631798
+        .long   183386886, 509590623, 737093291, 424284655, 46530528, 175631798, 424284655, 561461493
+        .long   965528116, 290063623, 67088323, 12217670, 900736695, 860341896, -473936840, 893685898
+        .long   853607302, -470226951, 0, 0, 0, 0, 0, 0
+        .long   789868551, 904766235, 340042509, 87320437, 493508856, 893094808, 510225229, 177539511
+        .long   185477732, 510225229, 730591809, 422904793, 47629329, 177539511, 422904793, 553052299
+        .long   974378113, 295570565, 69146134, 12742958, 907247075, 859152603, -478068633, 900145316
+        .long   852427318, -474326402, 0, 0, 0, 0, 0, 0
+        .long   783232748, 904453910, 343858818, 89361359, 493338497, 888569021, 510821163, 179435595
+        .long   187559355, 510821163, 724145798, 421459805, 48742559, 179435595, 421459805, 544710203
+        .long   983281437, 301155987, 71257492, 13288406, 914033147, 857916000, -482381498, 906878267
+        .long   851200395, -478605506, 0, 0, 0, 0, 0, 0
+        .long   776647718, 904041986, 347656437, 91428197, 493113811, 884092866, 511378606, 181319129
+        .long   189630784, 511378606, 717755559, 419950408, 49869926, 181319129, 419950408, 536436429
+        .long   992238346, 306820381, 73423409, 13854655, 921109507, 856630026, -486885911, 913899236
+        .long   849924488, -483074660, 0, 0, 0, 0, 0, 0
+        .long   770113890, 903531094, 351433577, 93520375, 492835142, 879665741, 511897748, 183189190
+        .long   191691042, 511897748, 711421354, 418377374, 51011113, 183189190, 418377374, 528232165
+        .long   1001249112, 312564233, 75644900, 14442357, 928491741, 855292522, -491593138, 921223683
+        .long   848597454, -487745039, 0, 0, 0, 0, 0, 0
+        .long   763631661, 902921925, 355188441, 95637269, 492502868, 875286999, 512378793, 185044852
+        .long   193739150, 512378793, 705143410, 416741524, 52165783, 185044852, 416741524, 520098558
+        .long   1010314012, 318388018, 77922987, 15052176, 936196503, 853901222, -496515299, 928868133
+        .long   847217044, -492628670, 0, 0, 0, 0, 0, 0
+        .long   757201390, 902215229, 358919227, 97778217, 492117398, 870955948, 512821950, 186885195
+        .long   195774124, 512821950, 698921916, 415043733, 53333573, 186885195, 415043733, 512036721
+        .long   1019433337, 324292208, 80258694, 15684793, 944241608, 852453745, -501665450, 936850263
+        .long   845780898, -497738508, 0, 0, 0, 0, 0, 0
+        .long   750823404, 901411814, 362624128, 99942507, 491679171, 866671855, 513227436, 188709296
+        .long   197794979, 513227436, 692757023, 413284929, 54514095, 188709296, 413284929, 504047727
+        .long   1028607386, 330277264, 82653049, 16340898, 952646138, 850947592, -507057673, 945189004
+        .long   844286534, -503088522, 0, 0, 0, 0, 0, 0
+        .long   744497993, 900512541, 366301336, 102129388, 491188659, 862433945, 513595476, 190516239
+        .long   199800729, 513595476, 686648848, 411466088, 55706939, 190516239, 411466088, 496132609
+        .long   1037836468, 336343641, 85107084, 17021195, 961430551, 849380132, -512707168, 953904654
+        .long   842731345, -508693793, 0, 0, 0, 0, 0, 0
+        .long   738225411, 899518330, 369949044, 104338060, 490646362, 858241405, 513926300, 192305109
+        .long   201790388, 513926300, 680597471, 409588239, 56911669, 192305109, 409588239, 488292362
+        .long   1047120905, 342491786, 87621833, 17726401, 970616807, 847748601, -518630360, 963019001
+        .long   841112585, -514570620, 0, 0, 0, 0, 0, 0
+        .long   732005880, 898430150, 373565444, 106567683, 490052809, 854093382, 514220141, 194074998
+        .long   203762970, 514220141, 674602936, 407652458, 58127827, 194074998, 407652458, 480527938
+        .long   1056461026, 348722142, 90198333, 18457246, 980228509, 846050082, -524845026, 972555465
+        .long   839427362, -520736638, 0, 0, 0, 0, 0, 0
+        .long   725839585, 897249024, 377148735, 108817367, 489408559, 849988984, 514477237, 195825004
+        .long   205717492, 514477237, 668665253, 405659871, 59354927, 195825004, 405659871, 472840249
+        .long   1065857171, 355035140, 92837621, 19214469, 990291059, 844281503, -531370418, 982539247
+        .long   837672627, -527210950, 0, 0, 0, 0, 0, 0
+        .long   719726678, 895976025, 380697119, 111086180, 488714195, 845927286, 514697828, 197554231
+        .long   207652974, 514697828, 662784397, 403611648, 60592462, 197554231, 403611648, 465230167
+        .long   1075309693, 361431208, 95540736, 19998823, 1000831825, 842439621, -538227418, 992997502
+        .long   835845162, -534014275, 0, 0, 0, 0, 0, 0
+        .long   713667276, 894612273, 384208809, 113373145, 487970331, 841907328, 514882155, 199261791
+        .long   209568441, 514882155, 656960311, 401509010, 61839898, 199261791, 401509010, 457698520
+        .long   1084818953, 367910767, 98308717, 20811072, 1011880341, 840521005, -545438704, 1003959533
+        .long   833941565, -541169112, 0, 0, 0, 0, 0, 0
+        .long   707661463, 893158937, 387682023, 115677241, 487177602, 837928118, 515030458, 200946809
+        .long   211462922, 515030458, 651192904, 399353218, 63096677, 200946809, 399353218, 450246094
+        .long   1094385321, 374474229, 101142604, 21651992, 1023468523, 838522029, -553028932, 1015457004
+        .long   831958236, -548699926, 0, 0, 0, 0, 0, 0
+        .long   701709290, 891617227, 391114996, 117997399, 486336669, 833988631, 515142978, 202608416
+        .long   213335452, 515142978, 645482051, 397145579, 64362218, 202608416, 397145579, 442873635
+        .long   1104009180, 381122001, 104043436, 22522368, 1035630906, 836438846, -561024949, 1027524182
+        .long   829891360, -556633351, 0, 0, 0, 0, 0, 0
+        .long   695810775, 889988399, 394505972, 120332510, 485448218, 830087814, 515219953, 204245756
+        .long   215185075, 515219953, 639827599, 394887443, 65635914, 204245756, 394887443, 435581842
+        .long   1113690921, 387854485, 107012248, 23422996, 1048404924, 834267375, -569456026, 1040198208
+        .long   827736888, -564998432, 0, 0, 0, 0, 0, 0
+        .long   689965903, 888273748, 397853212, 122681419, 484512953, 826224587, 515261617, 205857987
+        .long   217010843, 515261617, 634229361, 392580198, 66917138, 205857987, 392580198, 428371375
+        .long   1123430947, 394672075, 110050076, 24354683, 1061831215, 832003279, -578354125, 1053519400
+        .long   825490514, -573826878, 0, 0, 0, 0, 0, 0
+        .long   684174628, 886474606, 401154996, 125042929, 483531603, 822397844, 515268201, 207444277
+        .long   218811816, 515268201, 628687125, 390225272, 68205234, 207444277, 390225272, 421242848
+        .long   1133229670, 401575160, 113157953, 25318244, 1075953970, 829641937, -587754196, 1067531605
+        .long   823147656, -583153367, 0, 0, 0, 0, 0, 0
+        .long   678436874, 884592343, 404409621, 127415800, 482504915, 818606455, 515239931, 209003811
+        .long   220587066, 515239931, 623200645, 387824131, 69499528, 209003811, 387824131, 414196834
+        .long   1143087511, 408564124, 116336909, 26314504, 1090821328, 827178419, -597694518, 1082282584
+        .long   820703423, -593015878, 0, 0, 0, 0, 0, 0
+        .long   672752533, 882628364, 407615406, 129798752, 481433653, 814849267, 515177026, 210535789
+        .long   222335676, 515177026, 617769651, 385378274, 70799319, 210535789, 385378274, 407233861
+        .long   1153004902, 415639344, 119587969, 27344297, 1106485822, 824607458, -608217090, 1097824460
+        .long   818152586, -603456081, 0, 0, 0, 0, 0, 0
+        .long   667121468, 880584103, 410770692, 132190461, 480318601, 811125109, 515079699, 212039427
+        .long   224056741, 515079699, 612393843, 382889238, 72103888, 212039427, 382889238, 400354416
+        .long   1162982284, 422801194, 122912155, 28408462, 1123004892, 821923409, -619368061, 1114214221
+        .long   815489547, -614519764, 0, 0, 0, 0, 0, 0
+        .long   661543511, 878461023, 413873847, 134589567, 479160558, 807432789, 514948154, 213513956
+        .long   225749371, 514948154, 607072898, 380358587, 73412491, 213513956, 380358587, 393558942
+        .long   1173020108, 430050040, 126310483, 29507850, 1140441464, 819120214, -631198243, 1131514303
+        .long   812708295, -626257342, 0, 0, 0, 0, 0, 0
+        .long   656018469, 876260617, 416923263, 136994669, 477960337, 803771102, 514782587, 214958628
+        .long   227412689, 514782587, 601806467, 377787918, 74724365, 214958628, 377787918, 386847839
+        .long   1183118834, 437386245, 129783964, 30643315, 1158864619, 816191356, -643763683, 1149793245
+        .long   809802364, -638724422, 0, 0, 0, 0, 0, 0
+        .long   650546120, 873984399, 419917361, 139404330, 476718763, 800138826, 514583183, 216372712
+        .long   229045833, 514583183, 596594177, 375178853, 76038725, 216372712, 375178853, 380221465
+        .long   1193278932, 444810168, 133333603, 31815719, 1178350359, 813129806, -657126324, 1169126455
+        .long   806764779, -651982463, 0, 0, 0, 0, 0, 0
+        .long   645126213, 871633907, 422854592, 141817076, 475436677, 796534726, 514350119, 217755498
+        .long   230647959, 514350119, 591435632, 372533043, 77354769, 217755498, 372533043, 373680135
+        .long   1203500879, 452322162, 136960398, 33025930, 1198982487, 809927967, -671354773, 1189597078
+        .long   803588004, -666099534, 0, 0, 0, 0, 0, 0
+        .long   639758475, 869210696, 425733438, 144231399, 474114925, 792957560, 514083557, 219106294
+        .long   232218239, 514083557, 586330416, 369852158, 78671672, 219106294, 369852158, 367224122
+        .long   1213785163, 459922577, 140665339, 34274820, 1220853627, 806577603, -686525184, 1211297015
+        .long   800263865, -681151195, 0, 0, 0, 0, 0, 0
+        .long   634442606, 866716340, 428552415, 146645759, 472754367, 789406075, 513783652, 220424430
+        .long   233755863, 513783652, 581278090, 367137893, 79988596, 220424430, 367137893, 360853659
+        .long   1224132280, 467611759, 144449407, 35563264, 1244066403, 803069765, -702722285, 1234328086
+        .long   796783486, -697221508, 0, 0, 0, 0, 0, 0
+        .long   629178281, 864152424, 431310073, 149058583, 471355868, 785879010, 513450543, 221709260
+        .long   235260040, 513450543, 576278197, 364391960, 81304682, 221709260, 364391960, 354568937
+        .long   1234542732, 475390049, 148313578, 36892143, 1268734818, 799394703, -720040575, 1258803401
+        .long   793137192, -714404233, 0, 0, 0, 0, 0, 0
+        .long   623965154, 861520549, 434004997, 151468270, 469920299, 782375102, 513084356, 222960156
+        .long   236729998, 513084356, 571330261, 361616086, 82619056, 222960156, 361616086, 348370105
+        .long   1245017034, 483257787, 152258814, 38262339, 1294985853, 795541759, -738585724, 1284848948
+        .long   789314408, -732804214, 0, 0, 0, 0, 0, 0
+O3_NL_IMAP:
+        .long   0, 0, 0, 0, 0, 0, 0, 0
+        .long   0, 0, 2, 3, 4, 5, 6, 8
+        .long   9, 10, 11, 12, 14, 15, 16, 18
+        .long   19, 20, 21, 22, 23, 25, 26, 27
+        .long   28, 30, 30, 32, 33, 34, 35, 36
+        .long   38, 38, 40, 41, 42, 43, 44, 45
+        .long   47, 48, 49, 50, 51, 52, 53, 55
+        .long   56, 57, 58, 59, 60, 61, 62, 63
+        .long   65, 66, 66, 68, 69, 70, 71, 72
+        .long   73, 74, 75, 77, 77, 79, 80, 81
+        .long   82, 83, 84, 85, 86, 87, 88, 90
+        .long   91, 91, 93, 94, 95, 96, 97, 98
+        .long   99, 100, 101, 102, 103, 104, 105, 106
+        .long   107, 108, 109, 111, 111, 112, 114, 115
+        .long   116, 117, 118, 119, 120, 121, 122, 123
+        .long   124, 125, 126, 127, 128, 129, 130, 131
+        .long   132, 133, 134, 135, 136, 137, 138, 139
+        .long   140, 141, 142, 143, 144, 145, 146, 147
+        .long   148, 149, 150, 151, 152, 153, 154, 155
+        .long   156, 157, 158, 159, 160, 161, 162, 163
+        .long   164, 165, 166, 167, 168, 169, 170, 171
+        .long   172, 173, 174, 175, 176, 177, 178, 179
+        .long   180, 181, 182, 183, 184, 185, 186, 187
+        .long   188, 189, 190, 191, 192, 193, 194, 195
+        .long   196, 197, 198, 199, 200, 201, 202, 203
+        .long   204, 205, 206, 207, 208, 209, 210, 211
+        .long   212, 213, 214, 215, 216, 217, 218, 219
+        .long   220, 221, 222, 223, 224, 225, 226, 227
+        .long   228, 229, 230, 231, 232, 233, 234, 235
+        .long   236, 237, 238, 239, 240, 241, 242, 243
+        .long   244, 245, 246, 247, 248, 249, 250, 251
+        .long   252, 253, 254, 255, 256, 257, 258, 259
+        .long   260, 261, 262, 263, 264, 265, 266, 267
+        .long   268, 269, 270, 271, 272, 273, 274, 275
+        .long   276, 277, 278, 279, 280, 281, 282, 283
+        .long   284, 285, 286, 287, 288, 289, 290, 291
+        .long   292, 293, 294, 295, 296, 297, 298, 299
+        .long   300, 302, 303, 304, 305, 306, 307, 308
+        .long   309, 310, 311, 312, 313, 314, 315, 316
+        .long   317, 318, 319, 320, 321, 322, 323, 324
+        .long   325, 326, 327, 328, 329, 330, 331, 332
+        .long   333, 334, 335, 336, 337, 338, 339, 340
+        .long   341, 342, 343, 344, 345, 346, 347, 348
+        .long   349, 350, 351, 352, 353, 354, 356, 357
+        .long   358, 359, 360, 361, 362, 363, 364, 365
+        .long   366, 367, 368, 369, 370, 371, 372, 373
+        .long   374, 375, 376, 377, 378, 379, 380, 382
+        .long   383, 384, 385, 386, 387, 388, 389, 390
+        .long   391, 392, 393, 394, 395, 396, 397, 398
+        .long   400, 401, 402, 403, 404, 405, 406, 407
+        .long   408, 409, 410, 411, 413, 414, 415, 416
+        .long   417, 418, 419, 420, 421, 423, 424, 425
+        .long   426, 427, 428, 429, 430, 432, 433, 434
+        .long   435, 436, 437, 439, 440, 441, 442, 444
+        .long   445, 445, 445, 445, 445, 445, 445, 445
+        .long   445, 445, 445, 445, 445, 445
+O3_NL_KL4:
+        .long   0, 1262490, 2576998, 3945159, 5368618, 6849024, 8388029, 9987280
+        .long   11648421, 13373079, 15162868, 17019379, 18944177, 20938796, 23004733, 25143442
+        .long   27356332, 29644757, 32010017, 34453349, 36975926, 39578847, 42263143, 45029764
+        .long   47879582, 50813388, 53831890, 56935712, 60125391, 63401385, 66764066, 70213726
+        .long   73750577, 77374757, 81086332, 84885299, 88771592, 92745085, 96805598, 100952905
+        .long   105186732, 109506769, 113912669, 118404055, 122980523, 127641644, 132386967, 137216017
+        .long   142128297, 147123285, 152200435, 157359164, 162598858, 167918853, 173318438, 178796836
+        .long   184353200, 189986595, 195695991, 201480247, 207338093, 213268122, 219268769, 225338302
+        .long   231474801, 237676149, 243940020, 250263861, 256644887, 263080071, 269566137, 276099554
+        .long   282676535, 289293039, 295944768, 302627179, 309335487, 316064680, 322809530, 329564609
+        .long   336324310, 343082868, 349834381, 356572839, 363292146, 369986154, 376648688, 383273579
+        .long   389854693, 396385960, 402861407, 409275187, 415621604, 421895143, 428090497, 434202586
+        .long   440226582, 446157926, 451992348, 457725876, 463354856, 468875951, 474286156, 479582800
+        .long   484763545, 489826387, 494769654, 499592000, 504292398, 508870131, 513324784, 517656228
+        .long   521864613, 525950348, 529914093, 533756739, 537479392, 541083363, 544570145, 547941402
+        .long   551198949, 554344743, 557380860, 560309485, 563132897, 565853456, 568473586, 570995769
+O3_NL_KLR4:
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+        .long   1073741824, 1073741824, 1073741824, 1073741824, 1073741824, 1073741824
+O3_NL_TH:
+        .long   0, 524288, 1048573, 1572855, 2097130, 2621397, 3145653, 3669897
+        .long   4194126, 4718339, 5242533, 5766706, 6290856, 6814982, 7339080, 7863149
+        .long   8387187, 8911191, 9435161, 9959092, 10482985, 11006835, 11530642, 12054403
+        .long   12578117, 13101780, 13625392, 14148949, 14672451, 15195894, 15719277, 16242598
+        .long   16765854, 17289044, 17812165, 18335216, 18858194, 19381097, 19903924, 20426671
+        .long   20949338, 21471922, 21994421, 22516833, 23039156, 23561388, 24083526, 24605569
+        .long   25127515, 25649362, 26171107, 26692749, 27214285, 27735714, 28257034, 28778241
+        .long   29299335, 29820314, 30341175, 30861916, 31382535, 31903031, 32423401, 32943643
+        .long   33463755, 33983736, 34503582, 35023293, 35542866, 36062299, 36581590, 37100737
+        .long   37619739, 38138592, 38657296, 39175848, 39694246, 40212488, 40730572, 41248497
+        .long   41766259, 42283858, 42801291, 43318556, 43835652, 44352576, 44869326, 45385901
+        .long   45902298, 46418516, 46934552, 47450405, 47966072, 48481552, 48996843, 49511943
+        .long   50026849, 50541560, 51056075, 51570390, 52084504, 52598416, 53112123, 53625623
+        .long   54138915, 54651996, 55164865, 55677520, 56189959, 56702179, 57214179, 57725958
+        .long   58237513, 58748842, 59259944, 59770816, 60281458, 60791866, 61302039, 61811975
+        .long   62321672, 62831129, 63340344, 63849314, 64358038, 64866514, 65374741, 65882716
+        .long   66390437, 66897903, 67405112, 67912062, 68418752, 68925178, 69431341, 69937237
+        .long   70442866, 70948224, 71453312, 71958125, 72462664, 72966926, 73470909, 73974612
+        .long   74478033, 74981170, 75484021, 75986584, 76488859, 76990842, 77492533, 77993930
+        .long   78495030, 78995832, 79496335, 79996537, 80496435, 80996029, 81495317, 81994296
+        .long   82492965, 82991323, 83489368, 83987098, 84484511, 84981606, 85478381, 85974835
+        .long   86470965, 86966771, 87462250, 87957401, 88452222, 88946712, 89440868, 89934690
+        .long   90428176, 90921324, 91414132, 91906599, 92398723, 92890503, 93381937, 93873024
+        .long   94363761, 94854148, 95344183, 95833864, 96323189, 96812158, 97300768, 97789018
+        .long   98276907, 98764432, 99251593, 99738388, 100224815, 100710873, 101196561, 101681876
+        .long   102166817, 102651384, 103135574, 103619385, 104102817, 104585868, 105068537, 105550821
+        .long   106032720, 106514232, 106995356, 107476090, 107956433, 108436383, 108915939, 109395099
+        .long   109873863, 110352228, 110830194, 111307758, 111784920, 112261679, 112738032, 113213978
+        .long   113689516, 114164645, 114639363, 115113670, 115587562, 116061040, 116534102, 117006747
+        .long   117478973, 117950779, 118422163, 118893125, 119363663, 119833775, 120303461, 120772719
+        .long   121241548, 121709947, 122177914, 122645448, 123112548, 123579213, 124045441, 124511231
+        .long   124976582, 125441493, 125905962, 126369988, 126833571, 127296708, 127759399, 128221642
+        .long   128683437, 129144781, 129605675, 130066116, 130526104, 130985637, 131444715, 131903335
+        .long   132361498, 132819201, 133276445, 133733226, 134189546, 134645402, 135100793, 135555718
+        .long   136010176, 136464167, 136917688, 137370739, 137823319, 138275427, 138727062, 139178222
+        .long   139628907, 140079115, 140528846, 140978098, 141426871, 141875163, 142322974, 142770303
+        .long   143217148, 143663508, 144109383, 144554771, 144999672, 145444085, 145888008, 146331441
+        .long   146774382, 147216832, 147658788, 148100250, 148541218, 148981689, 149421664, 149861141
+        .long   150300119, 150738598, 151176576, 151614053, 152051028, 152487500, 152923469, 153358932
+        .long   153793890, 154228341, 154662285, 155095722, 155528649, 155961066, 156392973, 156824368
+        .long   157255252, 157685622, 158115479, 158544821, 158973648, 159401958, 159829752, 160257028
+        .long   160683786, 161110025, 161535744, 161960942, 162385619, 162809774, 163233406, 163656514
+        .long   164079099, 164501158, 164922692, 165343700, 165764181, 166184134, 166603558, 167022454
+        .long   167440820, 167858656, 168275961, 168692734, 169108975, 169524683, 169939858, 170354498
+        .long   170768604, 171182175, 171595209, 172007707, 172419668, 172831091, 173241976, 173652323
+        .long   174062129, 174471396, 174880122, 175288307, 175695951, 176103052, 176509611, 176915626
+        .long   177321098, 177726025, 178130408, 178534245, 178937537, 179340282, 179742481, 180144132
+        .long   180545236, 180945791, 181345798, 181745256, 182144164, 182542522, 182940330, 183337586
+        .long   183734292, 184130446, 184526047, 184921096, 185315592, 185709535, 186102924, 186495758
+        .long   186888039, 187279764, 187670934, 188061548, 188451606, 188841108, 189230052, 189618440
+        .long   190006271, 190393543, 190780258, 191166414, 191552011, 191937049, 192321528, 192705447
+        .long   193088806, 193471604, 193853842, 194235520, 194616636, 194997190, 195377183, 195756614
+        .long   196135483, 196513789, 196891533, 197268713, 197645331, 198021385, 198396875, 198771801
+        .long   199146164, 199519962, 199893195, 200265864, 200637968, 201009507, 201380480, 201750888
+        .long   202120731, 202490007, 202858718, 203226862, 203594440, 203961452, 204327897, 204693776
+        .long   205059087, 205423832, 205788009, 206151619, 206514662, 206877137, 207239045, 207600385
+        .long   207961157, 208321362, 208680998, 209040067, 209398567, 209756499, 210113863, 210470658
+        .long   210826885, 211182544, 211537634, 211892156, 212246109, 212599493, 212952309, 213304556
+        .long   213656235, 214007344, 214357885, 214707858, 215057261, 215406096, 215754362, 216102060
+        .long   216449188, 216795748, 217141740, 217487162, 217832016, 218176302, 218520019, 218863168
+        .long   219205748, 219547759, 219889203, 220230078, 220570385, 220910124, 221249295, 221587898
+        .long   221925933, 222263400, 222600300, 222936632, 223272396, 223607593, 223942223, 224276286
+        .long   224609781, 224942710, 225275072, 225606867, 225938096, 226268758, 226598854, 226928384
+        .long   227257348, 227585746, 227913578, 228240845, 228567547, 228893683, 229219255, 229544262
+        .long   229868704, 230192581, 230515895, 230838644, 231160830, 231482451, 231803510, 232124005
+        .long   232443937, 232763306, 233082113, 233400357, 233718039, 234035159, 234351718, 234667715
+        .long   234983150, 235298025, 235612339, 235926093, 236239286, 236551920, 236863994, 237175508
+        .long   237486463, 237796859, 238106697, 238415977, 238724698, 239032861, 239340467, 239647516
+        .long   239954008, 240259944, 240565323, 240870146, 241174414, 241478126, 241781283, 242083885
+        .long   242385933, 242687427, 242988367, 243288754, 243588588, 243887869, 244186597, 244484774
+        .long   244782399, 245079472, 245375995, 245671967, 245967388, 246262260, 246556582, 246850355
+        .long   247143579, 247436255, 247728382, 248019962, 248310995, 248601481, 248891420, 249180813
+        .long   249469661, 249757963, 250045720, 250332933, 250619602, 250905726, 251191308, 251476347
+        .long   251760843, 252044797, 252328210, 252611081, 252893412, 253175202, 253456453, 253737164
+        .long   254017336, 254296969, 254576064, 254854622, 255132642, 255410126, 255687073, 255963484
+        .long   256239360, 256514701, 256789508, 257063780, 257337519, 257610725, 257883398, 258155539
+        .long   258427148, 258698227, 258968774, 259238791, 259508279, 259777237, 260045667, 260313569
+        .long   260580942, 260847789, 261114108, 261379902, 261645170, 261909912, 262174130, 262437823
+        .long   262700993, 262963640, 263225764, 263487366, 263748446, 264009006, 264269044, 264528563
+        .long   264787562, 265046042, 265304004, 265561448, 265818374, 266074784, 266330678, 266586055
+        .long   266840918, 267095266, 267349099, 267602420, 267855227, 268107522, 268359305, 268610577
+        .long   268861338, 269111588, 269361329, 269610562, 269859285, 270107501, 270355209, 270602411
+        .long   270849106, 271095296, 271340981, 271586161, 271830837, 272075011, 272318681, 272561849
+        .long   272804516, 273046682, 273288347, 273529513, 273770179, 274010347, 274250017, 274489190
+        .long   274727866, 274966045, 275203729, 275440919, 275677613, 275913814, 276149522, 276384737
+        .long   276619461, 276853693, 277087434, 277320685, 277553447, 277785720, 278017504, 278248801
+        .long   278479611, 278709935, 278939773, 279169126, 279397994, 279626379, 279854280, 280081698
+        .long   280308635, 280535090, 280761065, 280986559, 281211574, 281436111, 281660169, 281883749
+        .long   282106853, 282329480, 282551632, 282773309, 282994511, 283215240, 283435496, 283655279
+        .long   283874591, 284093431, 284311801, 284529702, 284747133, 284964096, 285180591, 285396618
+        .long   285612180, 285827275, 286041905, 286256071, 286469772, 286683011, 286895787, 287108101
+        .long   287319954, 287531346, 287742278, 287952751, 288162766, 288372322, 288581421, 288790064
+        .long   288998251, 289205982, 289413259, 289620082, 289826452, 290032369, 290237835, 290442849
+        .long   290647412, 290851526, 291055190, 291258406, 291461174, 291663495, 291865370, 292066798
+        .long   292267782, 292468320, 292668416, 292868068, 293067277, 293266045, 293464372, 293662258
+        .long   293859705, 294056713, 294253282, 294449414, 294645109, 294840367, 295035190, 295229578
+        .long   295423532, 295617052, 295810139, 296002794, 296195018, 296386811, 296578173, 296769107
+        .long   296959611, 297149688, 297339337, 297528559, 297717356, 297905727, 298093674, 298281196
+        .long   298468296, 298654973, 298841228, 299027062, 299212475, 299397469, 299582044, 299766200
+        .long   299949938, 300133260, 300316165, 300498655, 300680730, 300862390, 301043637, 301224471
+        .long   301404893, 301584904, 301764504, 301943693, 302122474, 302300845, 302478809, 302656365
+        .long   302833515, 303010259, 303186598, 303362532, 303538062, 303713189, 303887914, 304062237
+        .long   304236159, 304409680, 304582802, 304755525, 304927850, 305099777, 305271307, 305442442
+        .long   305613180, 305783524, 305953474, 306123030, 306292193, 306460965, 306629345, 306797334
+        .long   306964934, 307132144, 307298966, 307465400, 307631447, 307797107, 307962381, 308127270
+        .long   308291775, 308455897, 308619635, 308782991, 308945965, 309108558, 309270771, 309432604
+        .long   309594059, 309755135, 309915834, 310076156, 310236102, 310395672, 310554868, 310713690
+        .long   310872138, 311030213, 311187917, 311345249, 311502211, 311658803, 311815025, 311970879
+        .long   312126365, 312281484, 312436237, 312590623, 312744645, 312898302, 313051595, 313204525
+        .long   313357093, 313509299, 313661144, 313812628, 313963753, 314114519, 314264927, 314414977
+        .long   314564670, 314714007, 314862988, 315011615, 315159887, 315307805, 315455371, 315602585
+        .long   315749447, 315895958, 316042119, 316187930, 316333393, 316478507, 316623275, 316767695
+        .long   316911769, 317055498, 317198882, 317341922, 317484618, 317626972, 317768983, 317910653
+        .long   318051983, 318192972, 318333622, 318473933, 318613906, 318753542, 318892841, 319031803
+        .long   319170431, 319308723, 319446682, 319584307, 319721599, 319858560, 319995188, 320131486
+        .long   320267454, 320403093, 320538403, 320673384, 320808038, 320942365, 321076366, 321210042
+        .long   321343393, 321476419, 321609122, 321741502, 321873560, 322005296, 322136711, 322267806
+        .long   322398582, 322529038, 322659176, 322788996, 322918500, 323047687, 323176558, 323305114
+        .long   323433355, 323561283, 323688898, 323816200, 323943190, 324069869, 324196238, 324322296
+        .long   324448046, 324573486, 324698619, 324823444, 324947962, 325072174, 325196081, 325319683
+        .long   325442981, 325565975, 325688666, 325811055, 325933142, 326054928, 326176414, 326297600
+        .long   326418486, 326539074, 326659365, 326779358, 326899054, 327018454, 327137559, 327256369
+        .long   327374885, 327493108, 327611037, 327728675, 327846020, 327963075, 328079839, 328196313
+        .long   328312498, 328428394, 328544003, 328659324, 328774358, 328889107, 329003569, 329117747
+        .long   329231641, 329345251, 329458577, 329571622, 329684384, 329796865, 329909066, 330020986
+        .long   330132627, 330243990, 330355074, 330465880, 330576409, 330686662, 330796639, 330906341
+        .long   331015768, 331124921, 331233801, 331342408, 331450743, 331558806, 331666598, 331774119
+        .long   331881371, 331988353, 332095066, 332201512, 332307690, 332413601, 332519245, 332624624
+        .long   332729738, 332834587, 332939172, 333043494, 333147553, 333251349, 333354884, 333458158
+        .long   333561171, 333663924, 333766418, 333868653, 333970630, 334072349, 334173811, 334275017
+        .long   334375967, 334476661, 334577101, 334677286, 334777217, 334876896, 334976322, 335075496
+        .long   335174419, 335273090, 335371512, 335469684, 335567606, 335665280, 335762706, 335859885
+        .long   335956816, 336053502, 336149941, 336246135, 336342085, 336437790, 336533252, 336628470
+        .long   336723447, 336818181, 336912674, 337006926, 337100938, 337194710, 337288242, 337381536
+        .long   337474592, 337567411, 337659992, 337752337, 337844446, 337936319, 338027958, 338119362
+        .long   338210533, 338301470, 338392174, 338482646, 338572887, 338662896, 338752675, 338842224
+        .long   338931543, 339020633, 339109495, 339198129, 339286535, 339374714, 339462667, 339550394
+        .long   339637896, 339725173, 339812225, 339899054, 339985660, 340072043, 340158203, 340244142
+        .long   340329859, 340415356, 340500633, 340585690, 340670528, 340755147, 340839548, 340923732
+        .long   341007698, 341091448, 341174982, 341258300, 341341403, 341424291, 341506965, 341589426
+        .long   341671673, 341753708, 341835531, 341917143, 341998543, 342079732, 342160712, 342241482
+        .long   342322042, 342402394, 342482538, 342562475, 342642204, 342721726, 342801043, 342880153
+        .long   342959059, 343037759, 343116256, 343194549, 343272638, 343350525, 343428209, 343505692
+        .long   343582973, 343660053, 343736933, 343813613, 343890093, 343966375, 344042458, 344118343
+        .long   344194031, 344269521, 344344815, 344419912, 344494814, 344569521, 344644033, 344718351
+        .long   344792475, 344866406, 344940143, 345013689, 345087042, 345160204, 345233175, 345305955
+        .long   345378545, 345450946, 345523157, 345595180, 345667014, 345738660, 345810119, 345881391
+        .long   345952477, 346023376, 346094090, 346164619, 346234963, 346305123, 346375099, 346444892
+        .long   346514501, 346583929, 346653174, 346722238, 346791120, 346859822, 346928343, 346996685
+        .long   347064847, 347132831, 347200636, 347268262, 347335711, 347402983, 347470078, 347536997
+        .long   347603740, 347670307, 347736699, 347802916, 347868960, 347934829, 348000525, 348066048
+        .long   348131399, 348196577, 348261584, 348326420, 348391084, 348455579, 348519903, 348584058
+        .long   348648043, 348711860, 348775508, 348838989, 348902302, 348965447, 349028427, 349091239
+        .long   349153886, 349216368, 349278684, 349340836, 349402823, 349464647, 349526307, 349587805
+        .long   349649139, 349710311, 349771322, 349832171, 349892859, 349953386, 350013753, 350073961
+        .long   350134009, 350193897, 350253628, 350313199, 350372613, 350431870, 350490969, 350549912
+        .long   350608699, 350667329, 350725804, 350784124, 350842289, 350900300, 350958156, 351015860
+        .long   351073409, 351130807, 351188051, 351245144, 351302084, 351358874, 351415512, 351472000
+        .long   351528338, 351584526, 351640565, 351696454, 351752195, 351807787, 351863232, 351918529
+        .long   351973678, 352028681, 352083538, 352138248, 352192812, 352247231, 352301506, 352355635
+        .long   352409620, 352463462, 352517159, 352570714, 352624125, 352677395, 352730522, 352783507
+        .long   352836351, 352889054, 352941616, 352994038, 353046320, 353098462, 353150465, 353202329
+        .long   353254054, 353305642, 353357091, 353408403, 353459578, 353510615, 353561517, 353612282
+        .long   353662911, 353713405, 353763764, 353813988, 353864078, 353914033, 353963855, 354013543
+        .long   354063099, 354112521, 354161811, 354210970, 354259996, 354308891, 354357655, 354406288
+        .long   354454791, 354503164, 354551407, 354599521, 354647506, 354695361, 354743089, 354790688
+        .long   354838160, 354885504, 354932721, 354979812, 355026776, 355073614, 355120326, 355166912
+        .long   355213373, 355259710, 355305922, 355352010, 355397973, 355443814, 355489531, 355535125
+        .long   355580596, 355625945, 355671173, 355716278, 355761262, 355806125, 355850867, 355895489
+        .long   355939991, 355984373, 356028635, 356072778, 356116802, 356160708, 356204495, 356248165
+        .long   356291717, 356335151, 356378468, 356421668, 356464752, 356507720, 356550572, 356593308
+        .long   356635929, 356678435, 356720827, 356763104, 356805267, 356847316, 356889251, 356931074
+        .long   356972783, 357014380, 357055864, 357097237, 357138497, 357179646, 357220684, 357261612
+        .long   357302428, 357343134, 357383730, 357424217, 357464594, 357504861, 357545020, 357585070
+        .long   357625012, 357664846, 357704572, 357744191, 357783702, 357823106, 357862404, 357901595
+        .long   357940681, 357979660, 358018534, 358057302, 358095966, 358134525, 358172979, 358211329
+        .long   358249576, 358287718, 358325757, 358363693, 358401527, 358439257, 358476886, 358514412
+        .long   358551837, 358589160, 358626382, 358663502, 358700523, 358737442, 358774262, 358810981
+        .long   358847601, 358884122, 358920543, 358956866, 358993089, 359029215, 359065242, 359101172
+        .long   359137004, 359172738, 359208376, 359243916, 359279360, 359314708, 359349960, 359385115
+        .long   359420176, 359455140, 359490010, 359524785, 359559466, 359594052, 359628544, 359662942
+        .long   359697247, 359731458, 359765576, 359799601, 359833534, 359867374, 359901122, 359934779
+        .long   359968343, 360001817, 360035199, 360068490, 360101691, 360134801, 360167821, 360200750
+        .long   360233591, 360266341, 360299003, 360331575, 360364059, 360396454, 360428761, 360460980
+        .long   360493110, 360525154, 360557109, 360588978, 360620760, 360652455, 360684064, 360715586
+        .long   360747022, 360778373, 360809638, 360840817, 360871912, 360902922, 360933847, 360964687
+        .long   360995443, 361026116, 361056704, 361087209, 361117631, 361147970, 361178226, 361208399
+        .long   361238489, 361268498, 361298424, 361328269, 361358032, 361387713, 361417314, 361446834
+        .long   361476272, 361505631, 361534909, 361564107, 361593225, 361622264, 361651223, 361680103
+        .long   361708904, 361737626, 361766269, 361794834, 361823321, 361851730, 361880061, 361908315
+        .long   361936491, 361964590, 361992612, 362020558, 362048427, 362076219, 362103936, 362131576
+        .long   362159141, 362186630, 362214044, 362241383, 362268647, 362295837, 362322951, 362349992
+        .long   362376958, 362403850, 362430669, 362457414, 362484086, 362510685, 362537210, 362563663
+        .long   362590044, 362616352, 362642588, 362668752, 362694844, 362720865, 362746814, 362772692
+        .long   362798499, 362824235, 362849900, 362875495, 362901020, 362926475, 362951860, 362977175
+        .long   363002421, 363027597, 363052704, 363077742, 363102712, 363127613, 363152445, 363177210
+        .long   363201906, 363226534, 363251095, 363275588, 363300014, 363324373, 363348665, 363372890
+        .long   363397048, 363421140, 363445166, 363469126, 363493020, 363516848, 363540611, 363564308
+        .long   363587940, 363611507, 363635010, 363658447, 363681821, 363705130, 363728374, 363751555
+        .long   363774672, 363797726, 363820716, 363843642, 363866506, 363889307, 363912045, 363934720
+        .long   363957333, 363979884, 364002372, 364024799, 364047164, 364069467, 364091709, 364113890
+        .long   364136009, 364158068, 364180066, 364202003, 364223880, 364245696, 364267453, 364289149
+        .long   364310786, 364332363, 364353880, 364375339, 364396738, 364418078, 364439359, 364460582
+        .long   364481746, 364502852, 364523899, 364544889, 364565821, 364586695, 364607511, 364628270
+        .long   364648972, 364669616, 364690204, 364710735, 364731209, 364751627, 364771988, 364792293
+        .long   364812543, 364832736, 364852873, 364872955, 364892982, 364912953, 364932869, 364952731
+        .long   364972537, 364992289, 365011986, 365031629, 365051217, 365070752, 365090232, 365109659
+        .long   365129032, 365148351, 365167617, 365186830, 365205990, 365225097, 365244151, 365263153
+        .long   365282102, 365300998, 365319843, 365338635, 365357376, 365376064, 365394701, 365413287
+        .long   365431821, 365450303, 365468735, 365487116, 365505446, 365523725, 365541954, 365560132
+        .long   365578260, 365596338, 365614366, 365632344, 365650273, 365668152, 365685981, 365703761
+        .long   365721492, 365739174, 365756806, 365774390, 365791926, 365809413, 365826851, 365844242
+        .long   365861584, 365878878, 365896124, 365913323, 365930474, 365947577, 365964633, 365981642
+        .long   365998604, 366015519, 366032387, 366049208, 366065983, 366082711, 366099393, 366116029
+        .long   366132618, 366149162, 366165660, 366182112, 366198519, 366214880, 366231196, 366247467
+        .long   366263692, 366279873, 366296009, 366312100, 366328146, 366344148, 366360106, 366376019
+        .long   366391889, 366407714, 366423496, 366439233, 366454928, 366470578, 366486186, 366501750
+        .long   366517270, 366532748, 366548183, 366563575, 366578925, 366594232, 366609496, 366624718
+        .long   366639898, 366655036, 366670132, 366685185, 366700198, 366715168, 366730097, 366744985
+        .long   366759831, 366774636, 366789400, 366804123, 366818805, 366833447, 366848048, 366862608
+        .long   366877128, 366891607, 366906047, 366920446, 366934806, 366949125, 366963405, 366977645
+        .long   366991846, 367006007, 367020129, 367034211, 367048255, 367062260, 367076225, 367090152
+        .long   367104040, 367117890, 367131701, 367145474, 367159209, 367172905, 367186564, 367200184
+        .long   367213767, 367227312, 367240819, 367254289, 367267721, 367281116, 367294474, 367307795
+        .long   367321078, 367334325, 367347535, 367360708, 367373845, 367386945, 367400009, 367413037
+        .long   367426028, 367438983, 367451902, 367464785, 367477633, 367490444, 367503220, 367515961
+        .long   367528666, 367541336, 367553971, 367566570, 367579134, 367591664, 367604159, 367616619
+        .long   367629044, 367641434, 367653791, 367666113, 367678400, 367690654, 367702873, 367715058
+        .long   367727210, 367739328, 367751412, 367763462, 367775479, 367787462, 367799412, 367811329
+        .long   367823213, 367835063, 367846881, 367858666, 367870418, 367882137, 367893824, 367905478
+        .long   367917099, 367928689, 367940246, 367951771, 367963264, 367974724, 367986153, 367997550
+        .long   368008916, 368020250, 368031552, 368042823, 368054062, 368065270, 368076447, 368087593
+        .long   368098707, 368109791, 368120844, 368131866, 368142858, 368153819, 368164749, 368175649
+        .long   368186518, 368197357, 368208167, 368218945, 368229694, 368240413, 368251103, 368261762
+        .long   368272392, 368282992, 368293562, 368304103, 368314615, 368325097, 368335550, 368345975
+        .long   368356370, 368366736, 368377073, 368387381, 368397661, 368407912, 368418134, 368428328
+        .long   368438494, 368448631, 368458740, 368468821, 368478873, 368488898, 368498895, 368508864
+        .long   368518805, 368528718, 368538604, 368548462, 368558293, 368568096, 368577872, 368587621
+        .long   368597342, 368607037, 368616704, 368626344, 368635958, 368645545, 368655105, 368664638
+        .long   368674145, 368683625, 368693079, 368702506, 368711907, 368721282, 368730631, 368739954
+        .long   368749250, 368758521, 368767766, 368776985, 368786178, 368795346, 368804488, 368813605
+        .long   368822696, 368831762, 368840803, 368849818, 368858808, 368867773, 368876714, 368885629
+        .long   368894519, 368903384, 368912225, 368921041, 368929833, 368938600, 368947342, 368956060
+        .long   368964754, 368973423, 368982069, 368990690, 368999287, 369007860, 369016409, 369024934
+        .long   369033436, 369041913, 369050368, 369058798, 369067205, 369075588, 369083949, 369092285
+        .long   369100599, 369108889, 369117156, 369125400, 369133621, 369141819, 369149994, 369158147
+        .long   369166276, 369174383, 369182467, 369190529, 369198568, 369206585, 369214579, 369222551
+        .long   369230501, 369238428, 369246333, 369254217, 369262078, 369269917, 369277735, 369285530
+        .long   369293304, 369301056, 369308786, 369316495, 369324183, 369331848, 369339493, 369347116
+        .long   369354718, 369362298, 369369857, 369377396, 369384913, 369392409, 369399884, 369407338
+        .long   369414772, 369422184, 369429576, 369436948, 369444298, 369451629, 369458938, 369466228
+        .long   369473496, 369480745, 369487973, 369495181, 369502369, 369509537, 369516685, 369523813
+        .long   369530921, 369538009, 369545077, 369552126, 369559155, 369566164, 369573153, 369580123
+        .long   369587074, 369594005, 369600917, 369607809, 369614682, 369621536, 369628371, 369635186
+        .long   369641983, 369648761, 369655519, 369662259, 369668980, 369675682, 369682365, 369689030
+        .long   369695676, 369702303, 369708912, 369715503, 369722075, 369728628, 369735164, 369741681
+        .long   369748179, 369754660, 369761122, 369767567, 369773993, 369780402, 369786792, 369793165
+        .long   369799519, 369805856, 369812176, 369818477, 369824761, 369831028, 369837276, 369843508
+        .long   369849722, 369855918, 369862097, 369868259, 369874404, 369880532, 369886642, 369892735
+        .long   369898811, 369904871, 369910913, 369916938, 369922947, 369928938, 369934913, 369940871
+        .long   369946813, 369952738, 369958646, 369964538, 369970413, 369976272, 369982114, 369987941
+        .long   369993750, 369999544, 370005321, 370011082, 370016827, 370022556, 370028269, 370033966
+        .long   370039647, 370045312, 370050961, 370056595, 370062212, 370067814, 370073400, 370078971
+        .long   370084526, 370090065, 370095589, 370101098, 370106591, 370112068, 370117531, 370122978
+        .long   370128410, 370133826, 370139228, 370144614, 370149985, 370155341, 370160682, 370166009
+        .long   370171320, 370176616, 370181898, 370187165, 370192417, 370197654, 370202877, 370208085
+        .long   370213278, 370218457, 370223622, 370228772, 370233907, 370239028, 370244135, 370249228
+        .long   370254306, 370259370, 370264420, 370269456, 370274477, 370279485, 370284478, 370289458
+        .long   370294423, 370299375, 370304313, 370309237, 370314147, 370319043, 370323926, 370328795
+        .long   370333651, 370338492, 370343321, 370348135, 370352936, 370357724, 370362499, 370367260
+        .long   370372007, 370376741, 370381463, 370386170, 370390865, 370395547, 370400215, 370404870
+        .long   370409512, 370414142, 370418758, 370423361, 370427952, 370432529, 370437094, 370441646
+        .long   370446185, 370450712, 370455226, 370459727, 370464215, 370468691, 370473155, 370477606
+        .long   370482044, 370486470, 370490884, 370495285, 370499674, 370504050, 370508415, 370512767
+        .long   370517107, 370521434, 370525750, 370530054, 370534345, 370538624, 370542892, 370547147
+        .long   370551391, 370555622, 370559842, 370564050, 370568246, 370572431, 370576603, 370580764
+        .long   370584914, 370589051, 370593177, 370597292, 370601395, 370605486, 370609566, 370613635
+        .long   370617692, 370621738, 370625772, 370629795, 370633807, 370637808, 370641797, 370645776
+        .long   370649743, 370653698, 370657643, 370661577, 370665500, 370669412, 370673312, 370677202
+        .long   370681081, 370684949, 370688806, 370692653, 370696488, 370700313, 370704127, 370707931
+        .long   370711724, 370715506, 370719277, 370723038, 370726789, 370730529, 370734258, 370737977
+        .long   370741685, 370745384, 370749071, 370752749, 370756416, 370760073, 370763719, 370767355
+        .long   370770982, 370774597, 370778203, 370781799, 370785385, 370788960, 370792526, 370796081
+        .long   370799627, 370803162, 370806688, 370810204, 370813710, 370817206, 370820692, 370824169
+        .long   370827636, 370831093, 370834540, 370837978, 370841406, 370844824, 370848233, 370851632
+        .long   370855022, 370858402, 370861773, 370865134, 370868486, 370871828, 370875161, 370878485
+        .long   370881800, 370885105, 370888401, 370891687, 370894964, 370898233, 370901492, 370904741
+        .long   370907982, 370911214, 370914436, 370917650, 370920855, 370924050, 370927237, 370930414
+        .long   370933583, 370936743, 370939894, 370943036, 370946169, 370949294, 370952409, 370955516
+        .long   370958615, 370961704, 370964785, 370967857, 370970921, 370973976, 370977022, 370980060
+        .long   370983090, 370986111, 370989123, 370992127, 370995123, 370998110, 371001088, 371004059
+        .long   371007021, 371009975, 371012920, 371015857, 371018786, 371021707, 371024619, 371027524
+        .long   371030420, 371033308, 371036188, 371039060, 371041924, 371044779, 371047627, 371050467
+        .long   371053299, 371056123, 371058939, 371061747, 371064547, 371067339, 371070124, 371072900
+        .long   371075669, 371078430, 371081183, 371083929, 371086667, 371089397, 371092120, 371094834
+        .long   371097542, 371100241, 371102933, 371105618, 371108295, 371110964, 371113626, 371116281
+        .long   371118928, 371121568, 371124200, 371126825, 371129442, 371132052, 371134655, 371137251
+        .long   371139839, 371142420, 371144993, 371147560, 371150119, 371152671, 371155216, 371157754
+        .long   371160284, 371162808, 371165324, 371167834, 371170336, 371172831, 371175320, 371177801
+        .long   371180275, 371182743, 371185203, 371187657, 371190103, 371192543, 371194976, 371197402
+        .long   371199822, 371202234, 371204640, 371207039, 371209431, 371211817, 371214196, 371216568
+        .long   371218933, 371221292, 371223644, 371225990, 371228329, 371230661, 371232987, 371235307
+        .long   371237620, 371239926, 371242226, 371244519, 371246806, 371249087, 371251361, 371253629
+        .long   371255890, 371258145, 371260394, 371262637, 371264873, 371267102, 371269326, 371271543
+        .long   371273755, 371275959, 371278158, 371280351, 371282537, 371284717, 371286891, 371289059
+        .long   371291221, 371293377, 371295527, 371297671, 371299808, 371301940, 371304066, 371306186
+        .long   371308300, 371310407, 371312509, 371314605, 371316696, 371318780, 371320858, 371322931
+        .long   371324998, 371327059, 371329114, 371331163, 371333207, 371335245, 371337277, 371339304
+        .long   371341324, 371343339, 371345349, 371347353, 371349351, 371351344, 371353330, 371355312
+        .long   371357288, 371359258, 371361223, 371363182, 371365136, 371367084, 371369027, 371370964
+        .long   371372896, 371374822, 371376743, 371378659, 371380569, 371382474, 371384374, 371386268
+        .long   371388157, 371390040, 371391918, 371393791, 371395659, 371397522, 371399379, 371401231
+        .long   371403078, 371404919, 371406756, 371408587, 371410413, 371412234, 371414050, 371415861
+        .long   371417667, 371419468, 371421263, 371423054, 371424839, 371426620, 371428395, 371430166
+        .long   371431931, 371433692, 371435448, 371437198, 371438944, 371440685, 371442421, 371444152
+        .long   371445878, 371447600, 371449316, 371451028, 371452735, 371454437, 371456134, 371457827
+        .long   371459515, 371461198, 371462876, 371464550, 371466219, 371467883, 371469542, 371471197
+        .long   371472848, 371474493, 371476134, 371477771, 371479402, 371481030, 371482652, 371484270
+        .long   371485884, 371487493, 371489097, 371490697, 371492293, 371493884, 371495470, 371497052
+        .long   371498630, 371500203, 371501772, 371503336, 371504896, 371506452, 371508003, 371509550
+        .long   371511092, 371512630, 371514164, 371515693, 371517219, 371518740, 371520256, 371521769
+        .long   371523277, 371524781, 371526280, 371527776, 371529267, 371530754, 371532237, 371533716
+        .long   371535190, 371536661, 371538127, 371539589, 371541047, 371542501, 371543951, 371545397
+        .long   371546839, 371548276, 371549710, 371551140, 371552565, 371553987, 371555404, 371556818
+        .long   371558228, 371559633, 371561035, 371562433, 371563827, 371565217, 371566603, 371567985
+        .long   371569363, 371570737, 371572108, 371573475, 371574837, 371576196, 371577552, 371578903
+        .long   371580250, 371581594, 371582934, 371584270, 371585603, 371586932, 371588257, 371589578
+        .long   371590895, 371592209, 371593520, 371594826, 371596129, 371597428, 371598723, 371600015
+        .long   371601304, 371602588, 371603869, 371605146, 371606420, 371607691, 371608957, 371610220
+        .long   371611480, 371612736, 371613988, 371615237, 371616483, 371617725, 371618963, 371620198
+        .long   371621429, 371622657, 371623882, 371625103, 371626321, 371627535, 371628746, 371629953
+        .long   371631158, 371632358, 371633556, 371634749, 371635940, 371637127, 371638311, 371639492
+        .long   371640669, 371641843, 371643014, 371644181, 371645345, 371646506, 371647663, 371648818
+        .long   371649969, 371651116, 371652261, 371653402, 371654540, 371655675, 371656807, 371657936
+        .long   371659061, 371660183, 371661302, 371662418, 371663531, 371664641, 371665747, 371666851
+        .long   371667951, 371669048, 371670143, 371671234, 371672322, 371673407, 371674489, 371675567
+        .long   371676643, 371677716, 371678786, 371679853, 371680916, 371681977, 371683035, 371684090
+        .long   371685142, 371686191, 371687237, 371688280, 371689320, 371690357, 371691391, 371692422
+        .long   371693451, 371694476, 371695499, 371696519, 371697536, 371698550, 371699561, 371700569
+        .long   371701575, 371702578, 371703578, 371704575, 371705569, 371706560, 371707549, 371708535
+        .long   371709518, 371710499, 371711476, 371712451, 371713423, 371714393, 371715359, 371716323
+        .long   371717284, 371718243, 371719199, 371720152, 371721102, 371722050, 371722995, 371723938
+        .long   371724878, 371725815, 371726749, 371727681, 371728611, 371729537, 371730461, 371731383
+        .long   371732302, 371733218, 371734132, 371735043, 371735952, 371736858, 371737761, 371738662
+        .long   371739561, 371740456, 371741350, 371742241, 371743129, 371744015, 371744898, 371745779
+        .long   371746658, 371747534, 371748407, 371749278, 371750147, 371751013, 371751876, 371752738
+        .long   371753597, 371754453, 371755307, 371756159, 371757008, 371757855, 371758699, 371759541
+        .long   371760381, 371761218, 371762053, 371762886, 371763716, 371764544, 371765370, 371766193
+        .long   371767014, 371767833, 371768649, 371769463, 371770275, 371771085, 371771892, 371772697
+        .long   371773500, 371774300, 371775098, 371775894, 371776688, 371777480, 371778269, 371779056
+        .long   371779841, 371780623, 371781404, 371782182, 371782958, 371783732, 371784504, 371785273
+        .long   371786041, 371786806, 371787569, 371788330, 371789088, 371789845, 371790600, 371791352
+        .long   371792102, 371792850, 371793596, 371794340, 371795082, 371795822, 371796560, 371797295
+        .long   371798029, 371798760, 371799490, 371800217, 371800942, 371801666, 371802387, 371803106
+        .long   371803823, 371804538, 371805252, 371805963, 371806672, 371807379, 371808084, 371808788
+O3_NL_RT:
+        .long   1073741824, 1073217792, 1072694271, 1072171261, 1071648760, 1071126768, 1070605285, 1070084309
+        .long   1069563840, 1069043877, 1068524420, 1068005467, 1067487017, 1066969071, 1066451627, 1065934685
+        .long   1065418244, 1064902303, 1064386861, 1063871919, 1063357474, 1062843526, 1062330075, 1061817120
+        .long   1061304660, 1060792694, 1060281223, 1059770244, 1059259757, 1058749762, 1058240258, 1057731244
+        .long   1057222719, 1056714683, 1056207135, 1055700075, 1055193501, 1054687413, 1054181810, 1053676692
+        .long   1053172057, 1052667906, 1052164237, 1051661050, 1051158344, 1050656118, 1050154372, 1049653105
+        .long   1049152317, 1048652006, 1048152171, 1047652814, 1047153931, 1046655524, 1046157591, 1045660131
+        .long   1045163144, 1044666630, 1044170587, 1043675015, 1043179913, 1042685280, 1042191116, 1041697421
+        .long   1041204193, 1040711432, 1040219137, 1039727308, 1039235943, 1038745043, 1038254606, 1037764632
+        .long   1037275121, 1036786071, 1036297481, 1035809353, 1035321683, 1034834473, 1034347721, 1033861427
+        .long   1033375590, 1032890209, 1032405284, 1031920814, 1031436799, 1030953237, 1030470129, 1029987473
+        .long   1029505269, 1029023517, 1028542215, 1028061363, 1027580961, 1027101007, 1026621501, 1026142443
+        .long   1025663832, 1025185667, 1024707948, 1024230673, 1023753843, 1023277457, 1022801514, 1022326014
+        .long   1021850955, 1021376338, 1020902161, 1020428425, 1019955128, 1019482270, 1019009850, 1018537867
+        .long   1018066322, 1017595213, 1017124540, 1016654302, 1016184499, 1015715130, 1015246194, 1014777691
+        .long   1014309620, 1013841980, 1013374772, 1012907994, 1012441646, 1011975727, 1011510237, 1011045175
+        .long   1010580540, 1010116332, 1009652551, 1009189195, 1008726264, 1008263758, 1007801675, 1007340016
+        .long   1006878780, 1006417966, 1005957573, 1005497602, 1005038051, 1004578920, 1004120208, 1003661915
+        .long   1003204040, 1002746583, 1002289542, 1001832918, 1001376710, 1000920917, 1000465539, 1000010576
+        .long   999556025, 999101888, 998648163, 998194850, 997741949, 997289458, 996837378, 996385707
+        .long   995934445, 995483592, 995033147, 994583110, 994133479, 993684255, 993235436, 992787023
+        .long   992339014, 991891410, 991444209, 990997411, 990551016, 990105023, 989659431, 989214240
+        .long   988769449, 988325059, 987881067, 987437474, 986994280, 986551483, 986109083, 985667080
+        .long   985225473, 984784261, 984343445, 983903023, 983462994, 983023360, 982584118, 982145268
+        .long   981706811, 981268744, 980831068, 980393783, 979956888, 979520381, 979084263, 978648534
+        .long   978213192, 977778237, 977343669, 976909487, 976475691, 976042279, 975609253, 975176610
+        .long   974744351, 974312475, 973880981, 973449870, 973019140, 972588791, 972158822, 971729234
+        .long   971300025, 970871195, 970442743, 970014669, 969586973, 969159654, 968732712, 968306145
+        .long   967879954, 967454138, 967028696, 966603629, 966178935, 965754614, 965330665, 964907089
+        .long   964483884, 964061050, 963638587, 963216494, 962794770, 962373416, 961952430, 961531813
+        .long   961111563, 960691680, 960272164, 959853014, 959434230, 959015811, 958597757, 958180068
+        .long   957762742, 957345780, 956929180, 956512943, 956097068, 955681554, 955266401, 954851609
+        .long   954437177, 954023104, 953609391, 953196036, 952783040, 952370401, 951958119, 951546195
+        .long   951134626, 950723414, 950312556, 949902054, 949491907, 949082113, 948672673, 948263586
+        .long   947854852, 947446469, 947038439, 946630760, 946223432, 945816454, 945409826, 945003548
+        .long   944597618, 944192038, 943786805, 943381920, 942977382, 942573191, 942169347, 941765848
+        .long   941362695, 940959887, 940557423, 940155304, 939753528, 939352095, 938951006, 938550258
+        .long   938149853, 937749789, 937350066, 936950684, 936551642, 936152940, 935754577, 935356553
+        .long   934958867, 934561520, 934164510, 933767837, 933371501, 932975501, 932579837, 932184509
+        .long   931789515, 931394856, 931000532, 930606541, 930212883, 929819558, 929426566, 929033906
+        .long   928641578, 928249580, 927857914, 927466578, 927075571, 926684895, 926294547, 925904529
+        .long   925514838, 925125476, 924736441, 924347732, 923959351, 923571296, 923183567, 922796163
+        .long   922409084, 922022329, 921635899, 921249793, 920864010, 920478550, 920093412, 919708597
+        .long   919324103, 918939931, 918556080, 918172549, 917789339, 917406448, 917023876, 916641624
+        .long   916259690, 915878074, 915496776, 915115795, 914735131, 914354784, 913974753, 913595038
+        .long   913215638, 912836553, 912457782, 912079326, 911701184, 911323355, 910945839, 910568636
+        .long   910191745, 909815166, 909438898, 909062942, 908687296, 908311960, 907936935, 907562219
+        .long   907187812, 906813714, 906439924, 906066442, 905693268, 905320402, 904947842, 904575588
+        .long   904203641, 903832000, 903460664, 903089633, 902718906, 902348484, 901978366, 901608551
+        .long   901239039, 900869830, 900500924, 900132319, 899764016, 899396015, 899028314, 898660914
+        .long   898293814, 897927013, 897560512, 897194311, 896828408, 896462803, 896097496, 895732487
+        .long   895367775, 895003360, 894639241, 894275419, 893911893, 893548661, 893185725, 892823084
+        .long   892460737, 892098684, 891736924, 891375458, 891014285, 890653404, 890292816, 889932519
+        .long   889572514, 889212800, 888853377, 888494245, 888135402, 887776849, 887418586, 887060611
+        .long   886702926, 886345528, 885988419, 885631597, 885275063, 884918815, 884562854, 884207180
+        .long   883851791, 883496688, 883141870, 882787337, 882433088, 882079124, 881725443, 881372046
+        .long   881018933, 880666102, 880313553, 879961287, 879609302, 879257599, 878906177, 878555036
+        .long   878204176, 877853595, 877503294, 877153273, 876803531, 876454068, 876104883, 875755976
+        .long   875407347, 875058995, 874710921, 874363123, 874015602, 873668357, 873321388, 872974695
+        .long   872628276, 872282132, 871936263, 871590668, 871245347, 870900299, 870555525, 870211023
+        .long   869866794, 869522837, 869179152, 868835739, 868492597, 868149726, 867807125, 867464795
+        .long   867122735, 866780944, 866439423, 866098171, 865757187, 865416472, 865076025, 864735846
+        .long   864395934, 864056289, 863716911, 863377800, 863038954, 862700375, 862362061, 862024012
+        .long   861686229, 861348710, 861011455, 860674464, 860337737, 860001273, 859665073, 859329135
+        .long   858993459, 858658046, 858322894, 857988005, 857653376, 857319008, 856984901, 856651054
+        .long   856317467, 855984140, 855651072, 855318264, 854985714, 854653422, 854321389, 853989614
+        .long   853658096, 853326836, 852995832, 852665086, 852334595, 852004361, 851674382, 851344660
+        .long   851015192, 850685979, 850357021, 850028317, 849699867, 849371671, 849043728, 848716038
+        .long   848388602, 848061417, 847734486, 847407806, 847081377, 846755200, 846429275, 846103600
+        .long   845778175, 845453001, 845128077, 844803402, 844478977, 844154801, 843830873, 843507194
+        .long   843183764, 842860581, 842537646, 842214958, 841892517, 841570324, 841248376, 840926675
+        .long   840605220, 840284011, 839963046, 839642327, 839321853, 839001624, 838681638, 838361897
+        .long   838042399, 837723145, 837404134, 837085366, 836766840, 836448557, 836130515, 835812716
+        .long   835495158, 835177841, 834860765, 834543930, 834227335, 833910980, 833594866, 833278990
+        .long   832963354, 832647957, 832332799, 832017880, 831703198, 831388754, 831074549, 830760580
+        .long   830446849, 830133354, 829820096, 829507075, 829194289, 828881740, 828569426, 828257347
+        .long   827945503, 827633894, 827322519, 827011379, 826700472, 826389799, 826079360, 825769153
+        .long   825459180, 825149439, 824839931, 824530655, 824221610, 823912797, 823604216, 823295865
+        .long   822987745, 822679856, 822372197, 822064768, 821757569, 821450600, 821143859, 820837348
+        .long   820531066, 820225011, 819919186, 819613588, 819308217, 819003075, 818698159, 818393471
+        .long   818089009, 817784773, 817480764, 817176981, 816873423, 816570091, 816266984, 815964102
+        .long   815661445, 815359012, 815056803, 814754819, 814453058, 814151520, 813850206, 813549114
+        .long   813248245, 812947599, 812647175, 812346973, 812046992, 811747234, 811447696, 811148379
+        .long   810849283, 810550408, 810251752, 809953317, 809655101, 809357105, 809059329, 808761771
+        .long   808464432, 808167312, 807870410, 807573726, 807277260, 806981011, 806684980, 806389166
+        .long   806093569, 805798188, 805503024, 805208076, 804913344, 804618827, 804324527, 804030441
+        .long   803736570, 803442914, 803149472, 802856245, 802563232, 802270433, 801977847, 801685474
+        .long   801393315, 801101368, 800809634, 800518113, 800226803, 799935706, 799644820, 799354146
+        .long   799063683, 798773431, 798483390, 798193559, 797903939, 797614529, 797325328, 797036338
+        .long   796747556, 796458984, 796170621, 795882467, 795594521, 795306783, 795019254, 794731932
+        .long   794444818, 794157911, 793871211, 793584719, 793298433, 793012353, 792726480, 792440813
+        .long   792155351, 791870096, 791585045, 791300200, 791015560, 790731124, 790446893, 790162866
+        .long   789879043, 789595424, 789312008, 789028796, 788745788, 788462982, 788180378, 787897978
+        .long   787615779, 787333783, 787051988, 786770396, 786489004, 786207814, 785926825, 785646036
+        .long   785365448, 785085061, 784804874, 784524886, 784245098, 783965510, 783686121, 783406931
+        .long   783127940, 782849148, 782570554, 782292158, 782013960, 781735960, 781458158, 781180553
+        .long   780903145, 780625934, 780348920, 780072102, 779795481, 779519055, 779242826, 778966793
+        .long   778690955, 778415312, 778139864, 777864611, 777589553, 777314689, 777040020, 776765544
+        .long   776491263, 776217175, 775943280, 775669579, 775396070, 775122755, 774849632, 774576701
+        .long   774303963, 774031417, 773759062, 773486900, 773214928, 772943148, 772671559, 772400160
+        .long   772128952, 771857935, 771587107, 771316470, 771046022, 770775764, 770505696, 770235816
+        .long   769966126, 769696624, 769427311, 769158187, 768889250, 768620502, 768351941, 768083568
+        .long   767815383, 767547384, 767279573, 767011948, 766744510, 766477259, 766210194, 765943314
+        .long   765676621, 765410113, 765143791, 764877654, 764611702, 764345935, 764080353, 763814955
+        .long   763549742, 763284712, 763019867, 762755205, 762490727, 762226432, 761962320, 761698391
+        .long   761434645, 761171082, 760907701, 760644502, 760381485, 760118650, 759855997, 759593525
+        .long   759331235, 759069125, 758807197, 758545449, 758283881, 758022494, 757761287, 757500260
+        .long   757239413, 756978745, 756718257, 756457948, 756197818, 755937867, 755678095, 755418501
+        .long   755159085, 754899847, 754640788, 754381906, 754123201, 753864675, 753606325, 753348152
+        .long   753090156, 752832337, 752574694, 752317227, 752059937, 751802822, 751545884, 751289120
+        .long   751032533, 750776120, 750519882, 750263820, 750007932, 749752218, 749496679, 749241314
+        .long   748986122, 748731105, 748476261, 748221591, 747967094, 747712770, 747458618, 747204640
+        .long   746950834, 746697201, 746443739, 746190450, 745937332, 745684386, 745431612, 745179009
+        .long   744926577, 744674316, 744422226, 744170306, 743918557, 743666979, 743415570, 743164331
+        .long   742913262, 742662363, 742411633, 742161072, 741910680, 741660457, 741410403, 741160518
+        .long   740910800, 740661251, 740411871, 740162658, 739913612, 739664734, 739416024, 739167481
+        .long   738919105, 738670895, 738422853, 738174977, 737927267, 737679723, 737432346, 737185134
+        .long   736938088, 736691208, 736444493, 736197943, 735951558, 735705338, 735459283, 735213392
+        .long   734967666, 734722103, 734476705, 734231471, 733986400, 733741493, 733496750, 733252169
+        .long   733007752, 732763497, 732519406, 732275476, 732031710, 731788105, 731544663, 731301382
+        .long   731058263, 730815306, 730572510, 730329876, 730087402, 729845090, 729602938, 729360947
+        .long   729119117, 728877446, 728635936, 728394586, 728153396, 727912365, 727671494, 727430783
+        .long   727190230, 726949837, 726709602, 726469526, 726229609, 725989850, 725750249, 725510807
+        .long   725271522, 725032396, 724793426, 724554615, 724315960, 724077463, 723839123, 723600940
+        .long   723362913, 723125043, 722887329, 722649772, 722412370, 722175125, 721938035, 721701101
+        .long   721464323, 721227699, 720991231, 720754918, 720518760, 720282756, 720046908, 719811213
+        .long   719575673, 719340286, 719105054, 718869976, 718635051, 718400280, 718165662, 717931197
+        .long   717696885, 717462726, 717228720, 716994866, 716761165, 716527617, 716294220, 716060975
+        .long   715827883, 715594942, 715362152, 715129514, 714897027, 714664691, 714432507, 714200473
+        .long   713968589, 713736857, 713505274, 713273842, 713042560, 712811428, 712580446, 712349613
+        .long   712118930, 711888396, 711658012, 711427776, 711197689, 710967752, 710737962, 710508322
+        .long   710278829, 710049485, 709820289, 709591241, 709362341, 709133588, 708904982, 708676525
+        .long   708448214, 708220050, 707992033, 707764163, 707536440, 707308863, 707081433, 706854148
+        .long   706627010, 706400018, 706173171, 705946470, 705719915, 705493505, 705267240, 705041121
+        .long   704815146, 704589316, 704363631, 704138090, 703912694, 703687442, 703462334, 703237370
+        .long   703012550, 702787873, 702563340, 702338951, 702114705, 701890602, 701666642, 701442825
+        .long   701219150, 700995619, 700772229, 700548982, 700325878, 700102915, 699880094, 699657415
+        .long   699434878, 699212482, 698990227, 698768114, 698546142, 698324311, 698102621, 697881071
+        .long   697659662, 697438394, 697217266, 696996278, 696775430, 696554721, 696334153, 696113724
+        .long   695893435, 695673286, 695453275, 695233404, 695013671, 694794078, 694574623, 694355306
+        .long   694136129, 693917089, 693698188, 693479425, 693260799, 693042312, 692823962, 692605750
+        .long   692387675, 692169737, 691951937, 691734274, 691516747, 691299357, 691082104, 690864988
+        .long   690648007, 690431163, 690214456, 689997884, 689781448, 689565148, 689348983, 689132954
+        .long   688917060, 688701301, 688485678, 688270190, 688054836, 687839617, 687624533, 687409583
+        .long   687194767, 686980086, 686765539, 686551126, 686336846, 686122701, 685908689, 685694810
+        .long   685481065, 685267453, 685053974, 684840628, 684627415, 684414334, 684201386, 683988571
+        .long   683775888, 683563337, 683350918, 683138632, 682926477, 682714454, 682502562, 682290802
+        .long   682079174, 681867676, 681656310, 681445075, 681233970, 681022996, 680812153, 680601441
+        .long   680390859, 680180407, 679970085, 679759894, 679549832, 679339900, 679130097, 678920425
+        .long   678710881, 678501467, 678292182, 678083027, 677874000, 677665102, 677456333, 677247692
+        .long   677039180, 676830796, 676622540, 676414413, 676206413, 675998542, 675790798, 675583181
+        .long   675375693, 675168331, 674961097, 674753991, 674547011, 674340158, 674133432, 673926833
+        .long   673720360, 673514014, 673307794, 673101701, 672895733, 672689892, 672484176, 672278586
+        .long   672073122, 671867784, 671662570, 671457483, 671252520, 671047682, 670842970, 670638382
+        .long   670433919, 670229581, 670025367, 669821278, 669617313, 669413472, 669209755, 669006162
+        .long   668802693, 668599348, 668396126, 668193028, 667990053, 667787202, 667584473, 667381868
+        .long   667179386, 666977026, 666774789, 666572675, 666370684, 666168814, 665967067, 665765442
+        .long   665563939, 665362558, 665161299, 664960162, 664759146, 664558252, 664357479, 664156827
+        .long   663956297, 663755888, 663555599, 663355432, 663155385, 662955458, 662755653, 662555967
+        .long   662356402, 662156957, 661957633, 661758428, 661559343, 661360378, 661161532, 660962806
+        .long   660764199, 660565712, 660367344, 660169095, 659970965, 659772954, 659575062, 659377288
+        .long   659179633, 658982096, 658784678, 658587378, 658390196, 658193132, 657996187, 657799359
+        .long   657602648, 657406055, 657209580, 657013222, 656816982, 656620859, 656424852, 656228963
+        .long   656033191, 655837535, 655641996, 655446574, 655251268, 655056079, 654861005, 654666048
+        .long   654471207, 654276482, 654081873, 653887379, 653693001, 653498739, 653304592, 653110560
+        .long   652916644, 652722842, 652529156, 652335585, 652142128, 651948786, 651755559, 651562446
+        .long   651369448, 651176564, 650983794, 650791138, 650598596, 650406168, 650213854, 650021654
+        .long   649829567, 649637594, 649445734, 649253987, 649062354, 648870834, 648679426, 648488132
+        .long   648296950, 648105881, 647914925, 647724081, 647533350, 647342731, 647152224, 646961829
+        .long   646771546, 646581375, 646391316, 646201368, 646011532, 645821808, 645632195, 645442693
+        .long   645253303, 645064023, 644874855, 644685798, 644496851, 644308015, 644119290, 643930675
+        .long   643742171, 643553777, 643365493, 643177320, 642989256, 642801302, 642613459, 642425725
+        .long   642238100, 642050586, 641863180, 641675884, 641488698, 641301620, 641114652, 640927792
+        .long   640741042, 640554400, 640367867, 640181443, 639995127, 639808919, 639622820, 639436829
+        .long   639250946, 639065172, 638879505, 638693946, 638508495, 638323151, 638137915, 637952787
+        .long   637767766, 637582852, 637398045, 637213346, 637028753, 636844267, 636659889, 636475617
+        .long   636291451, 636107392, 635923440, 635739594, 635555854, 635372221, 635188693, 635005272
+        .long   634821956, 634638746, 634455642, 634272644, 634089751, 633906963, 633724281, 633541704
+        .long   633359233, 633176866, 632994604, 632812448, 632630396, 632448449, 632266606, 632084868
+        .long   631903234, 631721705, 631540280, 631358959, 631177743, 630996630, 630815621, 630634716
+        .long   630453915, 630273217, 630092623, 629912133, 629731746, 629551462, 629371281, 629191203
+        .long   629011229, 628831357, 628651588, 628471922, 628292359, 628112898, 627933540, 627754284
+        .long   627575130, 627396079, 627217129, 627038282, 626859537, 626680894, 626502352, 626323912
+        .long   626145574, 625967337, 625789202, 625611168, 625433235, 625255404, 625077674, 624900044
+        .long   624722516, 624545088, 624367761, 624190535, 624013410, 623836385, 623659460, 623482636
+        .long   623305911, 623129287, 622952764, 622776340, 622600016, 622423792, 622247667, 622071642
+        .long   621895717, 621719891, 621544165, 621368538, 621193010, 621017581, 620842252, 620667021
+        .long   620491889, 620316856, 620141922, 619967086, 619792349, 619617711, 619443171, 619268729
+        .long   619094385, 618920139, 618745992, 618571942, 618397991, 618224137, 618050381, 617876723
+        .long   617703162, 617529698, 617356332, 617183064, 617009892, 616836818, 616663841, 616490960
+        .long   616318177, 616145490, 615972901, 615800408, 615628011, 615455711, 615283507, 615111400
+        .long   614939389, 614767474, 614595656, 614423933, 614252306, 614080775, 613909340, 613738000
+        .long   613566757, 613395608, 613224555, 613053598, 612882736, 612711969, 612541297, 612370720
+        .long   612200238, 612029851, 611859559, 611689362, 611519259, 611349251, 611179337, 611009518
+        .long   610839793, 610670163, 610500626, 610331184, 610161836, 609992581, 609823421, 609654354
+        .long   609485381, 609316502, 609147716, 608979024, 608810425, 608641920, 608473507, 608305188
+        .long   608136962, 607968829, 607800789, 607632842, 607464988, 607297226, 607129557, 606961981
+        .long   606794497, 606627105, 606459806, 606292599, 606125484, 605958461, 605791530, 605624692
+        .long   605457945, 605291290, 605124726, 604958255, 604791874, 604625586, 604459389, 604293283
+        .long   604127268, 603961345, 603795512, 603629771, 603464121, 603298561, 603133093, 602967715
+        .long   602802428, 602637231, 602472125, 602307109, 602142184, 601977349, 601812604, 601647950
+        .long   601483385, 601318910, 601154526, 600990231, 600826026, 600661911, 600497885, 600333949
+        .long   600170102, 600006345, 599842677, 599679099, 599515609, 599352209, 599188898, 599025676
+        .long   598862542, 598699498, 598536542, 598373675, 598210897, 598048207, 597885605, 597723092
+        .long   597560667, 597398331, 597236082, 597073922, 596911850, 596749866, 596587969, 596426161
+        .long   596264440, 596102807, 595941262, 595779804, 595618433, 595457150, 595295954, 595134846
+        .long   594973825, 594812890, 594652043, 594491283, 594330610, 594170023, 594009523, 593849110
+        .long   593688784, 593528544, 593368391, 593208324, 593048343, 592888449, 592728640, 592568918
+        .long   592409282, 592249732, 592090268, 591930890, 591771597, 591612391, 591453269, 591294234
+        .long   591135284, 590976419, 590817640, 590658946, 590500337, 590341814, 590183375, 590025022
+        .long   589866753, 589708569, 589550471, 589392457, 589234527, 589076682, 588918922, 588761246
+        .long   588603655, 588446148, 588288725, 588131387, 587974133, 587816962, 587659876, 587502874
+        .long   587345955, 587189120, 587032369, 586875702, 586719118, 586562618, 586406201, 586249868
+        .long   586093618, 585937452, 585781368, 585625368, 585469450, 585313616, 585157865, 585002196
+        .long   584846611, 584691108, 584535687, 584380350, 584225094, 584069922, 583914832, 583759824
+        .long   583604898, 583450055, 583295293, 583140614, 582986017, 582831502, 582677068, 582522717
+        .long   582368447, 582214259, 582060152, 581906127, 581752184, 581598322, 581444541, 581290842
+        .long   581137224, 580983687, 580830231, 580676856, 580523563, 580370350, 580217218, 580064167
+        .long   579911196, 579758306, 579605497, 579452768, 579300120, 579147552, 578995065, 578842657
+        .long   578690330, 578538084, 578385917, 578233830, 578081823, 577929896, 577778049, 577626282
+        .long   577474594, 577322986, 577171458, 577020009, 576868640, 576717350, 576566139, 576415008
+        .long   576263956, 576112983, 575962089, 575811274, 575660538, 575509881, 575359303, 575208803
+        .long   575058383, 574908041, 574757777, 574607592, 574457486, 574307458, 574157508, 574007637
+        .long   573857843, 573708128, 573558491, 573408932, 573259451, 573110048, 572960723, 572811476
+        .long   572662306, 572513214, 572364200, 572215263, 572066404, 571917622, 571768917, 571620290
+        .long   571471740, 571323267, 571174872, 571026553, 570878311, 570730147, 570582059, 570434048
+        .long   570286114, 570138257, 569990476, 569842772, 569695144, 569547593, 569400118, 569252720
+        .long   569105397, 568958152, 568810982, 568663888, 568516871, 568369929, 568223063, 568076274
+        .long   567929560, 567782922, 567636359, 567489872, 567343461, 567197125, 567050865, 566904680
+        .long   566758571, 566612537, 566466578, 566320694, 566174886, 566029152, 565883493, 565737910
+        .long   565592401, 565446967, 565301608, 565156324, 565011114, 564865979, 564720918, 564575932
+        .long   564431020, 564286183, 564141420, 563996731, 563852117, 563707576, 563563110, 563418718
+        .long   563274399, 563130155, 562985985, 562841888, 562697865, 562553915, 562410040, 562266238
+        .long   562122509, 561978854, 561835272, 561691764, 561548329, 561404967, 561261678, 561118463
+        .long   560975320, 560832251, 560689254, 560546331, 560403480, 560260702, 560117997, 559975364
+        .long   559832804, 559690317, 559547902, 559405560, 559263290, 559121092, 558978967, 558836914
+        .long   558694933, 558553024, 558411187, 558269423, 558127730, 557986109, 557844560, 557703083
+        .long   557561677, 557420344, 557279081, 557137891, 556996772, 556855724, 556714748, 556573843
+        .long   556433010, 556292248, 556151557, 556010937, 555870388, 555729910, 555589504, 555449168
+        .long   555308903, 555168709, 555028585, 554888533, 554748551, 554608639, 554468799, 554329028
+        .long   554189329, 554049699, 553910140, 553770651, 553631233, 553491884, 553352606, 553213398
+        .long   553074259, 552935191, 552796193, 552657265, 552518406, 552379617, 552240898, 552102248
+        .long   551963669, 551825158, 551686717, 551548346, 551410044, 551271811, 551133648, 550995554
+        .long   550857529, 550719573, 550581686, 550443869, 550306120, 550168440, 550030829, 549893287
+        .long   549755814, 549618409, 549481073, 549343806, 549206607, 549069477, 548932415, 548795422
+        .long   548658497, 548521640, 548384852, 548248132, 548111479, 547974895, 547838380, 547701932
+        .long   547565552, 547429240, 547292995, 547156819, 547020710, 546884669, 546748696, 546612790
+        .long   546476952, 546341182, 546205478, 546069842, 545934274, 545798773, 545663339, 545527972
+        .long   545392673, 545257440, 545122275, 544987176, 544852145, 544717180, 544582282, 544447451
+        .long   544312687, 544177989, 544043359, 543908794, 543774297, 543639865, 543505501, 543371202
+        .long   543236970, 543102805, 542968705, 542834672, 542700705, 542566804, 542432969, 542299200
+        .long   542165497, 542031860, 541898289, 541764783, 541631344, 541497970, 541364662, 541231419
+        .long   541098242, 540965131, 540832084, 540699104, 540566189, 540433339, 540300554, 540167835
+        .long   540035181, 539902592, 539770068, 539637609, 539505215, 539372886, 539240622, 539108423
+        .long   538976288, 538844218, 538712214, 538580273, 538448398, 538316586, 538184840, 538053158
+        .long   537921540, 537789987, 537658498, 537527073, 537395713, 537264416, 537133184, 537002016
+        .long   536870912
         .align  4
 O3_SQC:
         .short  12289, 10556, 8558, 6787, 5176, 3712, 2390, 1194, 121, -845, -1703, -2469, -3142, -3735, -4248, -4693
@@ -6277,6 +8736,7 @@ o3_snapt:
 
 | ---- runtime state: zeros, depacked by the loader at every boot (poly.s keeps its the same way)
         .align  4
+        .balign 16
 o3_state:
         .fill   ST_SIZE*NTRACKS, 1, 0
 o3_desc:

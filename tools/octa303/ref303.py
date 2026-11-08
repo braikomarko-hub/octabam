@@ -1,4 +1,4 @@
-"""OCTA303 v7.8 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
+"""OCTA303 v8.0 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
 
 One engine (TB-303).  Every helper is one assembly idiom.  sim/test_octa303.py runs the assembly
 source in cfsim and requires its output to be BIT-IDENTICAL to this model.
@@ -9,6 +9,7 @@ stays inside 32 bits; the stress tests run with it on.
 """
 import json, os
 import o3tables as T
+import o3ladder as NL                     # v8.0: the new ladder (M1t + (c''-0) + Q12 + G/F), integer, EMAC-exact
 
 _lc = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ladder_cache.json')
 if os.path.exists(_lc):
@@ -61,7 +62,7 @@ FIELDS = ('latched', 'wave', 'dist', 'fab', 'phase', 'inc', 'pcur', 'cs', 'meg',
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqi', 'ud', 'sqk', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2', 'sql')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqi', 'ud', 'sqk', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2', 'sql', 'nl')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -94,6 +95,17 @@ def trck(s, d, hz):
         if T.DF_HZ[m] <= f2: lo = m
         else: hi = m - 1
     return (lo << 6) + (s & 63)
+
+def nlctrl(st, i, res):
+    """v8.0: old ladder index i (CUT/ENV/accent in Hz) -> the new ladder's index (IMAP) and k = KL4[res] x KLR4[im]
+    (Q25); dEVILish SWP 1/0 doubles it as before (DF_HIRES).  The ring's decay UD and KMUL belonged to the old
+    ladder's resonance law and are not used."""
+    if not st.nl: st.nl = NL.Ladder(NL.TB)
+    im = NL.IMAP[i]
+    kq = NL.kq_of(res, im)
+    if st.swp != 2: kq *= T.DF_HIRES
+    st.k = kq
+    st.nl.ctrl(im, kq)
 
 def kfb(i, kmul, ud):
     """v6.9: the feedback at ladder index i -- the RES pot's fraction of the oscillation point (KF = KO / LK
@@ -209,15 +221,11 @@ def ctrl(st):
     if st.trkhz:
         s = trck(s, (st.pcur >> 8) - T.P_CENTER, st.trkhz)            # TRCK
     st.sctrl = s
-    st.kmul = T.TB_KMUL[res] * (1 if st.swp == 2 else T.DF_HIRES)        # SWP 1/0: resonance doubled
-    st.ud = T.TB_UD[res]                                               # v6.9: the ring's decay, dB/ms Q10
     i = s >> 6
-    st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
-    st.k = kfb(i, st.kmul, st.ud)
-    clset(st, i)                                                       # v7.3
+    nlctrl(st, i, res)                                                 # v8.0: the new ladder's index, k, reciprocal
     g0 = T.TB_GCOMP[0]
     st.gcomp = ((g0 + (((T.TB_GCOMP[res] - g0) * st.ocomp) >> 12)) * st.ogain) >> 12   # OVDR comp
-    st.gcomp = (st.gcomp * T.LG[i]) >> 12                             # v6.7: LG, the level by frequency
+    st.gcomp = (st.gcomp * NL.LGQ) >> 12                              # v8.0: LG flat (the twin (a)); v6.7-v7.9 LG[i]
     st.w2 = (T.VP_W2[res] * st.ocomp) >> 12                            # v7.4: the VCA pair's RES path (OVDR swamps it)
     v = st.veg if st.vatt >= T.ONE30 else mul30(st.veg, st.vatt)        # SATK (none: v6.1 exactly)
     tgt = (v >> 16) + ((vin * st.accvg) >> 6)                          # Q14; v7.8: + I27 / I_Q31 (pin 1); ACCV
@@ -229,10 +237,7 @@ def ctrl(st):
 def sample(st):
     if st.fmq:                                       # FM: the last VCA sample moves the cutoff, per sample
         s = clamp(st.sctrl + ((((st.ovca >> 8) * st.fmq)) >> 12), 0, T.S_MAX - 1)
-        i = s >> 6
-        st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
-        st.k = kfb(i, st.kmul, st.ud)
-        clset(st, i)                                 # v7.3
+        nlctrl(st, s >> 6, st.res)                   # v8.0
     inc = st.inc
     ph = st.phase = (st.phase + inc) & M32
     if st.wave == 0:
@@ -258,14 +263,9 @@ def sample(st):
         if st.nz == 0: st.nz = 0x1D872B41              # (a Galois LFSR never leaves 0: seed it)
         st.nz = (st.nz >> 1) ^ (0xD0000001 if st.nz & 1 else 0)   # the filter can self-oscillate with no VCO
         x += 64 if st.nz & 1 else -64
-    y4 = st.y4
-    st.fb += fm(y4 - st.fb, T.TB_FBHP, 4, 11, 'fbhp')
-    fb = clamp(y4 - st.fb, -(1 << 23), 1 << 23)
-    y0 = ladder_clip(st, x - chk((fb >> 8) * st.k, 'kfb'))   # v7.3: eased at the top (#1011)
-    st.y1 += fm(y0 - st.y1 + st.y2, st.c1, 7, 8, 'l1')
-    st.y2 += fm(st.y1 - 2 * st.y2 + st.y3, st.b, 7, 8, 'l2')
-    st.y3 += fm(st.y2 - 2 * st.y3 + y4, st.b, 7, 8, 'l3')
-    st.y4 = y4 + fm(st.y3 - 2 * y4, st.b, 7, 8, 'l4')
+    # v8.0: the new ladder (the twin (a): M1t matrices, trapezoidal loop with (c''-0), Q12 once on the linear
+    # estimate, the loop's couplings G and the output path F as TPT sections), 8 guard bits, EMAC-exact
+    fb = clamp((st.nl.step(x << NL.GBI) + 128) >> NL.GB, -(1 << 23), 1 << 23)
     # v7.4: the output is the loop's high-pass (the circuit has one, C25/C27 into Q21, for both), then the VCA's
     # input pair: R121/C21 (72 Hz) from it, R122/C22 (156 Hz) from the RES wiper (weight 2.2 x RES)
     st.vp1 += fm(fb - st.vp1, T.VP_HP1, 4, 11, 'vp1')

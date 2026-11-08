@@ -174,14 +174,14 @@ for df, su, v in ((None, (0, 0, 64, 0, 0, 64), (127, 127, 120, 64, 0)), (None, (
     fn = 'KICK.WAV' if su else 'TB303.WAV'                       # the machine (SETUP), or the TB303.WAV carrier (run(): SU(0)) + dEVILish
     fr = lambda tune, at: (W(tune, *v), at, fn, True, df, 1, None, df, su)        # rdf: the 303 hears dEVILish too
     sc = [fr(0, 0)] + [fr(0, None)] * n + [fr(-12, 3)] + [fr(-12, None)] * n
-    _orig = R.clset
-    def _spy(st, i, _o=_orig):
-        _o(st, i); _seen['clg'] += st.clg > 0
-    R.clset = _spy
+    _orig = R.nlctrl                                         # v8.0: the old ladder's eased clip is gone; the
+    def _spy(st, i, res, _o=_orig):                          # same scenarios still drive the top of the table
+        _o(st, i, res); _seen['clg'] += i > T.CL_I0
+    R.nlctrl = _spy
     A, B, mm = run(sc); _top.append(mm is None)
-    R.clset = _orig
-check('bit_exact_v73_top_clip_accv', all(_top) and _seen['clg'] > 0,
-      '%d/%d, clip eased in %d control steps' % (sum(_top), len(_top), _seen['clg']))
+    R.nlctrl = _orig
+check('bit_exact_v80_top_of_table_accv', all(_top) and _seen['clg'] > 0,
+      '%d/%d, the top of the table in %d control steps' % (sum(_top), len(_top), _seen['clg']))
 # v7.5 (review): dEVILish SPD SLOW with ACC 127 and accents in a row: the capacitor read doubled climbed past 2^31
 # in the asm (wrapped) where the model's Python integers did not; now held under 2^30 in both
 _sl = [(W(0, 64, 64, 64, 64, 127), 0 if f % 50 == 0 else None, 'TB303.WAV', True, (25, 0, 0, 64, 0, 127, 0, 0, 2, 0, 0, 0), 1)
