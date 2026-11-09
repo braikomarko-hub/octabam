@@ -1,0 +1,4 @@
+# m3meas.py . <147ff244 octa303.s (move 3)> <this commit's octa303.s> 300: P2 + P4 against move 3
+GATE 303 saw, one note             frames   300  cycles/frame 7283 -> 7006 (-277)  output: 0 of 4800 samples differ, by at most 0 LSB (16 bits): -inf dB of the signal
+GATE 303 saw+D, one note           frames   300  cycles/frame 8182 -> 7873 (-309)  output: 0 of 4800 samples differ, by at most 0 LSB (16 bits): -inf dB of the signal
+GATE 303 sq RES127 CUT20 ACC127    frames   300  cycles/frame 8862 -> 8584 (-277)  output: 0 of 4800 samples differ, by at most 0 LSB (16 bits): -inf dB of the signal

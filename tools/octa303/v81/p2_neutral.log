@@ -1,0 +1,6 @@
+# on the committed source:
+SLID 100: 3840 samples, bit-exact
+SLID   0: 3840 samples, bit-exact
+# control: the same source without the page-1 source key (.Lp_k4), which this check must catch:
+SLID 100: 352 samples, MISMATCH at sample 344
+SLID   0: 3840 samples, bit-exact

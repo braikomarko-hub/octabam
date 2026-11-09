@@ -231,6 +231,24 @@
         .set    S_KH,564                        | k H0, k H1, k H2 (G's moments into k Sg)
         .set    S_KC0,576                       | k C0 (G's first high-pass state into k Sg)
         .set    S_M3KF,580                      | the k they were folded with (o3ladder.LadderM3.kfold; 0 = none yet)
+| v8.1 P2: o3_ctrl skips the work whose inputs are the last step's (pure functions of them: bit for bit).
+        .set    S_P2PV,584                      | 1: the three keys below are a step that left PCUR where it was
+        .set    S_P2PT,588                      | PTGT, PCUR and SLIDE of that step
+        .set    S_P2PC,592
+        .set    S_P2PS,596
+        .set    S_P2EK,600                      | the env-mod depth's key: ENV | RES << 8 | ENVX << 16 | 1 << 30
+        .set    S_P2EV,604                      | and its depth
+        .set    S_P2CD,608                      | a CUTB difference whose glide step was 0 (0 at boot: MULQ15 of 0 is 0)
+        .set    S_P2ND,612                      | an ENVS difference whose glide step was 0
+        .set    S_P2T,616                       | scratch: this step's difference
+        .set    S_P2G1,620                      | the level compensation's keys: RES | 1 << 30, OCOMP, OGAIN
+        .set    S_P2G2,624
+        .set    S_P2G3,628
+        .set    S_P2DV,632                      | o3_params: 1 = the three below hold the last call's dEVILish bytes
+        .set    S_P2D1,636                      | page 1 bytes 0-3, page 1 4-5 + page 2 0-1, page 2 2-5
+        .set    S_P2D2,640
+        .set    S_P2D3,644
+        .set    S_P2DA,648                      | and page 1's source address
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024                    | v8.1 move 3: was 512
 
@@ -245,6 +263,8 @@
         .set    K_C1R,28                        | v6.7: the ladder's first-stage coefficient ratio, Q12 (stock 2.0 = 8192)
         .set    K_VP1,32                        | v7.4: the VCA pair's 72 Hz high-pass
         .set    K_VP2,36                        | v7.4: its 156 Hz high-pass (RES path)
+        .set    K_VP1S,40                       | v8.1 P4: K_VP1 << 20, for the EMAC (FM411 as one MAC)
+        .set    K_VP2S,44                       | v8.1 P4: K_VP2 << 20
 
 | >>> GENERATED CONSTANTS (tools/octa303/gen_tables.py) -- do not edit by hand
         .set    CS,              16
@@ -958,23 +978,29 @@ sy_render:
         move.l  %d4,%d6
         move.l  (%sp)+,%d7
         move.l  %d6,S_FBO(%a3)          | v7.4: the output is the loop's high-pass (one, shared), then the
-        move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper
-        sub.l   S_VP1(%a3),%d0
-        FM411   %d0,K_VP1(%a5)
+        move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper.  v8.1 P4: the two
+        sub.l   S_VP1(%a3),%d0          | high-passes side by side on the EMAC (render_audit R2): FM411's
+        asr.l   #4,%d0                  | ((x >> 4) K >> 8) >> 3 = E[(x >> 4) (K << 20)], the same floor
+        move.l  K_VP1S(%a5),%d2
+        mac.l   %d0,%d2,%acc0
+        move.l  %d6,%d1
+        sub.l   S_VP2(%a3),%d1
+        asr.l   #4,%d1
+        move.l  K_VP2S(%a5),%d2
+        mac.l   %d1,%d2,%acc1
+        move.l  %d6,%d2                 | fb, for fb - vp1
+        movclr.l %acc0,%d0
         add.l   S_VP1(%a3),%d0
         move.l  %d0,S_VP1(%a3)
-        move.l  %d6,%d1
-        sub.l   %d0,%d1                 | d1 = fb - vp1
-        move.l  %d6,%d0
-        sub.l   S_VP2(%a3),%d0
-        FM411   %d0,K_VP2(%a5)
+        sub.l   %d0,%d2                 | d2 = fb - vp1
+        movclr.l %acc1,%d0
         add.l   S_VP2(%a3),%d0
         move.l  %d0,S_VP2(%a3)
         sub.l   %d0,%d6                 | fb - vp2
         asr.l   #6,%d6
         muls.l  S_W2(%a3),%d6
         asr.l   #6,%d6
-        add.l   %d1,%d6
+        add.l   %d2,%d6
         move.l  S_AMP(%a3),%d3          | v8.1 P11: the VCA's level first (was after the OTA, same value;
         add.l   S_AMPSTEP(%a3),%d3      | d3 is free from here to the sample's end)
         bgt     .Lamp                   | open: the whole chain
@@ -1102,8 +1128,9 @@ sy_render:
         move.l  %d6,S_OVCA(%a3)         | FM reads the VCA after the Muffler
         tst.l   S_DIST(%a3)
         beq     .Lnod
-        moveq   #DIST_GAIN,%d0          | the pedal
-        muls.l  %d0,%d6
+        move.l  %d6,%d0                 | the pedal: x DIST_GAIN = 5, as 4 x + x (v8.1 P4; gen_tables asserts 5)
+        lsl.l   #2,%d6
+        add.l   %d0,%d6
         add.l   #DIST_BIAS,%d6
         SOFTCLIP %d6
         move.l  %d6,%d0
@@ -3290,6 +3317,59 @@ o3_params:
         add.l   %d1,%a0
         bsr     o3_vrec                 | v7.1: page 1 as the DSP gets it (locks, scenes, LFOs)
 .Lp_have:
+        moveq   #0,%d1                  | v8.1 P2: dEVILish's twelve bytes (page 1 at a0, page 2 at a2) as at the last
+        moveq   #0,%d0                  | call: everything down to ENVX is a pure function of them (only
+        move.b  (%a0),%d0                | o3_params writes those fields); packed into three longs, d1 = 1 if one moved
+        lsl.l   #8,%d0
+        move.b  1(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  2(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  3(%a0),%d0
+        cmp.l   S_P2D1(%a3),%d0
+        beq     .Lp_k1
+        move.l  %d0,S_P2D1(%a3)
+        moveq   #1,%d1
+.Lp_k1:
+        moveq   #0,%d0
+        move.b  4(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  5(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  (%a2),%d0
+        lsl.l   #8,%d0
+        move.b  1(%a2),%d0
+        cmp.l   S_P2D2(%a3),%d0
+        beq     .Lp_k2
+        move.l  %d0,S_P2D2(%a3)
+        moveq   #1,%d1
+.Lp_k2:
+        moveq   #0,%d0
+        move.b  2(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  3(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  4(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  5(%a2),%d0
+        cmp.l   S_P2D3(%a3),%d0
+        beq     .Lp_k3
+        move.l  %d0,S_P2D3(%a3)
+        moveq   #1,%d1
+.Lp_k3:
+        move.l  %a0,%d0                 | and page 1's source: dEVILish's S_DFK or the neutral bytes (with the neutral
+        cmp.l   S_P2DA(%a3),%d0         | ones SETUP's SLID overrides SLIDE below, so the source is part of the key)
+        beq     .Lp_k4
+        move.l  %d0,S_P2DA(%a3)
+        moveq   #1,%d1
+.Lp_k4:
+        tst.l   S_P2DV(%a3)
+        beq     .Lp_new
+        tst.l   %d1
+        beq     .Lp_skip
+.Lp_new:
+        moveq   #1,%d0
+        move.l  %d0,S_P2DV(%a3)
         KB      0,%a0                   | OVDR
         TAB     O3_DF_GIN,S_GIN
         TAB     O3_DF_OCOMP,S_OCOMP
@@ -3341,6 +3421,7 @@ o3_params:
         moveq   #1,%d1
 .Lp_ex:
         move.l  %d1,S_ENVX(%a3)
+.Lp_skip:
         lea     o3_df_neutral,%a1       | v7.0: no dEVILish on the track: SETUP's SLID
         cmp.l   %a1,%a0
         bne     .Lp_ns
@@ -3603,12 +3684,30 @@ o3_nlctrl:
         rts
 
 o3_ctrl:
-        move.l  S_PTGT(%a3),%d0         | SLID: RC slide on the pitch CV
-        lsl.l   #8,%d0
-        move.l  S_PCUR(%a3),%d1
+        move.l  S_PTGT(%a3),%d0         | v8.1 P2: PCUR's step, the increment and Q8's row are a pure function of
+        move.l  S_PCUR(%a3),%d1         | (PTGT, PCUR, SLIDE): with the keys of a step that left PCUR where it was,
+        move.l  S_SLIDE(%a3),%d2        | nothing here changes
+        tst.l   S_P2PV(%a3)
+        beq     .Lc_pg
+        cmp.l   S_P2PT(%a3),%d0
+        bne     .Lc_pg
+        cmp.l   S_P2PC(%a3),%d1
+        bne     .Lc_pg
+        cmp.l   S_P2PS(%a3),%d2
+        beq     .Lc_pd
+.Lc_pg:
+        move.l  %d0,S_P2PT(%a3)
+        move.l  %d1,S_P2PC(%a3)
+        move.l  %d2,S_P2PS(%a3)
+        lsl.l   #8,%d0                  | SLID: RC slide on the pitch CV
         sub.l   %d1,%d0
-        move.l  S_SLIDE(%a3),%d2
         MULQ15  %d0,%d2,%d3
+        moveq   #0,%d2                  | v8.1 P2: the keys hold only if PCUR stays
+        tst.l   %d0
+        bne     .Lc_pv
+        moveq   #1,%d2
+.Lc_pv:
+        move.l  %d2,S_P2PV(%a3)
         add.l   %d0,%d1
         move.l  %d1,S_PCUR(%a3)
         move.l  %d1,%d0
@@ -3625,6 +3724,7 @@ o3_ctrl:
         lea     O3_SQC,%a0
         add.l   %a0,%d0
         move.l  %d0,S_SQTP(%a3)
+.Lc_pd:
         tst.l   S_ACCD(%a3)             | v7.8, the MEG: the circuit (o3meg.py) by DECAY and level; v7.9:
         beq     .Lc_n                   | accents on O3_ADEC_T at dEVILish's ADEC (0, no dEVILish: ADEC 50)
         move.l  S_ADEC(%a3),%d1
@@ -3687,6 +3787,19 @@ o3_ctrl:
         bsr     o3_acc                  | d6 = the push (Q8 semitones), d4 = the VCA's extra level (Q14)
         move.l  S_RES(%a3),%d5
 .Lc_env:
+        move.l  S_ENVX(%a3),%d0         | v8.1 P2: the env-mod depth, a pure function of (ENV, RES, ENVX): its key
+        swap    %d0                     | ENV | RES << 8 | ENVX << 16 | 1 << 30 (ENV, RES 0..127; ENVX 0 or 1)
+        move.l  %d5,%d1
+        lsl.l   #8,%d1
+        or.l    %d1,%d0
+        or.l    S_ENV(%a3),%d0
+        or.l    #0x40000000,%d0
+        cmp.l   S_P2EK(%a3),%d0
+        bne     .Lc_eg
+        move.l  S_P2EV(%a3),%d1
+        bra     .Lc_ed
+.Lc_eg:
+        move.l  %d0,S_P2EK(%a3)
         tst.l   S_ENVX(%a3)             | env-mod depth
         bne     .Lc_ex
         move.l  S_ENV(%a3),%d0
@@ -3701,7 +3814,7 @@ o3_ctrl:
         asr.l   #8,%d2
         asr.l   #7,%d2
         add.l   %d2,%d1
-        bra     .Lc_ed
+        bra     .Lc_edc
 .Lc_ex:
         lea     O3_TB_SLO,%a0           | ENVX: the depth at ENV 127, x3, scaled by ENV from none
         move.l  508(%a0),%d1
@@ -3719,6 +3832,8 @@ o3_ctrl:
         muls.l  S_ENV(%a3),%d1
         moveq   #127,%d2
         divs.l  %d2,%d1
+.Lc_edc:
+        move.l  %d1,S_P2EV(%a3)
 .Lc_ed:
         move.l  S_CUT(%a3),%d0          | cutoff, Q8 semitones above 20 Hz (CUTX: the wide pot)
         lea     O3_TB_OFF,%a0
@@ -3744,19 +3859,43 @@ o3_ctrl:
         move.l  %d3,%d0
         lsl.l   #8,%d0
         sub.l   S_CUTB(%a3),%d0
+        cmp.l   S_P2CD(%a3),%d0         | v8.1 P2: a difference whose step was 0 gives 0 again (MULQ15 is a pure
+        beq     .Lc_c0                  | function of it): CUTB stays
+        move.l  %d0,S_P2T(%a3)
         move.l  #SMOOTH_K,%d2
         MULQ15  %d0,%d2,%d3
+        tst.l   %d0
+        bne     .Lc_c1
+        move.l  S_P2T(%a3),%d2
+        move.l  %d2,S_P2CD(%a3)
+.Lc_c1:
         add.l   S_CUTB(%a3),%d0
         move.l  %d0,S_CUTB(%a3)
+        bra     .Lc_c2
+.Lc_c0:
+        move.l  S_CUTB(%a3),%d0
+.Lc_c2:
         asr.l   #8,%d0
         move.l  %d0,-(%sp)              | the base
         move.l  %d1,%d0
         lsl.l   #8,%d0
         sub.l   S_ENVS(%a3),%d0
+        cmp.l   S_P2ND(%a3),%d0         | v8.1 P2: the same for ENVS
+        beq     .Lc_n0
+        move.l  %d0,S_P2T(%a3)
         move.l  #SMOOTH_K,%d2
         MULQ15  %d0,%d2,%d3
+        tst.l   %d0
+        bne     .Lc_n1
+        move.l  S_P2T(%a3),%d2
+        move.l  %d2,S_P2ND(%a3)
+.Lc_n1:
         add.l   S_ENVS(%a3),%d0
         move.l  %d0,S_ENVS(%a3)
+        bra     .Lc_n2
+.Lc_n0:
+        move.l  S_ENVS(%a3),%d0
+.Lc_n2:
         asr.l   #8,%d0
         move.l  %d0,%d1                 | the depth
         move.l  (%sp)+,%d3
@@ -3784,6 +3923,22 @@ o3_ctrl:
         move.l  %d3,%d0                 | v8.0: the new ladder's index, k and reciprocal (ref303.nlctrl)
         move.l  %d5,%d1
         bsr     o3_nlctrl
+        move.l  %d5,%d0                 | v8.1 P2: GCOMP and W2 are pure functions of (RES, OCOMP, OGAIN)
+        or.l    #0x40000000,%d0
+        cmp.l   S_P2G1(%a3),%d0
+        bne     .Lc_gg
+        move.l  S_OCOMP(%a3),%d1
+        cmp.l   S_P2G2(%a3),%d1
+        bne     .Lc_gg
+        move.l  S_OGAIN(%a3),%d1
+        cmp.l   S_P2G3(%a3),%d1
+        beq     .Lc_gd
+.Lc_gg:
+        move.l  %d0,S_P2G1(%a3)
+        move.l  S_OCOMP(%a3),%d1
+        move.l  %d1,S_P2G2(%a3)
+        move.l  S_OGAIN(%a3),%d1
+        move.l  %d1,S_P2G3(%a3)
         lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's (v7.5: one gain, the part 0)
         move.l  (%a0),%d1               | factor (overdrive swamps the resonance)
         move.l  (%a0,%d5.l*4),%d0
@@ -3806,6 +3961,7 @@ o3_ctrl:
         asr.l   #8,%d0
         asr.l   #4,%d0
         move.l  %d0,S_W2(%a3)
+.Lc_gd:
         move.l  %d4,%d6                 | v7.8: I27 / I_Q31 (pin 1, Q14) x ACCV / 64
         muls.l  S_ACCVG(%a3),%d6
         asr.l   #6,%d6
@@ -3932,7 +4088,7 @@ o3_clone:
         .align  4
 O3_K:
         .long   0, 20210, 555, 41, 17398, 18830, 10923, 9618
-        .long   333, 719
+        .long   333, 719, 349175808, 753926144
 O3_INC_TAB:
         .long   315993, 316279, 316564, 316850, 317136, 317423, 317709, 317996
         .long   318283, 318571, 318858, 319146, 319434, 319723, 320012, 320301

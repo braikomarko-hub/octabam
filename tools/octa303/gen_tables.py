@@ -20,7 +20,8 @@ CONSTS = ['CS', 'SHIFT_OUT', 'P_CENTER', 'P_LO', 'P_HI', 'TUNE_LO', 'TUNE_HI', '
           'P6_K', 'P6_AMAX', 'P6_KP', 'MEG_NLEV', 'ADEC_Q50', 'TM3_FAB', 'AC_R0', 'AC_KLN', 'AC_R72N', 'AC_VMAX', 'AC_V134', 'AC_V69', 'AC_AL',
           'AC_BE', 'AC_Q27G', 'AC_KV', 'AC_KSW']
 
-TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R, T.VP_HP1, T.VP_HP2]),
+TABLES = [('O3_K', [T.TB_PREHP, T.TB_SQLP, T.TB_FBHP, T.TB_DCHP, T.TB_KSQ, T.DIST_TONE, 10923, T.TB_C1R, T.VP_HP1, T.VP_HP2,
+                    T.VP_HP1 << 20, T.VP_HP2 << 20]),          # v8.1 P4: K_VP1S, K_VP2S (FM411 on the EMAC)
           ('O3_INC_TAB', T.INC_TAB),  ('O3_TB_CUT', T.TB_CUT),
           ('O3_TB_OFF', T.TB_OFF), ('O3_TB_SLO', T.TB_SLO), ('O3_TB_SHI', T.TB_SHI),
           ('O3_TB_KMUL', T.TB_KMUL), ('O3_TB_GCOMP', T.TB_GCOMP),
@@ -59,6 +60,8 @@ def consts_block():
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]
     assert T.S_MAX // 64 + 1 == len(T.DF_HZ) == len(NL.IMAP) == len(TB.A) == len(TB.B) == len(TB.W1)
     L.append('        .set    %-16s %d' % ('NHZ,', len(T.DF_HZ)))
+    assert 0 < T.VP_HP1 < 2048 and 0 < T.VP_HP2 < 2048, 'v8.1 P4: K << 20 must fit 31 bits (FM411 on the EMAC)'
+    assert T.DIST_GAIN == 5, 'v8.1 P4: octa303.s multiplies by DIST_GAIN as 4 x + x'
     assert T.TB_PREHP == 0, 'v8.0: octa303.s dropped the VCO->VCF high-pass (its coefficient is 0)'
     assert NL.GB == 8 and NL.GBI == 2 and TB.TH_SH == 19 and TB.RT_SH == 19 and len(TB.RT) == 2049, 'v8.0: octa303.s hardcodes these (o3_nl_*)'
     L.append('        .set    %-16s %d' % ('NL_TH_N,', TB.TH_N))
