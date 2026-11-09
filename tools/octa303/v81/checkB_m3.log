@@ -1,0 +1,19 @@
+nota  0: -116.20 dB, max 0.189  ok
+nota  1: -115.51 dB, max 0.165  ok
+nota  2: -100.46 dB, max 2.121  ok
+nota  3: -124.34 dB, max 0.122  ok
+nota  4: -104.54 dB, max 1.909  ok
+nota  5: -104.54 dB, max 1.909  ok
+nota  6: -107.64 dB, max 0.396  ok
+nota  7: -130.14 dB, max 0.344  ok
+nota  8: -107.01 dB, max 0.420  ok
+nota  9: -110.06 dB, max 0.369  ok
+nota 10: -119.98 dB, max 0.144  ok
+nota 11: -103.24 dB, max 2.178  ok
+nota 12: -103.24 dB, max 2.178  ok
+nota 13: -106.52 dB, max 0.341  ok
+nota 14: -128.83 dB, max 0.344  ok
+nota 15: -106.69 dB, max 0.460  ok
+nota 16: -110.13 dB, max 0.330  ok
+nota 17: -119.04 dB, max 0.135  ok
+MODALE 0 MOMENTI 1 NB 16 ORD 2 PSH 6 -> B: PASS, peggiore -100.46 dB (nota 2), max 2.121
