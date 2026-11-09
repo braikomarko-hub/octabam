@@ -580,7 +580,7 @@ sy_render:
         beq     .Ldone
         lea     16(%a2),%a1
         lea     O3_K,%a5
-        clr.l   S_P11(%a3)              | v8.1 P11: the knobs may have moved since the last frame
+        clr.l   S_P11(%a3)              | v8.1 P11: the knobs may have moved since the last call
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
