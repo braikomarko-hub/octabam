@@ -429,7 +429,7 @@ def gate_fuzz(n, seed):
         step = rnd.choice([st.lstep, (st.lstep + 1) % LL, st.gstep, (st.gstep + 1) % LL, rnd.randrange(300)])
         tick = rnd.choice([st.ltick, rnd.randrange(12)])
         seq = (rnd.choice([127, 0, 64]), step, tick, rnd.getrandbits(64), L, rnd.choice([1, 1, 0, 2]))   # v7.5: 2 = STOP key
-        a3 = base + t * 512
+        a3 = base + t * c.consts['ST_SIZE']
         for f in GF: m.w(a3 + GOFF[f], 'l', getattr(st, f) & M32)
         rig.seq(t, seq)
         c.d[2] = t; c.a[3] = a3; c.a[7] = STACK
@@ -450,7 +450,7 @@ check('gate_state_machine_bit_exact', bad is None, bad or 'random states and inp
 class _GatePair:
     """v7.5 (review): o3_gate and ref303.gate_frame on one state each, frame by frame, every field compared"""
     def __init__(self, st, t=0):
-        self.st, self.t, self.rig = st, t, Rig(); c = self.rig.cpu; self.a3 = c.consts['o3_state'] + t * 512; self.bad = None
+        self.st, self.t, self.rig = st, t, Rig(); c = self.rig.cpu; self.a3 = c.consts['o3_state'] + t * c.consts['ST_SIZE']; self.bad = None
         for f in GF: c.mem.w(self.a3 + GOFF[f], 'l', getattr(st, f) & M32)
     def __call__(self, seq):
         c = self.rig.cpu; m = c.mem

@@ -100,7 +100,7 @@
         .set    NEUTRAL_RATE,   0x7f00          | rate 1.0
         .set    NTRACKS,        8
 
-| ---- per-track state (longs), mostly in ref303.FIELDS' order (v7.8's S_Y27 appended); 512 bytes a track
+| ---- per-track state (longs), mostly in ref303.FIELDS' order (v7.8's S_Y27 appended); 1024 bytes a track (v8.1 move 3: was 512)
         .set    S_LATCHED,0
         .set    S_WAVE,4
         .set    S_DIST,8
@@ -206,8 +206,9 @@
         .set    S_NLBP,428                      | &O3_NL_B[index] (4 longs, Q30)
         .set    S_NLWP,432                      | &O3_NL_W[index] (w1, w0/2, wm, 0; Q31)
         .set    S_Y4P,436                       | y4 a sample before ((c''-0))
-        .set    S_LZ0,440                       | the loop's couplings G: 4 high-passes, 2 shelves (TPT states)
-        .set    S_FZ0,464                       | the output path F: 3 high-passes, 2 shelves
+        .set    S_LZ0,440                       | the loop's couplings G: its first high-pass's state, then (v8.1 move 3)
+                                        | its slow sections' five block states (o3ladder.Slow s)
+        .set    S_FZ0,464                       | the output path F: the same, its slow sections' four
         .set    S_T0,484                        | scratch: ay0..ay3 within a sample
         .set    S_KW1,500                       | k D w1, Q25 (k folded into the loop's weights at the control step)
         .set    S_KW0H,504                      | k D w0 / 2, Q25
@@ -219,8 +220,19 @@
         .set    S_P11A,376                      | S_DC before the try
         .set    S_P11B,428                      | S_MLO before it
         .set    S_P11C,432                      | S_TONE before it
-        .set    ST_SHIFT,9
-        .set    ST_SIZE,512
+| v8.1 move 3 (o3ladder.LadderM3): G and F after their first high-pass, advanced by blocks of 16 samples from
+| three running moments of their input.  The block's position and moments, F's block polynomial, and k folded
+| into G's terms (at the control step whenever k changes, and k E again at each of G's block ends).
+        .set    S_M3N,512                       | 8 n, n the position in the block (0..15): counts on its own (note_on resets S_CS)
+        .set    S_MG,516                        | G's moments M0, M1, M2
+        .set    S_MF,528                        | F's
+        .set    S_EF,540                        | F's block polynomial e0, e1, e2
+        .set    S_KE,552                        | k e0, k e1, k e2 of G's block polynomial
+        .set    S_KH,564                        | k H0, k H1, k H2 (G's moments into k Sg)
+        .set    S_KC0,576                       | k C0 (G's first high-pass state into k Sg)
+        .set    S_M3KF,580                      | the k they were folded with (o3ladder.LadderM3.kfold; 0 = none yet)
+        .set    ST_SHIFT,10
+        .set    ST_SIZE,1024                    | v8.1 move 3: was 512
 
 | ---- the per-sample constant block O3_K, addressed through %a5
         .set    K_PREHP,0
@@ -487,8 +499,8 @@ sy_render:
         cmp.l   %d0,%d2
         bhi     .Lstock                 | (never: the packer renders tracks 0..7)
         move.l  %d2,%d0
-        lsl.l   #8,%d0                 | track * ST_SIZE (512: 8 + 1)
-        add.l   %d0,%d0
+        lsl.l   #8,%d0                 | track * ST_SIZE (1024: 8 + 2)
+        lsl.l   #2,%d0
         lea     o3_state,%a3
         add.l   %d0,%a3
         move.l  FP_PTR,%a4
@@ -713,28 +725,35 @@ sy_render:
 |      (claude/OCTA_MK1_emac_cicli.md): Sg and the rows of A on four accumulators, each read three instructions or
 |      more after its last MAC, coefficients loaded by the MAC itself (into data registers), Q12's sign without a
 |      branch, G and F side by side.  Every sum is the same set of floored products as o3ladder.py: bit for bit.
+|      v8.1 move 3 (o3ladder.LadderM3.step): G and F keep only their first high-pass at every sample (S_LZ0, S_FZ0);
+|      their slow sections (S_LZ0+4.., S_FZ0+4..) advance at the block end (.Lm3_blk, every 16 samples).  Per
+|      sample: k Sg from G's block polynomial and moments (S_KE, S_KH, S_KC0, S_MG, S_M3N), F's output from its
+|      block polynomial and moments (S_EF, S_MF), and both moments pushed.  Sg's sum (O3_NL_K+4..) and the slow
+|      sections' coefficients in O3_NL_K are no longer read (only G's and F's first high-pass, O3_NL_K+28 and +60).
         move.l  %d7,-(%sp)              | the loop's count, kept: d7 = a2 = 0x8000, the +128 that rounds a read-out
         move.l  #0x8000,%d7             | (Dn x An: the stock image never multiplies two An, emac_an)
         movea.l %d7,%a2
         lsl.l   #2,%d6                  | X: the input side's 2 guard bits (the states carry 8)
         movea.l %d6,%a4                 | X kept in a4 until e
-        move.l  S_LZ0+12(%a3),%d0       | Sg = E[-lz3 init, sum lz_j SGC_j] in acc0 (the chain G as out = D in + Sg;
-        neg.l   %d0                     | c3 = -1 - 6e-6 is split: -lz3 exactly, plus (c3 + 1) in Q31), not rounded
-        move.l  %d0,%acc0
-        lea     O3_NL_K+4,%a6
+        move.l  S_KE(%a3),%d0           | v8.1 move 3: k Sg = E[k e0 init, k e1 N1[n] + k e2 N2[n] + sum k H_i MG_i + k C0 lz0]
+        move.l  %d0,%acc0               | in acc0 (G's block polynomial and moments, o3ladder.LadderM3.step); S's y4o / y4p
+        lea     S_KE+4(%a3),%a6         | terms join it below: one sum, not rounded.  KE1 KE2 KH0 KH1 KH2 KC0 follow each other
+        move.l  S_M3N(%a3),%d0
+        lea     O3_M3N,%a0
+        adda.l  %d0,%a0                 | (N1[n], N2[n])
         move.l  (%a6)+,%d1
-        move.l  S_LZ0(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+4(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+8(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+12(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+16(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+20(%a3),%d0
-        mac.l   %d0,%d1,%acc0
+        move.l  (%a0)+,%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  (%a0),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_MG(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_MG+4(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_MG+8(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0(%a3),%d2
+        mac.l   %d2,%d1,%acc0
         movea.l S_NLAP(%a3),%a0         | ay = A y: row 0 in acc1, 1 in acc2, 2 in acc3, 3 in acc1 again
         move.l  S_Y1(%a3),%d1
         move.l  S_Y2(%a3),%d2
@@ -745,7 +764,6 @@ sy_render:
         mac.l   %d0,%d2,(%a0)+,%d0,%acc1
         mac.l   %d0,%d3,(%a0)+,%d0,%acc1
         mac.l   %d0,%d4,(%a0)+,%d0,%acc1
-        movclr.l %acc0,%d5              | Sg
         mac.l   %d0,%d1,(%a0)+,%d0,%acc2
         mac.l   %d0,%d2,(%a0)+,%d0,%acc2
         mac.l   %d0,%d3,(%a0)+,%d0,%acc2
@@ -764,19 +782,17 @@ sy_render:
         mac.l   %d0,%d4,%acc1           | (a0 now at B0)
         movclr.l %acc3,%d6
         move.l  %d6,S_T0+8(%a3)         | ay2
-        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc2, the input side's units
+        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc0 (k Sg already there), the input side's units
         move.l  S_KW0H(%a3),%d1
-        mac.l   %d4,%d1,%acc2
-        mac.l   %d4,%d1,%acc2
+        mac.l   %d4,%d1,%acc0
+        mac.l   %d4,%d1,%acc0
         move.l  S_KWM(%a3),%d1
-        mac.l   %d3,%d1,%acc2
-        move.l  S_K(%a3),%d1
-        mac.l   %d5,%d1,%acc2
+        mac.l   %d3,%d1,%acc0
         movclr.l %acc1,%d2              | ay3
         move.l  %d2,S_T0+12(%a3)
         move.l  12(%a0),%d1             | d = B3
         move.l  %a4,%d6
-        movclr.l %acc2,%d0
+        movclr.l %acc0,%d0
         sub.l   %d0,%d6                 | e = X - S
         mac.l   %d6,%d1,%acc0           | num = ay3 + (E[e d] << 7)
         move.l  S_NLR(%a3),%d1
@@ -881,99 +897,61 @@ sy_render:
         add.l   %d2,%d2
         add.l   %d2,%d5
         move.l  %d5,S_FZ0(%a3)
-        move.l  S_LZ0+4(%a3),%d1           | G and F high-pass 1 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0+4(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+4(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+4(%a3)
-        move.l  S_LZ0+8(%a3),%d1           | G and F high-pass 2 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0+8(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+8(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+8(%a3)
-        move.l  S_LZ0+12(%a3),%d1       | G's fourth high-pass, alone
-        sub.l   %d1,%d0
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        move.l  S_FZ0+12(%a3),%d5       | (F's first shelf, ahead: its state, and x as its init)
-        move.l  %d4,%acc3
+| ---- v8.1 move 3: after the first high-pass (g1 in d0, v in d4), G and F's slow sections by blocks
+|      (o3ladder.LadderM3.step).  F's output = E[e0 init, d v + H_i MF_i + e1 N1[n] + e2 N2[n]], rounded; then each
+|      input into its moments (o3ladder.Slow.push), and at n = 16 the block end, out of the loop's line.
+        move.l  S_EF(%a3),%d1
+        move.l  %d1,%acc3
         mac.l   %d7,%a2,%acc3
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+12(%a3)
-        move.l  S_LZ0+16(%a3),%d1           | G and F shelf 0: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
-        move.l  %d0,%acc1
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        mac.l   %d7,%a2,%acc1
-        movclr.l %acc0,%d2
-        add.l   %d2,%d1
-        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+16(%a3)
-        movclr.l %acc2,%d2
-        add.l   %d2,%d5
-        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+12(%a3)
-        movclr.l %acc1,%d0
-        movclr.l %acc3,%d4
-        move.l  S_FZ0+16(%a3),%d5
-        move.l  %d4,%acc3
-        mac.l   %d7,%a2,%acc3
-        move.l  S_LZ0+20(%a3),%d1           | G and F shelf 1: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
-        move.l  %d0,%acc1
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        mac.l   %d7,%a2,%acc1
-        movclr.l %acc0,%d2
-        add.l   %d2,%d1
-        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+20(%a3)
-        movclr.l %acc2,%d2
-        add.l   %d2,%d5
-        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+16(%a3)
-        movclr.l %acc1,%d0
-        movclr.l %acc3,%d4
+        lea     O3_M3+16,%a6            | F's d, H0, H1, H2
+        move.l  (%a6)+,%d1
+        mac.l   %d4,%d1,(%a6)+,%d1,%acc3
+        move.l  S_MF(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc3
+        move.l  S_MF+4(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc3
+        move.l  S_MF+8(%a3),%d2
+        mac.l   %d2,%d1,%acc3
+        move.l  S_M3N(%a3),%d5
+        lea     O3_M3N,%a0
+        adda.l  %d5,%a0
+        move.l  S_EF+4(%a3),%d1
+        move.l  (%a0)+,%d2              | N1[n]
+        mac.l   %d2,%d1,%acc3
+        move.l  S_EF+8(%a3),%d1
+        move.l  (%a0),%d2               | N2[n]
+        mac.l   %d2,%d1,%acc3
+        asr.l   #5,%d4                  | F's moments: vs = (v + 32) >> 6, as ((v >> 5) + 1) >> 1 (no overflow)
+        addq.l  #1,%d4
+        asr.l   #1,%d4
+        movem.l S_MF(%a3),%d1-%d3         | M0 M1 M2
+        move.l  %d1,%d6                 | M2 += (2 M1 + M0) >> 4, as (M1 + (M0 >> 1)) >> 3 (the same floor)
+        asr.l   #1,%d6
+        add.l   %d2,%d6
+        asr.l   #3,%d6
+        add.l   %d6,%d3
+        add.l   %d1,%d2                 | M1 += M0, M0 += vs (the old M0 and M1 throughout)
+        add.l   %d4,%d1
+        movem.l %d1-%d3,S_MF(%a3)
+        asr.l   #5,%d0                  | G's moments: vs = (v + 32) >> 6, as ((v >> 5) + 1) >> 1 (no overflow)
+        addq.l  #1,%d0
+        asr.l   #1,%d0
+        movem.l S_MG(%a3),%d1-%d3         | M0 M1 M2
+        move.l  %d1,%d6                 | M2 += (2 M1 + M0) >> 4, as (M1 + (M0 >> 1)) >> 3 (the same floor)
+        asr.l   #1,%d6
+        add.l   %d2,%d6
+        asr.l   #3,%d6
+        add.l   %d6,%d3
+        add.l   %d1,%d2                 | M1 += M0, M0 += vs (the old M0 and M1 throughout)
+        add.l   %d0,%d1
+        movem.l %d1-%d3,S_MG(%a3)
+        movclr.l %acc3,%d4              | F's output
+        addq.l  #8,%d5
+        moveq   #-128,%d1
+        add.l   %d5,%d1
+        beq     .Lm3_blk
+        move.l  %d5,S_M3N(%a3)
+.Lm3_back:
         add.l   #128,%d4                | the filter's output: F, back to the engine's units
         asr.l   #8,%d4
         CLAMP   %d4,-0x800000,0x800000
@@ -1182,6 +1160,161 @@ sy_render:
         movem.l (%sp),%d2-%d7/%a2-%a6
         lea     48(%sp),%sp
         rts
+.Lm3_blk:                               | v8.1 move 3: a block end (one sample in 16), out of the loop's line
+        clr.l   S_M3N(%a3)
+        lea     -12(%sp),%sp
+        movem.l %d4/%a1/%a5,(%sp)       | F's output, the output pointer, O3_K
+        lea     S_LZ0+4(%a3),%a5        | G: its 5 states in d0.., its moments in a0 a1 a4, every row from the old s
+        movem.l S_MG(%a3),%a0/%a1/%a4
+        movem.l (%a5),%d0-%d4
+        lea     O3_M3G,%a6
+        move.l  (%a6)+,%d5
+        mac.l   %d7,%a2,%acc0           | row 0: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,0(%a5)
+        mac.l   %d7,%a2,%acc2           | row 1: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,4(%a5)
+        mac.l   %d7,%a2,%acc0           | row 2: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,8(%a5)
+        mac.l   %d7,%a2,%acc2           | row 3: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,12(%a5)
+        mac.l   %d7,%a2,%acc0           | row 4: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,16(%a5)
+        clr.l   S_MG(%a3)              | M = 0
+        clr.l   S_MG+4(%a3)
+        clr.l   S_MG+8(%a3)
+        movea.l %a5,%a0
+        lea     O3_M3G_E,%a6
+        bsr     o3_m3_e5
+        bsr     o3_m3_ke                | k e
+        lea     S_FZ0+4(%a3),%a5        | F: its 4 states in d0.., its moments in a0 a1 a4, every row from the old s
+        movem.l S_MF(%a3),%a0/%a1/%a4
+        movem.l (%a5),%d0-%d3
+        lea     O3_M3F,%a6
+        move.l  (%a6)+,%d5
+        mac.l   %d7,%a2,%acc0           | row 0: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,0(%a5)
+        mac.l   %d7,%a2,%acc2           | row 1: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,4(%a5)
+        mac.l   %d7,%a2,%acc0           | row 2: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,8(%a5)
+        mac.l   %d7,%a2,%acc2           | row 3: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,12(%a5)
+        clr.l   S_MF(%a3)              | M = 0
+        clr.l   S_MF+4(%a3)
+        clr.l   S_MF+8(%a3)
+        movea.l %a5,%a0
+        lea     O3_M3F_E,%a6
+        bsr     o3_m3_e4
+        move.l  %d0,S_EF(%a3)           | its block polynomial
+        move.l  %d1,S_EF+4(%a3)
+        move.l  %d2,S_EF+8(%a3)
+        movem.l (%sp),%d4/%a1/%a5
+        lea     12(%sp),%sp
+        bra     .Lm3_back
 .Lns_qx:                                | v8.1 P1: the ladder's Q12 beyond the table (rare), out of the loop's line
         move.l  #NL_TH_N,%d0            | beyond the table: K tanh(4) as the table ends (rare)
         move.l  (%a6,%d0.l*4),%d0
@@ -1213,8 +1346,8 @@ o3_retrig:
         move.l  %a1,%d1
         cmp.l   #NTRACKS,%d1
         bcc     .Lrt_out
-        lsl.l   #8,%d1                 | track * ST_SIZE (512: 8 + 1)
-        add.l   %d1,%d1
+        lsl.l   #8,%d1                 | track * ST_SIZE (1024: 8 + 2)
+        lsl.l   #2,%d1
         lea     o3_state,%a2
         tst.l   S_LATCHED(%a2,%d1.l)
         .if     HK_MACHINE_ROWS
@@ -3279,8 +3412,107 @@ o3_note_on:
         movclr.l %acc0,\dst
         .endm
 
+| ---- v8.1 move 3 (o3ladder.Slow / LadderM3).  They expect d7 = a2 = 0x8000 (the read-out's rounding) and leave
+|      the accumulators empty.
+| ---- o3_m3_e5 / o3_m3_e4: a slow section's block polynomial from its states (Slow.poly): a0 = s (5 or 4 longs),
+|      a6 = its E table (per state: E0, E1, E2).  e0 = E[E0 . s] << 1, e1 = E[E1 . s], e2 = E[E2 . s], not rounded.
+|      Out: d0, d1, d2.  Clobbers d3, d4 (e5), d5, a6.
+o3_m3_e5:
+        movem.l (%a0),%d0-%d4
+        move.l  (%a6)+,%d5
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,%acc2
+        movclr.l %acc0,%d0
+        add.l   %d0,%d0
+        movclr.l %acc1,%d1
+        movclr.l %acc2,%d2
+        rts
+o3_m3_e4:
+        movem.l (%a0),%d0-%d3
+        move.l  (%a6)+,%d5
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,%acc2
+        movclr.l %acc0,%d0
+        add.l   %d0,%d0
+        movclr.l %acc1,%d1
+        movclr.l %acc2,%d2
+        rts
+| ---- o3_m3_ke: k into G's block polynomial (LadderM3.refold_e): d0, d1, d2 = e; S_KE_i = E[e_i k], rounded, k = S_K.
+|      Clobbers d0, d3.
+o3_m3_ke:
+        move.l  S_K(%a3),%d3
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,%acc0
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d1,%d3,%acc1
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d2,%d3,%acc2
+        movclr.l %acc0,%d0
+        move.l  %d0,S_KE(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_KE+4(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_KE+8(%a3)
+        rts
+| ---- o3_m3_fold: k into all of G's terms (LadderM3.fold), when k moved: d3 = k (= S_K).  S_KC0 = E[k C0],
+|      S_KH_i = E[k H_i], rounded; then G's e from its states and k e.  Clobbers d0-d4, a0, a6 (o3_nlctrl's saves).
+o3_m3_fold:
+        move.l  %d5,-(%sp)
+        move.l  %d3,S_M3KF(%a3)
+        lea     O3_M3,%a6
+        mac.l   %d7,%a2,%acc0
+        move.l  (%a6)+,%d0
+        mac.l   %d3,%d0,%acc0
+        mac.l   %d7,%a2,%acc1
+        move.l  (%a6)+,%d0
+        mac.l   %d3,%d0,%acc1
+        mac.l   %d7,%a2,%acc2
+        move.l  (%a6)+,%d0
+        mac.l   %d3,%d0,%acc2
+        mac.l   %d7,%a2,%acc3
+        move.l  (%a6),%d0
+        mac.l   %d3,%d0,%acc3
+        movclr.l %acc0,%d0
+        move.l  %d0,S_KC0(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_KH(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_KH+4(%a3)
+        movclr.l %acc3,%d0
+        move.l  %d0,S_KH+8(%a3)
+        lea     S_LZ0+4(%a3),%a0
+        lea     O3_M3G_E,%a6
+        bsr     o3_m3_e5
+        bsr     o3_m3_ke
+        move.l  (%sp)+,%d5
+        rts
+
 | ---- o3_nlctrl: the control step (ref303.nlctrl, o3ladder.Ladder.ctrl).  d0 = the old ladder index (CUT/ENV/accent
-|      in Hz), d1 = RES.  Writes S_NLI, S_K (k, Q25), S_NLR and the row pointers.  Clobbers d0, d1, a0.
+|      in Hz), d1 = RES.  Writes S_NLI, S_K (k, Q25), S_NLR and the row pointers; v8.1 move 3: when k moved
+|      (k differs from S_M3KF), also S_M3KF, S_KC0, S_KH and S_KE (o3_m3_fold).  Clobbers d0, d1, a0.
 o3_nlctrl:
         tst.l   S_NLR(%a3)              | the same inputs as the last step (index, RES, SWP): nothing to do
         beq     .Lnc_go                 | (k and R are functions of them; R = 0: not computed yet)
@@ -3362,6 +3594,10 @@ o3_nlctrl:
         ERD     %d0
         move.l  %d0,S_NLR(%a3)
 .Lnc_out:
+        cmp.l   S_M3KF(%a3),%d3         | v8.1 move 3: k moved since G's terms were folded with it
+        beq     .Lnc_nf
+        bsr     o3_m3_fold
+.Lnc_nf:
         movem.l (%sp),%d2-%d4/%d7/%a2/%a6
         lea     24(%sp),%sp
         rts
@@ -7605,6 +7841,30 @@ O3_NL_RT:
         .long   538976288, 538844218, 538712214, 538580273, 538448398, 538316586, 538184840, 538053158
         .long   537921540, 537789987, 537658498, 537527073, 537395713, 537264416, 537133184, 537002016
         .long   536870912
+O3_M3:
+        .long   -2130673551, -363699330, 809478, -13926, 2147080477, -51633229, -54598, 1747
+O3_M3N:
+        .long   0, 0, 8388608, 32768, 16777216, 131072, 25165824, 294912
+        .long   33554432, 524288, 41943040, 819200, 50331648, 1179648, 58720256, 1605632
+        .long   67108864, 2097152, 75497472, 2654208, 83886080, 3276800, 92274688, 3964928
+        .long   100663296, 4718592, 109051904, 5537792, 117440512, 6422528, 125829120, 7372800
+O3_M3G:
+        .long   303526151, -670991, 11674, 2072846082, 0, 0, 0, 0
+        .long   62247631, -165866, 2986, -15254526, 2131957399, 0, 0, 0
+        .long   23060809, -65328, 1193, -5644157, -5744740, 2141718031, 0, 0
+        .long   119764326, -443955, 9237, -29119851, -29640009, -29747974, 2117695575, 0
+        .long   13849491, -38118, 674, -3391716, -3452146, -3464689, 714858, 2144019306
+O3_M3G_E:
+        .long   -1072319232, 1456264974, -408210270, -1073504933, 242581495, -2869297, -1073748359, -6685647
+        .long   11202780, 223017705, -99813251, 11082826, -12063906, 623274, -8044
+O3_M3F:
+        .long   62316461, -28261, 102, 2131957399, 0, 0, 0, 13864713
+        .long   -7687, 29, -3451800, 2144019306, 0, 0, 303442007, -839211
+        .long   15224, -74305417, -74576993, 2072846082, 0, 119917646, -137509, 475
+        .long   -29722156, -29830322, 3722057, 2117695575
+O3_M3F_E:
+        .long   -1073540277, 206442707, 27170907, -1073783706, -42834957, 39247390, 136400152, -161515382
+        .long   45740623, -125447530, 56072137, -6225071
         .align  4
 O3_SQC:
         .short  12289, 10556, 8558, 6787, 5176, 3712, 2390, 1194, 121, -845, -1703, -2469, -3142, -3735, -4248, -4693
