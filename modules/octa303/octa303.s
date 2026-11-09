@@ -212,6 +212,13 @@
         .set    S_KW1,500                       | k D w1, Q25 (k folded into the loop's weights at the control step)
         .set    S_KW0H,504                      | k D w0 / 2, Q25
         .set    S_KWM,508                       | k D wm, Q25
+| v8.1 P11: the VCA closed -> the chain after it at its fixed point is not recomputed.  The five slots reuse
+| offsets that v8.0 defines (S_CLG, S_CLI, S_CLL, S_NLBP, S_NLWP) and never reads or writes.
+        .set    S_P11,368                       | 0 = unknown, -1 = the sample before tried, 1 = the fixed point holds
+        .set    S_P11OUT,372                    | the output word the fixed point gives (both channels)
+        .set    S_P11A,376                      | S_DC before the try
+        .set    S_P11B,428                      | S_MLO before it
+        .set    S_P11C,432                      | S_TONE before it
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -573,6 +580,7 @@ sy_render:
         beq     .Ldone
         lea     16(%a2),%a1
         lea     O3_K,%a5
+        clr.l   S_P11(%a3)              | v8.1 P11: the knobs may have moved since the last frame
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -581,6 +589,7 @@ sy_render:
         moveq   #CS,%d0
         move.l  %d0,S_CS(%a3)
         bsr     o3_ctrl
+        clr.l   S_P11(%a3)              | v8.1 P11: the control step may move the level's step
 .Lnoctl:
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
@@ -715,6 +724,42 @@ sy_render:
         muls.l  S_W2(%a3),%d6
         asr.l   #6,%d6
         add.l   %d1,%d6
+        move.l  S_AMP(%a3),%d3          | v8.1 P11: the VCA's level first (was after the OTA, same value;
+        add.l   S_AMPSTEP(%a3),%d3      | d3 is free from here to the sample's end)
+        bgt     .Lamp                   | open: the whole chain
+        moveq   #0,%d3
+        move.l  %d3,S_AMP(%a3)          | closed this sample: max(0, amp + step) = 0
+        move.l  S_P11(%a3),%d0
+        bgt     .Lp11                   | 1: the chain after the VCA sits at its fixed point: its word again
+        beq     .Lp11t                  | 0: try
+        move.l  S_DC(%a3),%d0           | -1: the sample before was the try (closed, same frame, no control
+        cmp.l   S_P11A(%a3),%d0         | step since): did it leave the chain's three states where they were?
+        bne     .Lp11t
+        move.l  S_MLO(%a3),%d0
+        cmp.l   S_P11B(%a3),%d0
+        bne     .Lp11t
+        move.l  S_TONE(%a3),%d0
+        cmp.l   S_P11C(%a3),%d0
+        bne     .Lp11t
+        moveq   #1,%d0                  | yes: the fixed point, and its word is the one just written
+        move.l  %d0,S_P11(%a3)
+        move.l  -4(%a1),%d0
+        move.l  %d0,S_P11OUT(%a3)
+        bra     .Lp11
+.Lp11t:
+        moveq   #-1,%d0                 | try: this sample runs the chain at level 0; keep its states
+        move.l  %d0,S_P11(%a3)
+        move.l  S_DC(%a3),%d0
+        move.l  %d0,S_P11A(%a3)
+        move.l  S_MLO(%a3),%d0
+        move.l  %d0,S_P11B(%a3)
+        move.l  S_TONE(%a3),%d0
+        move.l  %d0,S_P11C(%a3)
+        bra     .Lamp0
+.Lamp:
+        move.l  %d3,S_AMP(%a3)
+        clr.l   S_P11(%a3)
+.Lamp0:
         FM66    %d6,S_GCOMP(%a3)        | level compensation, VCA (ramped per sample)
         CLAMP   %d6,-OTA_LIM,OTA_LIM    | v7.6: the VCA is an OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V)
         asr.l   #4,%d6
@@ -728,12 +773,7 @@ sy_render:
         asr.l   #8,%d6
         asr.l   #3,%d6
         CLAMP   %d6,-VCA_LIM,VCA_LIM    | v6.9: the VCA multiply never wraps
-        move.l  S_AMP(%a3),%d1
-        add.l   S_AMPSTEP(%a3),%d1
-        bpl     .Lamp
-        moveq   #0,%d1
-.Lamp:
-        move.l  %d1,S_AMP(%a3)
+        move.l  %d3,%d1                 | v8.1 P11: the level, from above
         asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
         asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
         muls.l  %d1,%d6
@@ -853,6 +893,13 @@ sy_render:
         CLAMP   %d6,-32767,32767
         lsl.l   #8,%d6
         lsl.l   #8,%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        subq.l  #1,%d7
+        bne     .Lloop
+        bra     .Ldone
+.Lp11:                                  | v8.1 P11: closed, fixed point: the same word, S_OVCA unchanged
+        move.l  S_P11OUT(%a3),%d6
         move.l  %d6,(%a1)+
         move.l  %d6,(%a1)+
         subq.l  #1,%d7
