@@ -123,3 +123,78 @@ assert max(_T['LG']) == min(_T['LG']), 'v8.0 expects a flat LG'
 def kq_of(res, im):
     """k = KL4[res] x KLR4[im], Q25, through the EMAC (the product is 59 bits): E[KL4Q KLR4Q] << 1"""
     return emac([(KL4Q[res], KLR4Q[im])]) << 1
+
+
+# ---- v8.1 move 3 (claude/OCTA_MK1_manuale_08_piano_risparmi.md §3; research model ricerca_ot/manuale/piano/lad_new_i.py,
+#      MODALE=0 MOMENTI=1 NB=16 ORD=2 PSH=6): the first high-pass of G and of F (91-92 Hz, a x 16 = 0.10) stays at every
+#      sample; the slow sections after it are advanced once a block of NB samples from three running moments of their
+#      input (M0 = sum v, M1, M2 its weighted sums), with their output between block ends as a 2nd-degree polynomial in n.
+#      Coefficients: slow_cache.json (integers, tools/octa303/v81/gen_slow.py).  Rule from the research (its trap): every
+#      sum that ends in a slow state is read out ROUNDED, the block end included.
+def _coef_dot(c, ops, init=0, rnd=False):
+    """lad_new_i.Coef.dot: sum c_j op_j (+ init) on one accumulator, scaled back by 2^t"""
+    if c['t'] == 0: return emac(list(zip(c['q'], ops)), init, rnd)
+    r = emac(list(zip(c['q'], ops)), 0, rnd); return chk((r << c['t']) + init)
+_SCP = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slow_cache.json')
+SC = json.load(open(_SCP)) if os.path.exists(_SCP) else None   # None only while gen_slow.py writes it
+NB, P_SH, ORDM = (SC['NB'], SC['PSH'], SC['ORD']) if SC else (16, 6, 2)
+N1 = [n << 23 for n in range(NB)]; N2 = [(n * n) << 15 for n in range(NB)]
+assert max(N2) < (1 << 31)
+class Slow:
+    """a slow section set (G or F after its first high-pass): its states s, the block position n, the moments M"""
+    def __init__(self, tb):
+        self.tb = tb; self.s = [0] * tb['m']; self.n = 0; self.M = [0, 0, 0]; self.poly()
+    def poly(self):
+        tb = self.tb; self.e = [_coef_dot(tb['E0'], self.s), _coef_dot(tb['E1'], self.s), _coef_dot(tb['E2'], self.s)]
+    def push(self, v):
+        """one sample of input v into the moments; at the block end, the states advance: True then"""
+        M = self.M; vs = (v + (1 << (P_SH - 1))) >> P_SH
+        M2 = M[2] + ((2 * M[1] + M[0]) >> 4); M1 = M[1] + M[0]; M0 = M[0] + vs
+        self.M = [chk(M0), chk(M1), chk(M2)]
+        self.n += 1
+        if self.n == NB:
+            tb = self.tb; Ms = self.M[:ORDM + 1]
+            self.s = [chk(_coef_dot(tb['PhiN'][r], self.s, _coef_dot(tb['Gk'][r], Ms, rnd=True), rnd=True)) for r in range(tb['m'])]
+            self.n = 0; self.M = [0, 0, 0]; self.poly(); return True
+        return False
+class LadderM3(Ladder):
+    """Ladder with move 3: the same core (y, ay, the closed form, Q12) and G/F by blocks"""
+    def __init__(self, Tb):
+        super().__init__(Tb); self.lz0 = 0; self.fz0 = 0; self.G = Slow(SC['G']); self.F = Slow(SC['F']); self.kfold = None
+    def ctrl(self, li, kq):
+        super().ctrl(li, kq)
+        if kq != self.kfold: self.fold()
+    def fold(self):
+        """k into G's terms (on the chip: whenever k changes, and E again at each of G's block ends)"""
+        kq = self.kq; self.kfold = kq
+        self.KC0 = emac([(kq, SC['C0Q'])])
+        self.KH = [emac([(kq, h)]) for h in SC['KHq']]
+        self.refold_e()
+    def refold_e(self):
+        kq = self.kq; e0, e1, e2 = self.G.e
+        self.KE = [emac([(e0, kq)]), emac([(e1, kq)]), emac([(e2, kq)])]
+    def step(self, X):
+        Tb = self.Tb; li = self.key[0]; y = self.y; kq = self.kq
+        y4o = y[3]; y4p_ = self.y4p
+        A = Tb.A[li]; B = Tb.B[li]
+        ay = [emac([(A[4 * r + c], y[c]) for c in range(4)], rnd=False) for r in range(4)]
+        w1, w0h, wm = Tb.W1[li], Tb.W0h[li], Tb.WM[li]
+        n = self.G.n                                                           # k Sg from G's block polynomial and moments
+        terms = [(self.KE[1], N1[n]), (self.KE[2], N2[n])] + [(self.KH[k], self.G.M[k]) for k in range(ORDM + 1)]
+        terms += [(self.KC0, self.lz0)]
+        S = emac(terms + [(y4o, self.KW0h), (y4o, self.KW0h), (y4p_, self.KWM)], self.KE[0], rnd=False)
+        e = chk(X - S)
+        num = emac([(e, B[3])], 0, rnd=False); num = chk(ay[3] + chk(num << 7))
+        y4n = chk(emac([(num, self.R)], rnd=False) << 1)
+        u = chk(e - emac([(y4n, self.KW1)], rnd=False))
+        u = q12(Tb, u)
+        u2 = chk(u << 1)
+        self.y = y = [emac([(u2, B[r])], ay[r]) for r in range(4)]
+        ym = emac([(y[3], w1), (y4o, w0h), (y4o, w0h), (y4p_, wm)]); self.y4p = y4o
+        lp = emac([(ym - self.lz0, SC['A0G'])], self.lz0); self.lz0 = chk(2 * lp - self.lz0); g1 = chk(ym - lp)
+        lp = emac([(y4o - self.fz0, SC['A0F'])], self.fz0); self.fz0 = chk(2 * lp - self.fz0); v = chk(y4o - lp)
+        F = self.F; fn = F.n; e0, e1, e2 = F.e
+        out = emac([(SC['F']['dq'], v), (e1, N1[fn]), (e2, N2[fn])] + list(zip(SC['F']['H']['q'], F.M[:ORDM + 1])), e0, rnd=True)
+        if self.G.push(g1): self.refold_e()
+        F.push(v)
+        return out

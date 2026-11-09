@@ -100,7 +100,7 @@ def nlctrl(st, i, res):
     """v8.0: old ladder index i (CUT/ENV/accent in Hz) -> the new ladder's index (IMAP) and k = KL4[res] x KLR4[im]
     (Q25); dEVILish SWP 1/0 doubles it as before (DF_HIRES).  The ring's decay UD and KMUL belonged to the old
     ladder's resonance law and are not used."""
-    if not st.nl: st.nl = NL.Ladder(NL.TB)
+    if not st.nl: st.nl = NL.LadderM3(NL.TB)          # v8.1 move 3: G / F's slow sections by blocks of 16
     im = NL.IMAP[i]
     kq = NL.kq_of(res, im)
     if st.swp != 2: kq *= T.DF_HIRES

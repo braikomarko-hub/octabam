@@ -100,7 +100,7 @@
         .set    NEUTRAL_RATE,   0x7f00          | rate 1.0
         .set    NTRACKS,        8
 
-| ---- per-track state (longs), mostly in ref303.FIELDS' order (v7.8's S_Y27 appended); 512 bytes a track
+| ---- per-track state (longs), mostly in ref303.FIELDS' order (v7.8's S_Y27 appended); 1024 bytes a track (v8.1 move 3: was 512)
         .set    S_LATCHED,0
         .set    S_WAVE,4
         .set    S_DIST,8
@@ -206,14 +206,51 @@
         .set    S_NLBP,428                      | &O3_NL_B[index] (4 longs, Q30)
         .set    S_NLWP,432                      | &O3_NL_W[index] (w1, w0/2, wm, 0; Q31)
         .set    S_Y4P,436                       | y4 a sample before ((c''-0))
-        .set    S_LZ0,440                       | the loop's couplings G: 4 high-passes, 2 shelves (TPT states)
-        .set    S_FZ0,464                       | the output path F: 3 high-passes, 2 shelves
+        .set    S_LZ0,440                       | the loop's couplings G: its first high-pass's state, then (v8.1 move 3)
+                                        | its slow sections' five block states (o3ladder.Slow s)
+        .set    S_FZ0,464                       | the output path F: the same, its slow sections' four
         .set    S_T0,484                        | scratch: ay0..ay3 within a sample
         .set    S_KW1,500                       | k D w1, Q25 (k folded into the loop's weights at the control step)
         .set    S_KW0H,504                      | k D w0 / 2, Q25
         .set    S_KWM,508                       | k D wm, Q25
-        .set    ST_SHIFT,9
-        .set    ST_SIZE,512
+| v8.1 P11: the VCA closed -> the chain after it at its fixed point is not recomputed.  The five slots reuse
+| offsets that v8.0 defines (S_CLG, S_CLI, S_CLL, S_NLBP, S_NLWP) and never reads or writes.
+        .set    S_P11,368                       | 0 = unknown, -1 = the sample before tried, 1 = the fixed point holds
+        .set    S_P11OUT,372                    | the output word the fixed point gives (both channels)
+        .set    S_P11A,376                      | S_DC before the try
+        .set    S_P11B,428                      | S_MLO before it
+        .set    S_P11C,432                      | S_TONE before it
+| v8.1 move 3 (o3ladder.LadderM3): G and F after their first high-pass, advanced by blocks of 16 samples from
+| three running moments of their input.  The block's position and moments, F's block polynomial, and k folded
+| into G's terms (at the control step whenever k changes, and k E again at each of G's block ends).
+        .set    S_M3N,512                       | 8 n, n the position in the block (0..15): counts on its own (note_on resets S_CS)
+        .set    S_MG,516                        | G's moments M0, M1, M2
+        .set    S_MF,528                        | F's
+        .set    S_EF,540                        | F's block polynomial e0, e1, e2
+        .set    S_KE,552                        | k e0, k e1, k e2 of G's block polynomial
+        .set    S_KH,564                        | k H0, k H1, k H2 (G's moments into k Sg)
+        .set    S_KC0,576                       | k C0 (G's first high-pass state into k Sg)
+        .set    S_M3KF,580                      | the k they were folded with (o3ladder.LadderM3.kfold; 0 = none yet)
+| v8.1 P2: o3_ctrl skips the work whose inputs are the last step's (pure functions of them: bit for bit).
+        .set    S_P2PV,584                      | 1: the three keys below are a step that left PCUR where it was
+        .set    S_P2PT,588                      | PTGT, PCUR and SLIDE of that step
+        .set    S_P2PC,592
+        .set    S_P2PS,596
+        .set    S_P2EK,600                      | the env-mod depth's key: ENV | RES << 8 | ENVX << 16 | 1 << 30
+        .set    S_P2EV,604                      | and its depth
+        .set    S_P2CD,608                      | a CUTB difference whose glide step was 0 (0 at boot: MULQ15 of 0 is 0)
+        .set    S_P2ND,612                      | an ENVS difference whose glide step was 0
+        .set    S_P2T,616                       | scratch: this step's difference
+        .set    S_P2G1,620                      | the level compensation's keys: RES | 1 << 30, OCOMP, OGAIN
+        .set    S_P2G2,624
+        .set    S_P2G3,628
+        .set    S_P2DV,632                      | o3_params: 1 = the three below hold the last call's dEVILish bytes
+        .set    S_P2D1,636                      | page 1 bytes 0-3, page 1 4-5 + page 2 0-1, page 2 2-5
+        .set    S_P2D2,640
+        .set    S_P2D3,644
+        .set    S_P2DA,648                      | and page 1's source address
+        .set    ST_SHIFT,10
+        .set    ST_SIZE,1024                    | v8.1 move 3: was 512
 
 | ---- the per-sample constant block O3_K, addressed through %a5
         .set    K_PREHP,0
@@ -226,6 +263,8 @@
         .set    K_C1R,28                        | v6.7: the ladder's first-stage coefficient ratio, Q12 (stock 2.0 = 8192)
         .set    K_VP1,32                        | v7.4: the VCA pair's 72 Hz high-pass
         .set    K_VP2,36                        | v7.4: its 156 Hz high-pass (RES path)
+        .set    K_VP1S,40                       | v8.1 P4: K_VP1 << 20, for the EMAC (FM411 as one MAC)
+        .set    K_VP2S,44                       | v8.1 P4: K_VP2 << 20
 
 | >>> GENERATED CONSTANTS (tools/octa303/gen_tables.py) -- do not edit by hand
         .set    CS,              16
@@ -480,8 +519,8 @@ sy_render:
         cmp.l   %d0,%d2
         bhi     .Lstock                 | (never: the packer renders tracks 0..7)
         move.l  %d2,%d0
-        lsl.l   #8,%d0                 | track * ST_SIZE (512: 8 + 1)
-        add.l   %d0,%d0
+        lsl.l   #8,%d0                 | track * ST_SIZE (1024: 8 + 2)
+        lsl.l   #2,%d0
         lea     o3_state,%a3
         add.l   %d0,%a3
         move.l  FP_PTR,%a4
@@ -573,6 +612,7 @@ sy_render:
         beq     .Ldone
         lea     16(%a2),%a1
         lea     O3_K,%a5
+        clr.l   S_P11(%a3)              | v8.1 P11: the knobs may have moved since the last frame
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -581,6 +621,7 @@ sy_render:
         moveq   #CS,%d0
         move.l  %d0,S_CS(%a3)
         bsr     o3_ctrl
+        clr.l   S_P11(%a3)              | v8.1 P11: the control step may move the level's step
 .Lnoctl:
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
@@ -696,25 +737,306 @@ sy_render:
         moveq   #64,%d1
         sub.l   %d1,%d6                 | +64 or -64
 .Lnz9:
-        bsr     o3_nl_step              | v8.0: the new ladder (the twin (a)); d6 = x in, the filter's output out
+| ---- v8.1 P1: the ladder step in line (was o3_nl_step, its only call; claude/OCTA_MK1_manuale_08_piano_risparmi.md);
+|      .Lns_qx (beyond the tanh table, rare) sits after the loop.  What o3_nl_step's header said:
+| ---- o3_nl_step: one sample (o3ladder.Ladder.step; step 4e: the sums that feed no integrator are not rounded).  d6 = x (the engine's ladder input) in; d6 = the filter's
+|      output out, (F + 128) >> 8 clamped to +-2^23 (ref303.sample's fb).  Clobbers d0-d6, a0, a2, a4, a6.
+|      State: S_Y1..S_Y4, S_Y4P, S_LZ0.., S_FZ0.. (8 guard bits); scratch S_T0..S_T3.  Written for cycles
+|      (claude/OCTA_MK1_emac_cicli.md): Sg and the rows of A on four accumulators, each read three instructions or
+|      more after its last MAC, coefficients loaded by the MAC itself (into data registers), Q12's sign without a
+|      branch, G and F side by side.  Every sum is the same set of floored products as o3ladder.py: bit for bit.
+|      v8.1 move 3 (o3ladder.LadderM3.step): G and F keep only their first high-pass at every sample (S_LZ0, S_FZ0);
+|      their slow sections (S_LZ0+4.., S_FZ0+4..) advance at the block end (.Lm3_blk, every 16 samples).  Per
+|      sample: k Sg from G's block polynomial and moments (S_KE, S_KH, S_KC0, S_MG, S_M3N), F's output from its
+|      block polynomial and moments (S_EF, S_MF), and both moments pushed.  Sg's sum (O3_NL_K+4..) and the slow
+|      sections' coefficients in O3_NL_K are no longer read (only G's and F's first high-pass, O3_NL_K+28 and +60).
+        move.l  %d7,-(%sp)              | the loop's count, kept: d7 = a2 = 0x8000, the +128 that rounds a read-out
+        move.l  #0x8000,%d7             | (Dn x An: the stock image never multiplies two An, emac_an)
+        movea.l %d7,%a2
+        lsl.l   #2,%d6                  | X: the input side's 2 guard bits (the states carry 8)
+        movea.l %d6,%a4                 | X kept in a4 until e
+        move.l  S_KE(%a3),%d0           | v8.1 move 3: k Sg = E[k e0 init, k e1 N1[n] + k e2 N2[n] + sum k H_i MG_i + k C0 lz0]
+        move.l  %d0,%acc0               | in acc0 (G's block polynomial and moments, o3ladder.LadderM3.step); S's y4o / y4p
+        lea     S_KE+4(%a3),%a6         | terms join it below: one sum, not rounded.  KE1 KE2 KH0 KH1 KH2 KC0 follow each other
+        move.l  S_M3N(%a3),%d0
+        lea     O3_M3N,%a0
+        adda.l  %d0,%a0                 | (N1[n], N2[n])
+        move.l  (%a6)+,%d1
+        move.l  (%a0)+,%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  (%a0),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_MG(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_MG+4(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_MG+8(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0(%a3),%d2
+        mac.l   %d2,%d1,%acc0
+        movea.l S_NLAP(%a3),%a0         | ay = A y: row 0 in acc1, 1 in acc2, 2 in acc3, 3 in acc1 again
+        move.l  S_Y1(%a3),%d1
+        move.l  S_Y2(%a3),%d2
+        move.l  S_Y3(%a3),%d3
+        move.l  S_Y4(%a3),%d4           | y4o, kept to the end
+        move.l  (%a0)+,%d0
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc2
+        movclr.l %acc1,%d6
+        move.l  %d6,S_T0(%a3)           | ay0
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc3
+        movclr.l %acc2,%d6
+        move.l  %d6,S_T0+4(%a3)         | ay1
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d4,%acc1           | (a0 now at B0)
+        movclr.l %acc3,%d6
+        move.l  %d6,S_T0+8(%a3)         | ay2
+        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc0 (k Sg already there), the input side's units
+        move.l  S_KW0H(%a3),%d1
+        mac.l   %d4,%d1,%acc0
+        mac.l   %d4,%d1,%acc0
+        move.l  S_KWM(%a3),%d1
+        mac.l   %d3,%d1,%acc0
+        movclr.l %acc1,%d2              | ay3
+        move.l  %d2,S_T0+12(%a3)
+        move.l  12(%a0),%d1             | d = B3
+        move.l  %a4,%d6
+        movclr.l %acc0,%d0
+        sub.l   %d0,%d6                 | e = X - S
+        mac.l   %d6,%d1,%acc0           | num = ay3 + (E[e d] << 7)
+        move.l  S_NLR(%a3),%d1
+        move.l  S_KW1(%a3),%d5
+        lea     O3_NL_TH,%a6
+        movclr.l %acc0,%d0
+        lsl.l   #7,%d0
+        add.l   %d2,%d0
+        mac.l   %d0,%d1,%acc1           | y4n = E[num R] << 1
+        moveq   #31,%d2
+        lea     O3_NL_K,%a4
+        movea.l S_NLAP(%a3),%a0
+        movclr.l %acc1,%d0
+        add.l   %d0,%d0
+        mac.l   %d0,%d5,%acc2           | u = e - E[y4n k D w1]
+        move.l  S_T0(%a3),%d3
+        move.l  %d3,%acc0               | (the y updates' inits, ahead)
+        move.l  S_T0+4(%a3),%d3
+        movclr.l %acc2,%d0
+        sub.l   %d0,%d6                 | u
+        move.l  %d6,%d1                 | Q12: K tanh(u / K) on |u| (O3_NL_TH, a step of 2^13 input units), sign back
+        asr.l   %d2,%d1                 | s = u >> 31: 0 or -1 (no branch)
+        eor.l   %d1,%d6
+        sub.l   %d1,%d6                 | |u|
+        move.l  %d3,%acc1
+        move.l  S_T0+8(%a3),%d3
+        move.l  %d3,%acc2
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d7,%a2,%acc2
+        move.l  84(%a0),%d2             | w0/2
+        move.l  80(%a0),%d5             | w1
+        move.l  S_T0+12(%a3),%d3        | ay3
+        move.l  %d6,%d0
+        lsr.l   #8,%d0
+        lsr.l   #5,%d0                  | i
+        cmp.l   #NL_TH_N,%d0
+        bcc     .Lns_qx
+        and.l   #0x1FFF,%d6
+        lsl.l   #8,%d6
+        lsl.l   #8,%d6
+        lsl.l   #2,%d6                  | the fraction << 18
+        lea     (%a6,%d0.l*4),%a6
+        move.l  (%a6)+,%d0              | TH[i]
+        move.l  %d0,%acc3
+        mac.l   %d7,%a2,%acc3
+        neg.l   %d0
+        add.l   (%a6),%d0               | TH[i+1] - TH[i]
+        mac.l   %d6,%d0,%acc3
+        move.l  64(%a0),%d6             | B0, B1 ahead
+        movea.l 68(%a0),%a6
+        move.l  %d1,%d1
+        movclr.l %acc3,%d0
+.Lns_qr:
+        eor.l   %d1,%d0
+        sub.l   %d1,%d0
+        add.l   %d0,%d0                 | 2u (B is Q30)
+        move.l  %d3,%acc3               | y = ay + B (2u): four accumulators
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d6,%acc0
+        mac.l   %d0,%a6,%acc1
+        move.l  72(%a0),%d6
+        mac.l   %d0,%d6,%acc2
+        move.l  76(%a0),%d6
+        mac.l   %d0,%d6,%acc3
+        move.l  S_Y4P(%a3),%d3          | y4p (the old one)
+        movclr.l %acc0,%d0
+        move.l  %d0,S_Y1(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_Y2(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_Y3(%a3)
+        movclr.l %acc3,%d6
+        move.l  %d6,S_Y4(%a3)
+        mac.l   %d7,%a2,%acc0           | ym = E[w1 y4 + w0 y4o + wm y4p], with the true y4; y4p <- y4o
+        mac.l   %d6,%d5,%acc0
+        mac.l   %d4,%d2,%acc0
+        mac.l   %d4,%d2,%acc0
+        move.l  88(%a0),%d1
+        mac.l   %d3,%d1,%acc0
+        move.l  %d4,S_Y4P(%a3)
+        lea     O3_NL_K+28,%a6          | G's coefficients in their order of use (the MAC loads the next one)
+        move.l  (%a6)+,%d3
+        movclr.l %acc0,%d0              | ym: G's input (F's is y4o, in d4)
+        lea     O3_NL_K+60,%a0          | F's
+        move.l  (%a0)+,%d6
+        move.l  S_LZ0(%a3),%d1           | G and F high-pass 0 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0(%a3)
+| ---- v8.1 move 3: after the first high-pass (g1 in d0, v in d4), G and F's slow sections by blocks
+|      (o3ladder.LadderM3.step).  F's output = E[e0 init, d v + H_i MF_i + e1 N1[n] + e2 N2[n]], rounded; then each
+|      input into its moments (o3ladder.Slow.push), and at n = 16 the block end, out of the loop's line.
+        move.l  S_EF(%a3),%d1
+        move.l  %d1,%acc3
+        mac.l   %d7,%a2,%acc3
+        lea     O3_M3+16,%a6            | F's d, H0, H1, H2
+        move.l  (%a6)+,%d1
+        mac.l   %d4,%d1,(%a6)+,%d1,%acc3
+        move.l  S_MF(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc3
+        move.l  S_MF+4(%a3),%d2
+        mac.l   %d2,%d1,(%a6)+,%d1,%acc3
+        move.l  S_MF+8(%a3),%d2
+        mac.l   %d2,%d1,%acc3
+        move.l  S_M3N(%a3),%d5
+        lea     O3_M3N,%a0
+        adda.l  %d5,%a0
+        move.l  S_EF+4(%a3),%d1
+        move.l  (%a0)+,%d2              | N1[n]
+        mac.l   %d2,%d1,%acc3
+        move.l  S_EF+8(%a3),%d1
+        move.l  (%a0),%d2               | N2[n]
+        mac.l   %d2,%d1,%acc3
+        asr.l   #5,%d4                  | F's moments: vs = (v + 32) >> 6, as ((v >> 5) + 1) >> 1 (no overflow)
+        addq.l  #1,%d4
+        asr.l   #1,%d4
+        movem.l S_MF(%a3),%d1-%d3         | M0 M1 M2
+        move.l  %d1,%d6                 | M2 += (2 M1 + M0) >> 4, as (M1 + (M0 >> 1)) >> 3 (the same floor)
+        asr.l   #1,%d6
+        add.l   %d2,%d6
+        asr.l   #3,%d6
+        add.l   %d6,%d3
+        add.l   %d1,%d2                 | M1 += M0, M0 += vs (the old M0 and M1 throughout)
+        add.l   %d4,%d1
+        movem.l %d1-%d3,S_MF(%a3)
+        asr.l   #5,%d0                  | G's moments: vs = (v + 32) >> 6, as ((v >> 5) + 1) >> 1 (no overflow)
+        addq.l  #1,%d0
+        asr.l   #1,%d0
+        movem.l S_MG(%a3),%d1-%d3         | M0 M1 M2
+        move.l  %d1,%d6                 | M2 += (2 M1 + M0) >> 4, as (M1 + (M0 >> 1)) >> 3 (the same floor)
+        asr.l   #1,%d6
+        add.l   %d2,%d6
+        asr.l   #3,%d6
+        add.l   %d6,%d3
+        add.l   %d1,%d2                 | M1 += M0, M0 += vs (the old M0 and M1 throughout)
+        add.l   %d0,%d1
+        movem.l %d1-%d3,S_MG(%a3)
+        movclr.l %acc3,%d4              | F's output
+        addq.l  #8,%d5
+        moveq   #-128,%d1
+        add.l   %d5,%d1
+        beq     .Lm3_blk
+        move.l  %d5,S_M3N(%a3)
+.Lm3_back:
+        add.l   #128,%d4                | the filter's output: F, back to the engine's units
+        asr.l   #8,%d4
+        CLAMP   %d4,-0x800000,0x800000
+        move.l  %d4,%d6
+        move.l  (%sp)+,%d7
         move.l  %d6,S_FBO(%a3)          | v7.4: the output is the loop's high-pass (one, shared), then the
-        move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper
-        sub.l   S_VP1(%a3),%d0
-        FM411   %d0,K_VP1(%a5)
+        move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper.  v8.1 P4: the two
+        sub.l   S_VP1(%a3),%d0          | high-passes side by side on the EMAC (render_audit R2): FM411's
+        asr.l   #4,%d0                  | ((x >> 4) K >> 8) >> 3 = E[(x >> 4) (K << 20)], the same floor
+        move.l  K_VP1S(%a5),%d2
+        mac.l   %d0,%d2,%acc0
+        move.l  %d6,%d1
+        sub.l   S_VP2(%a3),%d1
+        asr.l   #4,%d1
+        move.l  K_VP2S(%a5),%d2
+        mac.l   %d1,%d2,%acc1
+        move.l  %d6,%d2                 | fb, for fb - vp1
+        movclr.l %acc0,%d0
         add.l   S_VP1(%a3),%d0
         move.l  %d0,S_VP1(%a3)
-        move.l  %d6,%d1
-        sub.l   %d0,%d1                 | d1 = fb - vp1
-        move.l  %d6,%d0
-        sub.l   S_VP2(%a3),%d0
-        FM411   %d0,K_VP2(%a5)
+        sub.l   %d0,%d2                 | d2 = fb - vp1
+        movclr.l %acc1,%d0
         add.l   S_VP2(%a3),%d0
         move.l  %d0,S_VP2(%a3)
         sub.l   %d0,%d6                 | fb - vp2
         asr.l   #6,%d6
         muls.l  S_W2(%a3),%d6
         asr.l   #6,%d6
-        add.l   %d1,%d6
+        add.l   %d2,%d6
+        move.l  S_AMP(%a3),%d3          | v8.1 P11: the VCA's level first (was after the OTA, same value;
+        add.l   S_AMPSTEP(%a3),%d3      | d3 is free from here to the sample's end)
+        bgt     .Lamp                   | open: the whole chain
+        moveq   #0,%d3
+        move.l  %d3,S_AMP(%a3)          | closed this sample: max(0, amp + step) = 0
+        move.l  S_P11(%a3),%d0
+        bgt     .Lp11                   | 1: the chain after the VCA sits at its fixed point: its word again
+        beq     .Lp11t                  | 0: try
+        move.l  S_DC(%a3),%d0           | -1: the sample before was the try (closed, same frame, no control
+        cmp.l   S_P11A(%a3),%d0         | step since): did it leave the chain's three states where they were?
+        bne     .Lp11t
+        move.l  S_MLO(%a3),%d0
+        cmp.l   S_P11B(%a3),%d0
+        bne     .Lp11t
+        move.l  S_TONE(%a3),%d0
+        cmp.l   S_P11C(%a3),%d0
+        bne     .Lp11t
+        moveq   #1,%d0                  | yes: the fixed point, and its word is the one just written
+        move.l  %d0,S_P11(%a3)
+        move.l  -4(%a1),%d0
+        move.l  %d0,S_P11OUT(%a3)
+        bra     .Lp11
+.Lp11t:
+        moveq   #-1,%d0                 | try: this sample runs the chain at level 0; keep its states
+        move.l  %d0,S_P11(%a3)
+        move.l  S_DC(%a3),%d0
+        move.l  %d0,S_P11A(%a3)
+        move.l  S_MLO(%a3),%d0
+        move.l  %d0,S_P11B(%a3)
+        move.l  S_TONE(%a3),%d0
+        move.l  %d0,S_P11C(%a3)
+        bra     .Lamp0
+.Lamp:
+        move.l  %d3,S_AMP(%a3)
+        clr.l   S_P11(%a3)
+.Lamp0:
         FM66    %d6,S_GCOMP(%a3)        | level compensation, VCA (ramped per sample)
         CLAMP   %d6,-OTA_LIM,OTA_LIM    | v7.6: the VCA is an OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V)
         asr.l   #4,%d6
@@ -728,12 +1050,7 @@ sy_render:
         asr.l   #8,%d6
         asr.l   #3,%d6
         CLAMP   %d6,-VCA_LIM,VCA_LIM    | v6.9: the VCA multiply never wraps
-        move.l  S_AMP(%a3),%d1
-        add.l   S_AMPSTEP(%a3),%d1
-        bpl     .Lamp
-        moveq   #0,%d1
-.Lamp:
-        move.l  %d1,S_AMP(%a3)
+        move.l  %d3,%d1                 | v8.1 P11: the level, from above
         asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
         asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
         muls.l  %d1,%d6
@@ -811,8 +1128,9 @@ sy_render:
         move.l  %d6,S_OVCA(%a3)         | FM reads the VCA after the Muffler
         tst.l   S_DIST(%a3)
         beq     .Lnod
-        moveq   #DIST_GAIN,%d0          | the pedal
-        muls.l  %d0,%d6
+        move.l  %d6,%d0                 | the pedal: x DIST_GAIN = 5, as 4 x + x (v8.1 P4; gen_tables asserts 5)
+        lsl.l   #2,%d6
+        add.l   %d0,%d6
         add.l   #DIST_BIAS,%d6
         SOFTCLIP %d6
         move.l  %d6,%d0
@@ -857,11 +1175,179 @@ sy_render:
         move.l  %d6,(%a1)+
         subq.l  #1,%d7
         bne     .Lloop
+        bra     .Ldone
+.Lp11:                                  | v8.1 P11: closed, fixed point: the same word, S_OVCA unchanged
+        move.l  S_P11OUT(%a3),%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        subq.l  #1,%d7
+        bne     .Lloop
 .Ldone:
         move.l  44(%sp),%d0
         movem.l (%sp),%d2-%d7/%a2-%a6
         lea     48(%sp),%sp
         rts
+.Lm3_blk:                               | v8.1 move 3: a block end (one sample in 16), out of the loop's line
+        clr.l   S_M3N(%a3)
+        lea     -12(%sp),%sp
+        movem.l %d4/%a1/%a5,(%sp)       | F's output, the output pointer, O3_K
+        lea     S_LZ0+4(%a3),%a5        | G: its 5 states in d0.., its moments in a0 a1 a4, every row from the old s
+        movem.l S_MG(%a3),%a0/%a1/%a4
+        movem.l (%a5),%d0-%d4
+        lea     O3_M3G,%a6
+        move.l  (%a6)+,%d5
+        mac.l   %d7,%a2,%acc0           | row 0: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,0(%a5)
+        mac.l   %d7,%a2,%acc2           | row 1: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,4(%a5)
+        mac.l   %d7,%a2,%acc0           | row 2: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,8(%a5)
+        mac.l   %d7,%a2,%acc2           | row 3: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,12(%a5)
+        mac.l   %d7,%a2,%acc0           | row 4: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,16(%a5)
+        clr.l   S_MG(%a3)              | M = 0
+        clr.l   S_MG+4(%a3)
+        clr.l   S_MG+8(%a3)
+        movea.l %a5,%a0
+        lea     O3_M3G_E,%a6
+        bsr     o3_m3_e5
+        bsr     o3_m3_ke                | k e
+        lea     S_FZ0+4(%a3),%a5        | F: its 4 states in d0.., its moments in a0 a1 a4, every row from the old s
+        movem.l S_MF(%a3),%a0/%a1/%a4
+        movem.l (%a5),%d0-%d3
+        lea     O3_M3F,%a6
+        move.l  (%a6)+,%d5
+        mac.l   %d7,%a2,%acc0           | row 0: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,0(%a5)
+        mac.l   %d7,%a2,%acc2           | row 1: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,4(%a5)
+        mac.l   %d7,%a2,%acc0           | row 2: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc0
+        movclr.l %acc0,%d6
+        move.l  %d6,%acc1               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        movclr.l %acc1,%d6
+        move.l  %d6,8(%a5)
+        mac.l   %d7,%a2,%acc2           | row 3: gk = E[Gk_r . M], rounded
+        mac.l   %a0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %a4,%d5,(%a6)+,%d5,%acc2
+        movclr.l %acc2,%d6
+        move.l  %d6,%acc3               | s'_r = E[gk init, PhiN_r . s], rounded
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc3
+        mac.l   %d3,%d5,%acc3
+        movclr.l %acc3,%d6
+        move.l  %d6,12(%a5)
+        clr.l   S_MF(%a3)              | M = 0
+        clr.l   S_MF+4(%a3)
+        clr.l   S_MF+8(%a3)
+        movea.l %a5,%a0
+        lea     O3_M3F_E,%a6
+        bsr     o3_m3_e4
+        move.l  %d0,S_EF(%a3)           | its block polynomial
+        move.l  %d1,S_EF+4(%a3)
+        move.l  %d2,S_EF+8(%a3)
+        movem.l (%sp),%d4/%a1/%a5
+        lea     12(%sp),%sp
+        bra     .Lm3_back
+.Lns_qx:                                | v8.1 P1: the ladder's Q12 beyond the table (rare), out of the loop's line
+        move.l  #NL_TH_N,%d0            | beyond the table: K tanh(4) as the table ends (rare)
+        move.l  (%a6,%d0.l*4),%d0
+        move.l  64(%a0),%d6
+        movea.l 68(%a0),%a6
+        bra     .Lns_qr
 
 | ---- o3_voice: a0 := track d2's voice struct + V_POS.  Clobbers d0.
 o3_voice:
@@ -887,8 +1373,8 @@ o3_retrig:
         move.l  %a1,%d1
         cmp.l   #NTRACKS,%d1
         bcc     .Lrt_out
-        lsl.l   #8,%d1                 | track * ST_SIZE (512: 8 + 1)
-        add.l   %d1,%d1
+        lsl.l   #8,%d1                 | track * ST_SIZE (1024: 8 + 2)
+        lsl.l   #2,%d1
         lea     o3_state,%a2
         tst.l   S_LATCHED(%a2,%d1.l)
         .if     HK_MACHINE_ROWS
@@ -2843,6 +3329,59 @@ o3_params:
         add.l   %d1,%a0
         bsr     o3_vrec                 | v7.1: page 1 as the DSP gets it (locks, scenes, LFOs)
 .Lp_have:
+        moveq   #0,%d1                  | v8.1 P2: dEVILish's twelve bytes (page 1 at a0, page 2 at a2) as at the last
+        moveq   #0,%d0                  | call: everything down to ENVX is a pure function of them (only
+        move.b  (%a0),%d0                | o3_params writes those fields); packed into three longs, d1 = 1 if one moved
+        lsl.l   #8,%d0
+        move.b  1(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  2(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  3(%a0),%d0
+        cmp.l   S_P2D1(%a3),%d0
+        beq     .Lp_k1
+        move.l  %d0,S_P2D1(%a3)
+        moveq   #1,%d1
+.Lp_k1:
+        moveq   #0,%d0
+        move.b  4(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  5(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  (%a2),%d0
+        lsl.l   #8,%d0
+        move.b  1(%a2),%d0
+        cmp.l   S_P2D2(%a3),%d0
+        beq     .Lp_k2
+        move.l  %d0,S_P2D2(%a3)
+        moveq   #1,%d1
+.Lp_k2:
+        moveq   #0,%d0
+        move.b  2(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  3(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  4(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  5(%a2),%d0
+        cmp.l   S_P2D3(%a3),%d0
+        beq     .Lp_k3
+        move.l  %d0,S_P2D3(%a3)
+        moveq   #1,%d1
+.Lp_k3:
+        move.l  %a0,%d0                 | and page 1's source: dEVILish's S_DFK or the neutral bytes (with the neutral
+        cmp.l   S_P2DA(%a3),%d0         | ones SETUP's SLID overrides SLIDE below, so the source is part of the key)
+        beq     .Lp_k4
+        move.l  %d0,S_P2DA(%a3)
+        moveq   #1,%d1
+.Lp_k4:
+        tst.l   S_P2DV(%a3)
+        beq     .Lp_new
+        tst.l   %d1
+        beq     .Lp_skip
+.Lp_new:
+        moveq   #1,%d0
+        move.l  %d0,S_P2DV(%a3)
         KB      0,%a0                   | OVDR
         TAB     O3_DF_GIN,S_GIN
         TAB     O3_DF_OCOMP,S_OCOMP
@@ -2894,6 +3433,7 @@ o3_params:
         moveq   #1,%d1
 .Lp_ex:
         move.l  %d1,S_ENVX(%a3)
+.Lp_skip:
         lea     o3_df_neutral,%a1       | v7.0: no dEVILish on the track: SETUP's SLID
         cmp.l   %a1,%a0
         bne     .Lp_ns
@@ -2965,8 +3505,107 @@ o3_note_on:
         movclr.l %acc0,\dst
         .endm
 
+| ---- v8.1 move 3 (o3ladder.Slow / LadderM3).  They expect d7 = a2 = 0x8000 (the read-out's rounding) and leave
+|      the accumulators empty.
+| ---- o3_m3_e5 / o3_m3_e4: a slow section's block polynomial from its states (Slow.poly): a0 = s (5 or 4 longs),
+|      a6 = its E table (per state: E0, E1, E2).  e0 = E[E0 . s] << 1, e1 = E[E1 . s], e2 = E[E2 . s], not rounded.
+|      Out: d0, d1, d2.  Clobbers d3, d4 (e5), d5, a6.
+o3_m3_e5:
+        movem.l (%a0),%d0-%d4
+        move.l  (%a6)+,%d5
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d4,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d4,%d5,%acc2
+        movclr.l %acc0,%d0
+        add.l   %d0,%d0
+        movclr.l %acc1,%d1
+        movclr.l %acc2,%d2
+        rts
+o3_m3_e4:
+        movem.l (%a0),%d0-%d3
+        move.l  (%a6)+,%d5
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d0,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d1,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d2,%d5,(%a6)+,%d5,%acc2
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc0
+        mac.l   %d3,%d5,(%a6)+,%d5,%acc1
+        mac.l   %d3,%d5,%acc2
+        movclr.l %acc0,%d0
+        add.l   %d0,%d0
+        movclr.l %acc1,%d1
+        movclr.l %acc2,%d2
+        rts
+| ---- o3_m3_ke: k into G's block polynomial (LadderM3.refold_e): d0, d1, d2 = e; S_KE_i = E[e_i k], rounded, k = S_K.
+|      Clobbers d0, d3.
+o3_m3_ke:
+        move.l  S_K(%a3),%d3
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,%acc0
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d1,%d3,%acc1
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d2,%d3,%acc2
+        movclr.l %acc0,%d0
+        move.l  %d0,S_KE(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_KE+4(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_KE+8(%a3)
+        rts
+| ---- o3_m3_fold: k into all of G's terms (LadderM3.fold), when k moved: d3 = k (= S_K).  S_KC0 = E[k C0],
+|      S_KH_i = E[k H_i], rounded; then G's e from its states and k e.  Clobbers d0-d4, a0, a6 (o3_nlctrl's saves).
+o3_m3_fold:
+        move.l  %d5,-(%sp)
+        move.l  %d3,S_M3KF(%a3)
+        lea     O3_M3,%a6
+        mac.l   %d7,%a2,%acc0
+        move.l  (%a6)+,%d0
+        mac.l   %d3,%d0,%acc0
+        mac.l   %d7,%a2,%acc1
+        move.l  (%a6)+,%d0
+        mac.l   %d3,%d0,%acc1
+        mac.l   %d7,%a2,%acc2
+        move.l  (%a6)+,%d0
+        mac.l   %d3,%d0,%acc2
+        mac.l   %d7,%a2,%acc3
+        move.l  (%a6),%d0
+        mac.l   %d3,%d0,%acc3
+        movclr.l %acc0,%d0
+        move.l  %d0,S_KC0(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_KH(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_KH+4(%a3)
+        movclr.l %acc3,%d0
+        move.l  %d0,S_KH+8(%a3)
+        lea     S_LZ0+4(%a3),%a0
+        lea     O3_M3G_E,%a6
+        bsr     o3_m3_e5
+        bsr     o3_m3_ke
+        move.l  (%sp)+,%d5
+        rts
+
 | ---- o3_nlctrl: the control step (ref303.nlctrl, o3ladder.Ladder.ctrl).  d0 = the old ladder index (CUT/ENV/accent
-|      in Hz), d1 = RES.  Writes S_NLI, S_K (k, Q25), S_NLR and the row pointers.  Clobbers d0, d1, a0.
+|      in Hz), d1 = RES.  Writes S_NLI, S_K (k, Q25), S_NLR and the row pointers; v8.1 move 3: when k moved
+|      (k differs from S_M3KF), also S_M3KF, S_KC0, S_KH and S_KE (o3_m3_fold).  Clobbers d0, d1, a0.
 o3_nlctrl:
         tst.l   S_NLR(%a3)              | the same inputs as the last step (index, RES, SWP): nothing to do
         beq     .Lnc_go                 | (k and R are functions of them; R = 0: not computed yet)
@@ -3048,298 +3687,39 @@ o3_nlctrl:
         ERD     %d0
         move.l  %d0,S_NLR(%a3)
 .Lnc_out:
+        cmp.l   S_M3KF(%a3),%d3         | v8.1 move 3: k moved since G's terms were folded with it
+        beq     .Lnc_nf
+        bsr     o3_m3_fold
+.Lnc_nf:
         movem.l (%sp),%d2-%d4/%d7/%a2/%a6
         lea     24(%sp),%sp
         rts
 
-| ---- o3_nl_step: one sample (o3ladder.Ladder.step; step 4e: the sums that feed no integrator are not rounded).  d6 = x (the engine's ladder input) in; d6 = the filter's
-|      output out, (F + 128) >> 8 clamped to +-2^23 (ref303.sample's fb).  Clobbers d0-d6, a0, a2, a4, a6.
-|      State: S_Y1..S_Y4, S_Y4P, S_LZ0.., S_FZ0.. (8 guard bits); scratch S_T0..S_T3.  Written for cycles
-|      (claude/OCTA_MK1_emac_cicli.md): Sg and the rows of A on four accumulators, each read three instructions or
-|      more after its last MAC, coefficients loaded by the MAC itself (into data registers), Q12's sign without a
-|      branch, G and F side by side.  Every sum is the same set of floored products as o3ladder.py: bit for bit.
-o3_nl_step:
-        move.l  %d7,-(%sp)              | the loop's count, kept: d7 = a2 = 0x8000, the +128 that rounds a read-out
-        move.l  #0x8000,%d7             | (Dn x An: the stock image never multiplies two An, emac_an)
-        movea.l %d7,%a2
-        lsl.l   #2,%d6                  | X: the input side's 2 guard bits (the states carry 8)
-        movea.l %d6,%a4                 | X kept in a4 until e
-        move.l  S_LZ0+12(%a3),%d0       | Sg = E[-lz3 init, sum lz_j SGC_j] in acc0 (the chain G as out = D in + Sg;
-        neg.l   %d0                     | c3 = -1 - 6e-6 is split: -lz3 exactly, plus (c3 + 1) in Q31), not rounded
-        move.l  %d0,%acc0
-        lea     O3_NL_K+4,%a6
-        move.l  (%a6)+,%d1
-        move.l  S_LZ0(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+4(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+8(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+12(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+16(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+20(%a3),%d0
-        mac.l   %d0,%d1,%acc0
-        movea.l S_NLAP(%a3),%a0         | ay = A y: row 0 in acc1, 1 in acc2, 2 in acc3, 3 in acc1 again
-        move.l  S_Y1(%a3),%d1
-        move.l  S_Y2(%a3),%d2
-        move.l  S_Y3(%a3),%d3
-        move.l  S_Y4(%a3),%d4           | y4o, kept to the end
-        move.l  (%a0)+,%d0
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d4,(%a0)+,%d0,%acc1
-        movclr.l %acc0,%d5              | Sg
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc2
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc2
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc2
-        mac.l   %d0,%d4,(%a0)+,%d0,%acc2
-        movclr.l %acc1,%d6
-        move.l  %d6,S_T0(%a3)           | ay0
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc3
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc3
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc3
-        mac.l   %d0,%d4,(%a0)+,%d0,%acc3
-        movclr.l %acc2,%d6
-        move.l  %d6,S_T0+4(%a3)         | ay1
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d4,%acc1           | (a0 now at B0)
-        movclr.l %acc3,%d6
-        move.l  %d6,S_T0+8(%a3)         | ay2
-        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc2, the input side's units
-        move.l  S_KW0H(%a3),%d1
-        mac.l   %d4,%d1,%acc2
-        mac.l   %d4,%d1,%acc2
-        move.l  S_KWM(%a3),%d1
-        mac.l   %d3,%d1,%acc2
-        move.l  S_K(%a3),%d1
-        mac.l   %d5,%d1,%acc2
-        movclr.l %acc1,%d2              | ay3
-        move.l  %d2,S_T0+12(%a3)
-        move.l  12(%a0),%d1             | d = B3
-        move.l  %a4,%d6
-        movclr.l %acc2,%d0
-        sub.l   %d0,%d6                 | e = X - S
-        mac.l   %d6,%d1,%acc0           | num = ay3 + (E[e d] << 7)
-        move.l  S_NLR(%a3),%d1
-        move.l  S_KW1(%a3),%d5
-        lea     O3_NL_TH,%a6
-        movclr.l %acc0,%d0
-        lsl.l   #7,%d0
-        add.l   %d2,%d0
-        mac.l   %d0,%d1,%acc1           | y4n = E[num R] << 1
-        moveq   #31,%d2
-        lea     O3_NL_K,%a4
-        movea.l S_NLAP(%a3),%a0
-        movclr.l %acc1,%d0
-        add.l   %d0,%d0
-        mac.l   %d0,%d5,%acc2           | u = e - E[y4n k D w1]
-        move.l  S_T0(%a3),%d3
-        move.l  %d3,%acc0               | (the y updates' inits, ahead)
-        move.l  S_T0+4(%a3),%d3
-        movclr.l %acc2,%d0
-        sub.l   %d0,%d6                 | u
-        move.l  %d6,%d1                 | Q12: K tanh(u / K) on |u| (O3_NL_TH, a step of 2^13 input units), sign back
-        asr.l   %d2,%d1                 | s = u >> 31: 0 or -1 (no branch)
-        eor.l   %d1,%d6
-        sub.l   %d1,%d6                 | |u|
-        move.l  %d3,%acc1
-        move.l  S_T0+8(%a3),%d3
-        move.l  %d3,%acc2
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d7,%a2,%acc1
-        mac.l   %d7,%a2,%acc2
-        move.l  84(%a0),%d2             | w0/2
-        move.l  80(%a0),%d5             | w1
-        move.l  S_T0+12(%a3),%d3        | ay3
-        move.l  %d6,%d0
-        lsr.l   #8,%d0
-        lsr.l   #5,%d0                  | i
-        cmp.l   #NL_TH_N,%d0
-        bcc     .Lns_qx
-        and.l   #0x1FFF,%d6
-        lsl.l   #8,%d6
-        lsl.l   #8,%d6
-        lsl.l   #2,%d6                  | the fraction << 18
-        lea     (%a6,%d0.l*4),%a6
-        move.l  (%a6)+,%d0              | TH[i]
-        move.l  %d0,%acc3
-        mac.l   %d7,%a2,%acc3
-        neg.l   %d0
-        add.l   (%a6),%d0               | TH[i+1] - TH[i]
-        mac.l   %d6,%d0,%acc3
-        move.l  64(%a0),%d6             | B0, B1 ahead
-        movea.l 68(%a0),%a6
-        move.l  %d1,%d1
-        movclr.l %acc3,%d0
-.Lns_qr:
-        eor.l   %d1,%d0
-        sub.l   %d1,%d0
-        add.l   %d0,%d0                 | 2u (B is Q30)
-        move.l  %d3,%acc3               | y = ay + B (2u): four accumulators
-        mac.l   %d7,%a2,%acc3
-        mac.l   %d0,%d6,%acc0
-        mac.l   %d0,%a6,%acc1
-        move.l  72(%a0),%d6
-        mac.l   %d0,%d6,%acc2
-        move.l  76(%a0),%d6
-        mac.l   %d0,%d6,%acc3
-        move.l  S_Y4P(%a3),%d3          | y4p (the old one)
-        movclr.l %acc0,%d0
-        move.l  %d0,S_Y1(%a3)
-        movclr.l %acc1,%d0
-        move.l  %d0,S_Y2(%a3)
-        movclr.l %acc2,%d0
-        move.l  %d0,S_Y3(%a3)
-        movclr.l %acc3,%d6
-        move.l  %d6,S_Y4(%a3)
-        mac.l   %d7,%a2,%acc0           | ym = E[w1 y4 + w0 y4o + wm y4p], with the true y4; y4p <- y4o
-        mac.l   %d6,%d5,%acc0
-        mac.l   %d4,%d2,%acc0
-        mac.l   %d4,%d2,%acc0
-        move.l  88(%a0),%d1
-        mac.l   %d3,%d1,%acc0
-        move.l  %d4,S_Y4P(%a3)
-        lea     O3_NL_K+28,%a6          | G's coefficients in their order of use (the MAC loads the next one)
-        move.l  (%a6)+,%d3
-        movclr.l %acc0,%d0              | ym: G's input (F's is y4o, in d4)
-        lea     O3_NL_K+60,%a0          | F's
-        move.l  (%a0)+,%d6
-        move.l  S_LZ0(%a3),%d1           | G and F high-pass 0 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0(%a3)
-        move.l  S_LZ0+4(%a3),%d1           | G and F high-pass 1 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0+4(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+4(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+4(%a3)
-        move.l  S_LZ0+8(%a3),%d1           | G and F high-pass 2 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0+8(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+8(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+8(%a3)
-        move.l  S_LZ0+12(%a3),%d1       | G's fourth high-pass, alone
-        sub.l   %d1,%d0
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        move.l  S_FZ0+12(%a3),%d5       | (F's first shelf, ahead: its state, and x as its init)
-        move.l  %d4,%acc3
-        mac.l   %d7,%a2,%acc3
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+12(%a3)
-        move.l  S_LZ0+16(%a3),%d1           | G and F shelf 0: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
-        move.l  %d0,%acc1
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        mac.l   %d7,%a2,%acc1
-        movclr.l %acc0,%d2
-        add.l   %d2,%d1
-        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+16(%a3)
-        movclr.l %acc2,%d2
-        add.l   %d2,%d5
-        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+12(%a3)
-        movclr.l %acc1,%d0
-        movclr.l %acc3,%d4
-        move.l  S_FZ0+16(%a3),%d5
-        move.l  %d4,%acc3
-        mac.l   %d7,%a2,%acc3
-        move.l  S_LZ0+20(%a3),%d1           | G and F shelf 1: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
-        move.l  %d0,%acc1
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        mac.l   %d7,%a2,%acc1
-        movclr.l %acc0,%d2
-        add.l   %d2,%d1
-        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+20(%a3)
-        movclr.l %acc2,%d2
-        add.l   %d2,%d5
-        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+16(%a3)
-        movclr.l %acc1,%d0
-        movclr.l %acc3,%d4
-        add.l   #128,%d4                | the filter's output: F, back to the engine's units
-        asr.l   #8,%d4
-        CLAMP   %d4,-0x800000,0x800000
-        move.l  %d4,%d6
-        move.l  (%sp)+,%d7
-        rts
-.Lns_qx:
-        move.l  #NL_TH_N,%d0            | beyond the table: K tanh(4) as the table ends (rare)
-        move.l  (%a6,%d0.l*4),%d0
-        move.l  64(%a0),%d6
-        movea.l 68(%a0),%a6
-        bra     .Lns_qr
-
 o3_ctrl:
-        move.l  S_PTGT(%a3),%d0         | SLID: RC slide on the pitch CV
-        lsl.l   #8,%d0
-        move.l  S_PCUR(%a3),%d1
+        move.l  S_PTGT(%a3),%d0         | v8.1 P2: PCUR's step, the increment and Q8's row are a pure function of
+        move.l  S_PCUR(%a3),%d1         | (PTGT, PCUR, SLIDE): with the keys of a step that left PCUR where it was,
+        move.l  S_SLIDE(%a3),%d2        | nothing here changes
+        tst.l   S_P2PV(%a3)
+        beq     .Lc_pg
+        cmp.l   S_P2PT(%a3),%d0
+        bne     .Lc_pg
+        cmp.l   S_P2PC(%a3),%d1
+        bne     .Lc_pg
+        cmp.l   S_P2PS(%a3),%d2
+        beq     .Lc_pd
+.Lc_pg:
+        move.l  %d0,S_P2PT(%a3)
+        move.l  %d1,S_P2PC(%a3)
+        move.l  %d2,S_P2PS(%a3)
+        lsl.l   #8,%d0                  | SLID: RC slide on the pitch CV
         sub.l   %d1,%d0
-        move.l  S_SLIDE(%a3),%d2
         MULQ15  %d0,%d2,%d3
+        moveq   #0,%d2                  | v8.1 P2: the keys hold only if PCUR stays
+        tst.l   %d0
+        bne     .Lc_pv
+        moveq   #1,%d2
+.Lc_pv:
+        move.l  %d2,S_P2PV(%a3)
         add.l   %d0,%d1
         move.l  %d1,S_PCUR(%a3)
         move.l  %d1,%d0
@@ -3356,6 +3736,7 @@ o3_ctrl:
         lea     O3_SQC,%a0
         add.l   %a0,%d0
         move.l  %d0,S_SQTP(%a3)
+.Lc_pd:
         tst.l   S_ACCD(%a3)             | v7.8, the MEG: the circuit (o3meg.py) by DECAY and level; v7.9:
         beq     .Lc_n                   | accents on O3_ADEC_T at dEVILish's ADEC (0, no dEVILish: ADEC 50)
         move.l  S_ADEC(%a3),%d1
@@ -3418,6 +3799,19 @@ o3_ctrl:
         bsr     o3_acc                  | d6 = the push (Q8 semitones), d4 = the VCA's extra level (Q14)
         move.l  S_RES(%a3),%d5
 .Lc_env:
+        move.l  S_ENVX(%a3),%d0         | v8.1 P2: the env-mod depth, a pure function of (ENV, RES, ENVX): its key
+        swap    %d0                     | ENV | RES << 8 | ENVX << 16 | 1 << 30 (ENV, RES 0..127; ENVX 0 or 1)
+        move.l  %d5,%d1
+        lsl.l   #8,%d1
+        or.l    %d1,%d0
+        or.l    S_ENV(%a3),%d0
+        or.l    #0x40000000,%d0
+        cmp.l   S_P2EK(%a3),%d0
+        bne     .Lc_eg
+        move.l  S_P2EV(%a3),%d1
+        bra     .Lc_ed
+.Lc_eg:
+        move.l  %d0,S_P2EK(%a3)
         tst.l   S_ENVX(%a3)             | env-mod depth
         bne     .Lc_ex
         move.l  S_ENV(%a3),%d0
@@ -3432,7 +3826,7 @@ o3_ctrl:
         asr.l   #8,%d2
         asr.l   #7,%d2
         add.l   %d2,%d1
-        bra     .Lc_ed
+        bra     .Lc_edc
 .Lc_ex:
         lea     O3_TB_SLO,%a0           | ENVX: the depth at ENV 127, x3, scaled by ENV from none
         move.l  508(%a0),%d1
@@ -3450,6 +3844,8 @@ o3_ctrl:
         muls.l  S_ENV(%a3),%d1
         moveq   #127,%d2
         divs.l  %d2,%d1
+.Lc_edc:
+        move.l  %d1,S_P2EV(%a3)
 .Lc_ed:
         move.l  S_CUT(%a3),%d0          | cutoff, Q8 semitones above 20 Hz (CUTX: the wide pot)
         lea     O3_TB_OFF,%a0
@@ -3475,19 +3871,43 @@ o3_ctrl:
         move.l  %d3,%d0
         lsl.l   #8,%d0
         sub.l   S_CUTB(%a3),%d0
+        cmp.l   S_P2CD(%a3),%d0         | v8.1 P2: a difference whose step was 0 gives 0 again (MULQ15 is a pure
+        beq     .Lc_c0                  | function of it): CUTB stays
+        move.l  %d0,S_P2T(%a3)
         move.l  #SMOOTH_K,%d2
         MULQ15  %d0,%d2,%d3
+        tst.l   %d0
+        bne     .Lc_c1
+        move.l  S_P2T(%a3),%d2
+        move.l  %d2,S_P2CD(%a3)
+.Lc_c1:
         add.l   S_CUTB(%a3),%d0
         move.l  %d0,S_CUTB(%a3)
+        bra     .Lc_c2
+.Lc_c0:
+        move.l  S_CUTB(%a3),%d0
+.Lc_c2:
         asr.l   #8,%d0
         move.l  %d0,-(%sp)              | the base
         move.l  %d1,%d0
         lsl.l   #8,%d0
         sub.l   S_ENVS(%a3),%d0
+        cmp.l   S_P2ND(%a3),%d0         | v8.1 P2: the same for ENVS
+        beq     .Lc_n0
+        move.l  %d0,S_P2T(%a3)
         move.l  #SMOOTH_K,%d2
         MULQ15  %d0,%d2,%d3
+        tst.l   %d0
+        bne     .Lc_n1
+        move.l  S_P2T(%a3),%d2
+        move.l  %d2,S_P2ND(%a3)
+.Lc_n1:
         add.l   S_ENVS(%a3),%d0
         move.l  %d0,S_ENVS(%a3)
+        bra     .Lc_n2
+.Lc_n0:
+        move.l  S_ENVS(%a3),%d0
+.Lc_n2:
         asr.l   #8,%d0
         move.l  %d0,%d1                 | the depth
         move.l  (%sp)+,%d3
@@ -3515,6 +3935,22 @@ o3_ctrl:
         move.l  %d3,%d0                 | v8.0: the new ladder's index, k and reciprocal (ref303.nlctrl)
         move.l  %d5,%d1
         bsr     o3_nlctrl
+        move.l  %d5,%d0                 | v8.1 P2: GCOMP and W2 are pure functions of (RES, OCOMP, OGAIN)
+        or.l    #0x40000000,%d0
+        cmp.l   S_P2G1(%a3),%d0
+        bne     .Lc_gg
+        move.l  S_OCOMP(%a3),%d1
+        cmp.l   S_P2G2(%a3),%d1
+        bne     .Lc_gg
+        move.l  S_OGAIN(%a3),%d1
+        cmp.l   S_P2G3(%a3),%d1
+        beq     .Lc_gd
+.Lc_gg:
+        move.l  %d0,S_P2G1(%a3)
+        move.l  S_OCOMP(%a3),%d1
+        move.l  %d1,S_P2G2(%a3)
+        move.l  S_OGAIN(%a3),%d1
+        move.l  %d1,S_P2G3(%a3)
         lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's (v7.5: one gain, the part 0)
         move.l  (%a0),%d1               | factor (overdrive swamps the resonance)
         move.l  (%a0,%d5.l*4),%d0
@@ -3537,6 +3973,7 @@ o3_ctrl:
         asr.l   #8,%d0
         asr.l   #4,%d0
         move.l  %d0,S_W2(%a3)
+.Lc_gd:
         move.l  %d4,%d6                 | v7.8: I27 / I_Q31 (pin 1, Q14) x ACCV / 64
         muls.l  S_ACCVG(%a3),%d6
         asr.l   #6,%d6
@@ -3663,7 +4100,7 @@ o3_clone:
         .align  4
 O3_K:
         .long   0, 20210, 555, 41, 17398, 18830, 10923, 9618
-        .long   333, 719
+        .long   333, 719, 349175808, 753926144
 O3_INC_TAB:
         .long   315993, 316279, 316564, 316850, 317136, 317423, 317709, 317996
         .long   318283, 318571, 318858, 319146, 319434, 319723, 320012, 320301
@@ -7572,6 +8009,30 @@ O3_NL_RT:
         .long   538976288, 538844218, 538712214, 538580273, 538448398, 538316586, 538184840, 538053158
         .long   537921540, 537789987, 537658498, 537527073, 537395713, 537264416, 537133184, 537002016
         .long   536870912
+O3_M3:
+        .long   -2130673551, -363699330, 809478, -13926, 2147080477, -51633229, -54598, 1747
+O3_M3N:
+        .long   0, 0, 8388608, 32768, 16777216, 131072, 25165824, 294912
+        .long   33554432, 524288, 41943040, 819200, 50331648, 1179648, 58720256, 1605632
+        .long   67108864, 2097152, 75497472, 2654208, 83886080, 3276800, 92274688, 3964928
+        .long   100663296, 4718592, 109051904, 5537792, 117440512, 6422528, 125829120, 7372800
+O3_M3G:
+        .long   303526151, -670991, 11674, 2072846082, 0, 0, 0, 0
+        .long   62247631, -165866, 2986, -15254526, 2131957399, 0, 0, 0
+        .long   23060809, -65328, 1193, -5644157, -5744740, 2141718031, 0, 0
+        .long   119764326, -443955, 9237, -29119851, -29640009, -29747974, 2117695575, 0
+        .long   13849491, -38118, 674, -3391716, -3452146, -3464689, 714858, 2144019306
+O3_M3G_E:
+        .long   -1072319232, 1456264974, -408210270, -1073504933, 242581495, -2869297, -1073748359, -6685647
+        .long   11202780, 223017705, -99813251, 11082826, -12063906, 623274, -8044
+O3_M3F:
+        .long   62316461, -28261, 102, 2131957399, 0, 0, 0, 13864713
+        .long   -7687, 29, -3451800, 2144019306, 0, 0, 303442007, -839211
+        .long   15224, -74305417, -74576993, 2072846082, 0, 119917646, -137509, 475
+        .long   -29722156, -29830322, 3722057, 2117695575
+O3_M3F_E:
+        .long   -1073540277, 206442707, 27170907, -1073783706, -42834957, 39247390, 136400152, -161515382
+        .long   45740623, -125447530, 56072137, -6225071
         .align  4
 O3_SQC:
         .short  12289, 10556, 8558, 6787, 5176, 3712, 2390, 1194, 121, -845, -1703, -2469, -3142, -3735, -4248, -4693

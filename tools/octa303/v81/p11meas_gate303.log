@@ -1,0 +1,4 @@
+GATE 303 saw, one note             frames   700  bit-exact YES  P11 skips   6645 (59.3% of samples)  cycles/frame all 7962 -> 6954  last 200: 7961 -> 6349
+GATE 303 saw+D, one note           frames   700  bit-exact YES  P11 skips   5150 (46.0% of samples)  cycles/frame all 8601 -> 7558  last 200: 8601 -> 6389
+GATE 303 sq RES127 CUT20 ACC127    frames   700  bit-exact YES  P11 skips   2685 (24.0% of samples)  cycles/frame all 9525 -> 9139  last 200: 9537 -> 9242
+ALL BIT-EXACT
