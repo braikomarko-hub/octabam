@@ -1,3 +1,3 @@
-GATE 303 saw, one note             frames   300  cycles/frame 7760 -> 7281 (-479)  output: 4 of 4800 samples differ, by at most 2 LSB (16 bits): -85.4 dB of the signal
-GATE 303 saw+D, one note           frames   300  cycles/frame 8659 -> 8180 (-479)  output: 246 of 4800 samples differ, by at most 6 LSB (16 bits): -84.7 dB of the signal
-GATE 303 sq RES127 CUT20 ACC127    frames   300  cycles/frame 9339 -> 8860 (-479)  output: 31 of 4800 samples differ, by at most 11 LSB (16 bits): -80.0 dB of the signal
+GATE 303 saw, one note             frames   300  cycles/frame 7760 -> 7283 (-477)  output: 4 of 4800 samples differ, by at most 2 LSB (16 bits): -85.4 dB of the signal
+GATE 303 saw+D, one note           frames   300  cycles/frame 8659 -> 8182 (-477)  output: 246 of 4800 samples differ, by at most 6 LSB (16 bits): -84.7 dB of the signal
+GATE 303 sq RES127 CUT20 ACC127    frames   300  cycles/frame 9339 -> 8862 (-477)  output: 31 of 4800 samples differ, by at most 11 LSB (16 bits): -80.0 dB of the signal
