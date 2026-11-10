@@ -200,6 +200,28 @@
         .set    S_SQL,404                       | v7.6: the square's edge lowpass state (as v6.9)
         .set    S_Y27,408                       | v7.8: I27 x R27, uV (D27 into pin 1)
         .set    S_FAB,412                       | v7.9: WAVE's R, the factory preset (TM3_FAB on the cutoff)
+| v8.2 P11 (from v8.1 517daa36): the VCA closed -> the chain after it at its fixed point is not recomputed.
+        .set    S_P11,416                       | 0 = unknown, -1 = the sample before tried, 1 = the fixed point holds
+        .set    S_P11OUT,420                    | the output word the fixed point gives (both channels)
+        .set    S_P11A,424                      | S_DC before the try
+        .set    S_P11B,428                      | S_MLO before it
+        .set    S_P11C,432                      | S_TONE before it
+| v8.2 P2 (from v8.1 dda993a9): o3_ctrl / o3_params skip the work whose inputs are the last step's (pure functions
+| of them: bit for bit).  v7.9's GCOMP reads O3_LG by the cutoff, so its cache (v8.1's S_P2G*) does not apply here.
+        .set    S_P2PV,436                      | 1: the three keys below are a step that left PCUR where it was
+        .set    S_P2PT,440                      | PTGT, PCUR and SLIDE of that step
+        .set    S_P2PC,444
+        .set    S_P2PS,448
+        .set    S_P2EK,452                      | the env-mod depth's key: ENV | RES << 8 | ENVX << 16 | 1 << 30
+        .set    S_P2EV,456                      | and its depth
+        .set    S_P2CD,460                      | a CUTB difference whose glide step was 0 (0 at boot: MULQ15 of 0 is 0)
+        .set    S_P2ND,464                      | an ENVS difference whose glide step was 0
+        .set    S_P2T,468                       | scratch: this step's difference
+        .set    S_P2DV,472                      | o3_params: 1 = the three below hold the last call's dEVILish bytes
+        .set    S_P2D1,476                      | page 1 bytes 0-3, page 1 4-5 + page 2 0-1, page 2 2-5
+        .set    S_P2D2,480
+        .set    S_P2D3,484
+        .set    S_P2DA,488                      | and page 1's source address
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -581,6 +603,7 @@ sy_render:
         beq     .Ldone
         lea     16(%a2),%a1
         lea     O3_K,%a5
+        clr.l   S_P11(%a3)              | v8.2 P11: the knobs may have moved since the last frame
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -589,6 +612,7 @@ sy_render:
         moveq   #CS,%d0
         move.l  %d0,S_CS(%a3)
         bsr     o3_ctrl
+        clr.l   S_P11(%a3)              | v8.2 P11: the control step may move the level's step
 .Lnoctl:
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
@@ -819,6 +843,42 @@ sy_render:
         muls.l  S_W2(%a3),%d6
         asr.l   #6,%d6
         add.l   %d1,%d6
+        move.l  S_AMP(%a3),%d3          | v8.2 P11: the VCA's level first (was after the OTA, same value;
+        add.l   S_AMPSTEP(%a3),%d3      | d3 is free from here to the sample's end)
+        bgt     .Lamp                   | open: the whole chain
+        moveq   #0,%d3
+        move.l  %d3,S_AMP(%a3)          | closed this sample: max(0, amp + step) = 0
+        move.l  S_P11(%a3),%d0
+        bgt     .Lp11                   | 1: the chain after the VCA sits at its fixed point: its word again
+        beq     .Lp11t                  | 0: try
+        move.l  S_DC(%a3),%d0           | -1: the sample before was the try (closed, same frame, no control
+        cmp.l   S_P11A(%a3),%d0         | step since): did it leave the chain's three states where they were?
+        bne     .Lp11t
+        move.l  S_MLO(%a3),%d0
+        cmp.l   S_P11B(%a3),%d0
+        bne     .Lp11t
+        move.l  S_TONE(%a3),%d0
+        cmp.l   S_P11C(%a3),%d0
+        bne     .Lp11t
+        moveq   #1,%d0                  | yes: the fixed point, and its word is the one just written
+        move.l  %d0,S_P11(%a3)
+        move.l  -4(%a1),%d0
+        move.l  %d0,S_P11OUT(%a3)
+        bra     .Lp11
+.Lp11t:
+        moveq   #-1,%d0                 | try: this sample runs the chain at level 0; keep its states
+        move.l  %d0,S_P11(%a3)
+        move.l  S_DC(%a3),%d0
+        move.l  %d0,S_P11A(%a3)
+        move.l  S_MLO(%a3),%d0
+        move.l  %d0,S_P11B(%a3)
+        move.l  S_TONE(%a3),%d0
+        move.l  %d0,S_P11C(%a3)
+        bra     .Lamp0
+.Lamp:
+        move.l  %d3,S_AMP(%a3)
+        clr.l   S_P11(%a3)
+.Lamp0:
         FM66    %d6,S_GCOMP(%a3)        | level compensation, VCA (ramped per sample)
         CLAMP   %d6,-OTA_LIM,OTA_LIM    | v7.6: the VCA is an OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V)
         asr.l   #4,%d6
@@ -832,12 +892,7 @@ sy_render:
         asr.l   #8,%d6
         asr.l   #3,%d6
         CLAMP   %d6,-VCA_LIM,VCA_LIM    | v6.9: the VCA multiply never wraps
-        move.l  S_AMP(%a3),%d1
-        add.l   S_AMPSTEP(%a3),%d1
-        bpl     .Lamp
-        moveq   #0,%d1
-.Lamp:
-        move.l  %d1,S_AMP(%a3)
+        move.l  %d3,%d1                 | v8.2 P11: the level, from above
         asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
         asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
         muls.l  %d1,%d6
@@ -915,8 +970,9 @@ sy_render:
         move.l  %d6,S_OVCA(%a3)         | FM reads the VCA after the Muffler
         tst.l   S_DIST(%a3)
         beq     .Lnod
-        moveq   #DIST_GAIN,%d0          | the pedal
-        muls.l  %d0,%d6
+        move.l  %d6,%d0                 | the pedal: x DIST_GAIN = 5, as 4 x + x (v8.2 P4; gen_tables asserts 5)
+        lsl.l   #2,%d6
+        add.l   %d0,%d6
         add.l   #DIST_BIAS,%d6
         SOFTCLIP %d6
         move.l  %d6,%d0
@@ -957,6 +1013,13 @@ sy_render:
         CLAMP   %d6,-32767,32767
         lsl.l   #8,%d6
         lsl.l   #8,%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        subq.l  #1,%d7
+        bne     .Lloop
+        bra     .Ldone
+.Lp11:                                  | v8.2 P11: closed, fixed point: the same word, S_OVCA unchanged
+        move.l  S_P11OUT(%a3),%d6
         move.l  %d6,(%a1)+
         move.l  %d6,(%a1)+
         subq.l  #1,%d7
@@ -2947,6 +3010,59 @@ o3_params:
         add.l   %d1,%a0
         bsr     o3_vrec                 | v7.1: page 1 as the DSP gets it (locks, scenes, LFOs)
 .Lp_have:
+        moveq   #0,%d1                  | v8.2 P2: dEVILish's twelve bytes (page 1 at a0, page 2 at a2) as at the last
+        moveq   #0,%d0                  | call: everything down to ENVX is a pure function of them (only
+        move.b  (%a0),%d0                | o3_params writes those fields); packed into three longs, d1 = 1 if one moved
+        lsl.l   #8,%d0
+        move.b  1(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  2(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  3(%a0),%d0
+        cmp.l   S_P2D1(%a3),%d0
+        beq     .Lp_k1
+        move.l  %d0,S_P2D1(%a3)
+        moveq   #1,%d1
+.Lp_k1:
+        moveq   #0,%d0
+        move.b  4(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  5(%a0),%d0
+        lsl.l   #8,%d0
+        move.b  (%a2),%d0
+        lsl.l   #8,%d0
+        move.b  1(%a2),%d0
+        cmp.l   S_P2D2(%a3),%d0
+        beq     .Lp_k2
+        move.l  %d0,S_P2D2(%a3)
+        moveq   #1,%d1
+.Lp_k2:
+        moveq   #0,%d0
+        move.b  2(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  3(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  4(%a2),%d0
+        lsl.l   #8,%d0
+        move.b  5(%a2),%d0
+        cmp.l   S_P2D3(%a3),%d0
+        beq     .Lp_k3
+        move.l  %d0,S_P2D3(%a3)
+        moveq   #1,%d1
+.Lp_k3:
+        move.l  %a0,%d0                 | and page 1's source: dEVILish's S_DFK or the neutral bytes (with the neutral
+        cmp.l   S_P2DA(%a3),%d0         | ones SETUP's SLID overrides SLIDE below, so the source is part of the key)
+        beq     .Lp_k4
+        move.l  %d0,S_P2DA(%a3)
+        moveq   #1,%d1
+.Lp_k4:
+        tst.l   S_P2DV(%a3)
+        beq     .Lp_new
+        tst.l   %d1
+        beq     .Lp_skip
+.Lp_new:
+        moveq   #1,%d0
+        move.l  %d0,S_P2DV(%a3)
         KB      0,%a0                   | OVDR
         TAB     O3_DF_GIN,S_GIN
         TAB     O3_DF_OCOMP,S_OCOMP
@@ -2998,6 +3114,7 @@ o3_params:
         moveq   #1,%d1
 .Lp_ex:
         move.l  %d1,S_ENVX(%a3)
+.Lp_skip:
         lea     o3_df_neutral,%a1       | v7.0: no dEVILish on the track: SETUP's SLID
         cmp.l   %a1,%a0
         bne     .Lp_ns
@@ -3059,12 +3176,30 @@ o3_note_on:
 
 | ---- o3_ctrl: once per CS samples.  Clobbers d0-d6, a0 (keeps a1, a3, a5, d7).
 o3_ctrl:
-        move.l  S_PTGT(%a3),%d0         | SLID: RC slide on the pitch CV
-        lsl.l   #8,%d0
-        move.l  S_PCUR(%a3),%d1
+        move.l  S_PTGT(%a3),%d0         | v8.2 P2: PCUR's step, the increment and Q8's row are a pure function of
+        move.l  S_PCUR(%a3),%d1         | (PTGT, PCUR, SLIDE): with the keys of a step that left PCUR where it was,
+        move.l  S_SLIDE(%a3),%d2        | nothing here changes
+        tst.l   S_P2PV(%a3)
+        beq     .Lc_pg
+        cmp.l   S_P2PT(%a3),%d0
+        bne     .Lc_pg
+        cmp.l   S_P2PC(%a3),%d1
+        bne     .Lc_pg
+        cmp.l   S_P2PS(%a3),%d2
+        beq     .Lc_pd
+.Lc_pg:
+        move.l  %d0,S_P2PT(%a3)
+        move.l  %d1,S_P2PC(%a3)
+        move.l  %d2,S_P2PS(%a3)
+        lsl.l   #8,%d0                  | SLID: RC slide on the pitch CV
         sub.l   %d1,%d0
-        move.l  S_SLIDE(%a3),%d2
         MULQ15  %d0,%d2,%d3
+        moveq   #0,%d2                  | v8.2 P2: the keys hold only if PCUR stays
+        tst.l   %d0
+        bne     .Lc_pv
+        moveq   #1,%d2
+.Lc_pv:
+        move.l  %d2,S_P2PV(%a3)
         add.l   %d0,%d1
         move.l  %d1,S_PCUR(%a3)
         move.l  %d1,%d0
@@ -3081,6 +3216,7 @@ o3_ctrl:
         lea     O3_SQC,%a0
         add.l   %a0,%d0
         move.l  %d0,S_SQTP(%a3)
+.Lc_pd:
         tst.l   S_ACCD(%a3)             | v7.8, the MEG: the circuit (o3meg.py) by DECAY and level; v7.9:
         beq     .Lc_n                   | accents on O3_ADEC_T at dEVILish's ADEC (0, no dEVILish: ADEC 50)
         move.l  S_ADEC(%a3),%d1
@@ -3143,6 +3279,19 @@ o3_ctrl:
         bsr     o3_acc                  | d6 = the push (Q8 semitones), d4 = the VCA's extra level (Q14)
         move.l  S_RES(%a3),%d5
 .Lc_env:
+        move.l  S_ENVX(%a3),%d0         | v8.2 P2: the env-mod depth, a pure function of (ENV, RES, ENVX): its key
+        swap    %d0                     | ENV | RES << 8 | ENVX << 16 | 1 << 30 (ENV, RES 0..127; ENVX 0 or 1)
+        move.l  %d5,%d1
+        lsl.l   #8,%d1
+        or.l    %d1,%d0
+        or.l    S_ENV(%a3),%d0
+        or.l    #0x40000000,%d0
+        cmp.l   S_P2EK(%a3),%d0
+        bne     .Lc_eg
+        move.l  S_P2EV(%a3),%d1
+        bra     .Lc_ed
+.Lc_eg:
+        move.l  %d0,S_P2EK(%a3)
         tst.l   S_ENVX(%a3)             | env-mod depth
         bne     .Lc_ex
         move.l  S_ENV(%a3),%d0
@@ -3157,7 +3306,7 @@ o3_ctrl:
         asr.l   #8,%d2
         asr.l   #7,%d2
         add.l   %d2,%d1
-        bra     .Lc_ed
+        bra     .Lc_edc
 .Lc_ex:
         lea     O3_TB_SLO,%a0           | ENVX: the depth at ENV 127, x3, scaled by ENV from none
         move.l  508(%a0),%d1
@@ -3175,6 +3324,8 @@ o3_ctrl:
         muls.l  S_ENV(%a3),%d1
         moveq   #127,%d2
         divs.l  %d2,%d1
+.Lc_edc:
+        move.l  %d1,S_P2EV(%a3)
 .Lc_ed:
         move.l  S_CUT(%a3),%d0          | cutoff, Q8 semitones above 20 Hz (CUTX: the wide pot)
         lea     O3_TB_OFF,%a0
@@ -3200,19 +3351,43 @@ o3_ctrl:
         move.l  %d3,%d0
         lsl.l   #8,%d0
         sub.l   S_CUTB(%a3),%d0
+        cmp.l   S_P2CD(%a3),%d0         | v8.2 P2: a difference whose step was 0 gives 0 again (MULQ15 is a pure
+        beq     .Lc_c0                  | function of it): CUTB stays
+        move.l  %d0,S_P2T(%a3)
         move.l  #SMOOTH_K,%d2
         MULQ15  %d0,%d2,%d3
+        tst.l   %d0
+        bne     .Lc_c1
+        move.l  S_P2T(%a3),%d2
+        move.l  %d2,S_P2CD(%a3)
+.Lc_c1:
         add.l   S_CUTB(%a3),%d0
         move.l  %d0,S_CUTB(%a3)
+        bra     .Lc_c2
+.Lc_c0:
+        move.l  S_CUTB(%a3),%d0
+.Lc_c2:
         asr.l   #8,%d0
         move.l  %d0,-(%sp)              | the base
         move.l  %d1,%d0
         lsl.l   #8,%d0
         sub.l   S_ENVS(%a3),%d0
+        cmp.l   S_P2ND(%a3),%d0         | v8.2 P2: the same for ENVS
+        beq     .Lc_n0
+        move.l  %d0,S_P2T(%a3)
         move.l  #SMOOTH_K,%d2
         MULQ15  %d0,%d2,%d3
+        tst.l   %d0
+        bne     .Lc_n1
+        move.l  S_P2T(%a3),%d2
+        move.l  %d2,S_P2ND(%a3)
+.Lc_n1:
         add.l   S_ENVS(%a3),%d0
         move.l  %d0,S_ENVS(%a3)
+        bra     .Lc_n2
+.Lc_n0:
+        move.l  S_ENVS(%a3),%d0
+.Lc_n2:
         asr.l   #8,%d0
         move.l  %d0,%d1                 | the depth
         move.l  (%sp)+,%d3

@@ -39,6 +39,7 @@ SHORTS = [('O3_SQC', T.SQC_FLAT)]                 # v7.6: Q8's square cycles, 12
 
 def consts_block():
     assert T.P6_ON, 'v7.7: octa303.s always has the pin-6 ceiling (CAL p6v)'
+    assert T.DIST_GAIN == 5, 'v8.2 P4: octa303.s multiplies by DIST_GAIN as 4 x + x'
     assert T.AC_FSH == 15 and len(T.AC_L69) == 129 and T.MEG_NROW == 33 and T.ADEC_NROW == 34, 'v7.8: octa303.s hardcodes these (o3_acf, o3_acc, o3_megf)'
     L = ['        .set    %-16s %d' % (k + ',', getattr(T, k)) for k in CONSTS]
     assert len(R.LB) == T.S_MAX // 64 + 1 == len(T.DF_HZ) == len(T.KF) == len(T.LG) == len(T.KD)
