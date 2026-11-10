@@ -77,6 +77,7 @@
         .set    MACH_OFF,       0x8eda2         | Part + 0x8eda2 + track: the machine (1 = FLEX)
         .set    STEPW,          0x800065b2      | v6.5: the sequencer's step word (u16; Euclacid's LIVE, poly.s po_clock)
         .set    TICKB,          0x800065b6      | its tick byte (0..5 a step at 1x)
+        .set    TRANSPORT,      0x800065b8      | v7.4: 1 = the sequencer running (STEM_REC.md; measured under the port)
         .set    PAT_IDX,        0x100b14d0      | the current pattern in the bank (poly.s, hardware-proven)
         .set    PAT_STRIDE,     0x8ed8          | bank blob + pattern * 0x8ed8 (STEP_LOCKS.md 1)
         .set    TRK_STRIDE,     0x91a           | + track * 0x91a: the track record (masks at +0, +8, +16; length +0x50)
@@ -174,10 +175,10 @@
         .set    S_GNEW,284                      | a 303 START since the last gate frame
         .set    S_GEL,288                       | v6.5d: ticks since the START
         .set    S_GEND,292                      | close at 2 * S_GEL >= S_GEND (tps, + 2 tps a tie)
-        .set    S_SQTH,296                      | v6.6: the square's duty, a Q32 phase threshold (O3_SQ_TH by pitch)
+        .set    S_SQTP,296                      | v7.6: Q8's square: this semitone's row of O3_SQC (an address)
         .set    S_DFK,300                       | v7.1: dEVILish page 1 as the DSP gets it (6 bytes, o3_vrec)
         .set    S_UD,308                        | v6.9: the ring's decay by RES, dB/ms Q10 (O3_TB_UD), for FM's per-sample k
-        .set    S_SQL,312                       | v6.9: the square's edge lowpass state
+        .set    S_SQK,312                       | v7.6: Q8's square: the hard edge, times the saw (Q15, O3_SQK)
         .set    S_ACCVG,316                     | v7.0: the accent VCA gain (ACCV)
         .set    S_OSIN,320                      | v7.0: the output stage's input gain (DRIV)
         .set    S_OSLIM,324                     | v7.0: its clamp
@@ -191,6 +192,16 @@
         .set    S_FSEEN,356                     | v7.0: a move seen (FCNT is a whole interval)
         .set    S_GELF,360                      | v7.0: frames since the START
         .set    S_MACH,364                      | v7.0: the track is the TB-303 machine (signed FLEX)
+        .set    S_CLG,368                       | v7.3: the ladder clip's gain g (Q12), 0 = the plain soft clip
+        .set    S_CLI,372                       | v7.3: 1/g (Q12)
+        .set    S_CLL,376                       | v7.3: the clamp before * g (+-sqrt2 / g)
+        .set    S_FSKIP,380                     | v7.4: gate: tick intervals still to skip after a stop
+        .set    S_STOPD,384                     | v7.4: gate: a STOP seen (transport word not 1)
+        .set    S_VP1,388                       | v7.4: the VCA input pair: R121/C21's high-pass state
+        .set    S_VP2,392                       | v7.4: R122/C22's
+        .set    S_W2,396                        | v7.4: the RES path's weight (Q12), OVDR applied
+        .set    S_FBO,400                       | v7.4: this sample's high-passed ladder output
+        .set    S_SQL,404                       | v7.6: the square's edge lowpass state (as v6.9)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -203,6 +214,8 @@
         .set    K_TONE,20
         .set    K_C6,24
         .set    K_C1R,28                        | v6.7: the ladder's first-stage coefficient ratio, Q12 (stock 2.0 = 8192)
+        .set    K_VP1,32                        | v7.4: the VCA pair's 72 Hz high-pass
+        .set    K_VP2,36                        | v7.4: its 156 Hz high-pass (RES path)
 
 | >>> GENERATED CONSTANTS (tools/octa303/gen_tables.py) -- do not edit by hand
         .set    CS,              16
@@ -216,30 +229,37 @@
         .set    GATE_HOLD_INF,   127
         .set    GATE_IDLE,       2048
         .set    GATE_TPS0,       6
+        .set    GATE_FSKIP,      2
+        .set    OTA_IN,          6530
+        .set    OTA_OUT,         20555
+        .set    OTA_LIM,         930183
+        .set    SQL_DLIM,        1800000
         .set    ONE30,           1073741823
         .set    S_MAX,           28480
         .set    DIST_GAIN,       5
         .set    DIST_BIAS,       125829
-        .set    TB_MEG_ATT,      22991
-        .set    TB_ACC_VCA,      8326
-        .set    TB_DIS,          94
-        .set    TB_SWEEP_ST,     19478
-        .set    TB_ACCVCA_GAIN,  25867
+        .set    TB_MEG_ATT,      15125
+        .set    TB_ACC_VCA,      7673
+        .set    TB_DIS,          76
+        .set    TB_SWEEP_ST,     18684
+        .set    TB_ACCVCA_GAIN,  25896
         .set    DF_FM_MUL,       96
         .set    DF_GIN_Q15,      25
         .set    DF_SLOW_G,       2
         .set    DF_FAST_G,       8
-        .set    DF_DIS_SLOW,     23
+        .set    DF_DIS_SLOW,     19
         .set    DF_ENVX_MUL,     3
         .set    DF_MUFF_LP,      693
         .set    DF_MUFF_T,       314572
         .set    DF_HIRES,        2
-        .set    OSAT_IN,         535
-        .set    OSAT_OUT,        62733
-        .set    OSAT_LIM,        16055948
-        .set    VCA_LIM,         3878080
+        .set    OSAT_IN,         529
+        .set    OSAT_OUT,        63400
+        .set    OSAT_LIM,        16238056
+        .set    VCA_LIM,         8562688
         .set    SMOOTH_K,        9971
         .set    FINE_Q8,         2
+        .set    CL_I0,           383
+        .set    DF_MUFF_DLIM,    49581136
         .set    NHZ,             446
 | <<< GENERATED CONSTANTS
 
@@ -333,6 +353,29 @@
         muls.l  K_C6(%a5),%d1
         asr.l   #8,%d1
         sub.l   %d1,\reg
+        .endm
+| ---- v7.3: the ladder clip's operating point at the ladder index in d0 (clobbered); d1, a0 scratch.
+|      ACID (SWP 2) only.
+        .macro  CLSET
+        moveq   #2,%d1                  | ACID only (SWP 2): WHST / SELF keep the plain clip
+        cmp.l   S_SWP(%a3),%d1
+        bne     .Lcs0\@
+        sub.l   #CL_I0,%d0
+        bgt     .Lcs1\@
+.Lcs0\@:
+        clr.l   S_CLG(%a3)              | at or below CL_I0: the plain soft clip
+        bra     .Lcs9\@
+.Lcs1\@:
+        lea     O3_CL_G,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLG(%a3)
+        lea     O3_CL_INV,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLI(%a3)
+        lea     O3_CL_LIM,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLL(%a3)
+.Lcs9\@:
         .endm
         .macro  KB off, areg            | d0 = the knob byte at off(areg), clamped 0..127
         moveq   #0,%d0
@@ -541,6 +584,7 @@ sy_render:
         moveq   #0,%d1
 .Lfm_k:
         move.l  %d1,S_K(%a3)
+        CLSET                 | v7.3
 .Lnofm:
         move.l  S_INC(%a3),%d5          | VCO
         move.l  S_PHASE(%a3),%d4
@@ -565,23 +609,48 @@ sy_render:
         sub.l   %d0,%d6
         bra     .Losc
 .Lsq:
-        move.l  #0x100000,%d6           | square, BLEPs on both edges; v6.6: high while
-        cmp.l   S_SQTH(%a3),%d4         | phase < S_SQTH (unsigned), the duty by pitch
-        bcs     .Lsq1
-        neg.l   %d6
-.Lsq1:
+        move.l  %d4,%d6                 | v7.6: Q8's square (o3q8.py) = its cycle's smooth part (a table, 128
+        lsr.l   #8,%d6                  | points, linear) + SQK * the saw (with its polyBLEP): the one hard edge
+        lsr.l   #3,%d6                  | is the saw's reset
+        sub.l   #0x100000,%d6
+        cmp.l   %d5,%d4
+        bcs     .Lqb
         move.l  %d4,%d0
-        bsr     o3_blep
-        lsl.l   #5,%d0
-        add.l   %d0,%d6
+        neg.l   %d0
+        cmp.l   %d5,%d0
+        bcc     .Lqn
+.Lqb:
         move.l  %d4,%d0
-        sub.l   S_SQTH(%a3),%d0         | the falling edge at phase = S_SQTH
         bsr     o3_blep
         lsl.l   #5,%d0
         sub.l   %d0,%d6
-        FM78    %d6,K_SQ(%a5)
-        move.l  %d6,%d0                 | v6.9: the 303's square has soft edges, a one-pole lowpass
-        sub.l   S_SQL(%a3),%d0
+.Lqn:
+        FM78    %d6,S_SQK(%a3)
+        move.l  S_SQTP(%a3),%a0
+        move.l  %d4,%d0
+        moveq   #25,%d1
+        lsr.l   %d1,%d0                 | i = phase >> 25
+        move.w  (%a0,%d0.l*2),%d2
+        ext.l   %d2                     | c0
+        addq.l  #1,%d0
+        moveq   #127,%d1
+        and.l   %d1,%d0
+        move.w  (%a0,%d0.l*2),%d3
+        ext.l   %d3
+        sub.l   %d2,%d3                 | c1 - c0
+        move.l  %d4,%d1
+        lsr.l   #8,%d1
+        lsr.l   #2,%d1
+        and.l   #0x7FFF,%d1             | fr = (phase >> 10) & 0x7FFF
+        muls.l  %d1,%d3
+        asr.l   #8,%d3
+        asr.l   #7,%d3
+        add.l   %d3,%d2
+        lsl.l   #5,%d2
+        add.l   %d2,%d6
+        move.l  %d6,%d0                 | the 303's square has softer edges than Q8's alone: a one-pole
+        sub.l   S_SQL(%a3),%d0          | (fitted, as v6.9); the step clamped so the multiply fits 32 bits
+        CLAMP   %d0,-SQL_DLIM,SQL_DLIM
         FM411   %d0,K_SQLP(%a5)
         add.l   S_SQL(%a3),%d0
         move.l  %d0,S_SQL(%a3)
@@ -632,10 +701,33 @@ sy_render:
         move.l  %d4,%d1
         sub.l   %d0,%d1
         CLAMP   %d1,-0x800000,0x800000
+        move.l  %d1,S_FBO(%a3)          | v7.4: the high-passed ladder output, also the voice's output
         asr.l   #8,%d1
         muls.l  S_K(%a3),%d1
         sub.l   %d1,%d6
+        tst.l   S_CLG(%a3)              | v7.3 (#1011): at the top of the table softclip(u * g) / g,
+        beq     .Llcp                   | so its 3rd harmonic cannot lock the loop at fs/4
+        move.l  S_CLL(%a3),%d2
+        cmp.l   %d2,%d6
+        ble     .Llc1
+        move.l  %d2,%d6
+.Llc1:
+        neg.l   %d2
+        cmp.l   %d2,%d6
+        bge     .Llc2
+        move.l  %d2,%d6
+.Llc2:
+        asr.l   #4,%d6
+        muls.l  S_CLG(%a3),%d6
+        asr.l   #8,%d6
         SOFTCLIP %d6
+        asr.l   #4,%d6
+        muls.l  S_CLI(%a3),%d6
+        asr.l   #8,%d6
+        bra     .Llc9
+.Llcp:
+        SOFTCLIP %d6
+.Llc9:
         move.l  S_Y1(%a3),%d1           | diode ladder
         move.l  S_Y2(%a3),%d2
         move.l  S_Y3(%a3),%d3
@@ -666,8 +758,36 @@ sy_render:
         move.l  %d2,S_Y2(%a3)
         move.l  %d3,S_Y3(%a3)
         move.l  %d4,S_Y4(%a3)
-        move.l  %d4,%d6                 | level compensation, VCA (ramped per sample)
-        FM66    %d6,S_GCOMP(%a3)
+        move.l  S_FBO(%a3),%d6          | v7.4: the output is the loop's high-pass (one, shared), then the
+        move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper
+        sub.l   S_VP1(%a3),%d0
+        FM411   %d0,K_VP1(%a5)
+        add.l   S_VP1(%a3),%d0
+        move.l  %d0,S_VP1(%a3)
+        move.l  %d6,%d1
+        sub.l   %d0,%d1                 | d1 = fb - vp1
+        move.l  %d6,%d0
+        sub.l   S_VP2(%a3),%d0
+        FM411   %d0,K_VP2(%a5)
+        add.l   S_VP2(%a3),%d0
+        move.l  %d0,S_VP2(%a3)
+        sub.l   %d0,%d6                 | fb - vp2
+        asr.l   #6,%d6
+        muls.l  S_W2(%a3),%d6
+        asr.l   #6,%d6
+        add.l   %d1,%d6
+        FM66    %d6,S_GCOMP(%a3)        | level compensation, VCA (ramped per sample)
+        CLAMP   %d6,-OTA_LIM,OTA_LIM    | v7.6: the VCA is an OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V)
+        asr.l   #4,%d6
+        move.l  #OTA_IN,%d1
+        muls.l  %d1,%d6
+        asr.l   #8,%d6
+        SOFTCLIP %d6
+        asr.l   #4,%d6
+        move.l  #OTA_OUT,%d1
+        muls.l  %d1,%d6
+        asr.l   #8,%d6
+        asr.l   #3,%d6
         CLAMP   %d6,-VCA_LIM,VCA_LIM    | v6.9: the VCA multiply never wraps
         move.l  S_AMP(%a3),%d1
         add.l   S_AMPSTEP(%a3),%d1
@@ -675,11 +795,15 @@ sy_render:
         moveq   #0,%d1
 .Lamp:
         move.l  %d1,S_AMP(%a3)
-        FM68    %d6,%d1
+        asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
+        asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
+        muls.l  %d1,%d6
+        asr.l   #6,%d6
         move.l  S_MUFF(%a3),%d0         | MUFF: the bass passes, the rest is clipped
         beq     .Lmu9
         move.l  %d6,%d1
         sub.l   S_MLO(%a3),%d1
+        CLAMP   %d1,-DF_MUFF_DLIM,DF_MUFF_DLIM  | v7.3: the product fits 32 bits at the wider VCA
         move.l  #DF_MUFF_LP,%d2
         FM411   %d1,%d2
         add.l   S_MLO(%a3),%d1
@@ -1095,13 +1219,26 @@ o3_gate:
         mulu.l  %d6,%d0
         sub.l   %d0,%d3
         mvz.b   TICKB,%d4               | k
-        moveq   #0,%d5                  | d5 = the sequencer moved (a tick) since the last frame
+        moveq   #0,%d5                  | d5 bit 0 = the sequencer moved (a tick) since the last frame,
+        move.l  S_IDLE(%a3),%d0         | bit 1 = it stood still GATE_IDLE frames (a restart),
+        cmp.l   #GATE_IDLE,%d0          | bit 2 = v7.4: the transport word reads running (1)
+        blt     .Lg_rs
+        moveq   #2,%d5
+.Lg_rs:
+        moveq   #1,%d0
+        cmp.l   TRANSPORT,%d0
+        bne     .Lg_stp
+        addq.l  #4,%d5
+        bra     .Lg_rn
+.Lg_stp:
+        move.l  %d0,S_STOPD(%a3)        | v7.4: a STOP seen: the next move while running is a PLAY
+.Lg_rn:
         cmp.l   S_LSTEP(%a3),%d3
         bne     .Lg_mv
         cmp.l   S_LTICK(%a3),%d4
         beq     .Lg_nmv
 .Lg_mv:
-        moveq   #1,%d5
+        addq.l  #1,%d5
 .Lg_nmv:
         cmp.l   S_LSTEP(%a3),%d3
         beq     .Lg_same
@@ -1136,7 +1273,7 @@ o3_gate:
         moveq   #GATE_TPS0,%d0
         move.l  %d0,S_TPS(%a3)
 .Lg_tps:
-        tst.l   %d5                     | v6.5d: the ticks since the START
+        btst    #0,%d5                  | v6.5d: the ticks since the START
         beq     .Lg_ne
         move.l  S_GEL(%a3),%d0
         cmp.l   #4096,%d0
@@ -1149,8 +1286,29 @@ o3_gate:
         bge     .Lg_f1
         addq.l  #1,%d0
 .Lg_f1:
-        tst.l   %d5
+        btst    #0,%d5
         beq     .Lg_f3
+        btst    #2,%d5                  | v7.4: a move while stopped (STOP resets the step word) is no tick
+        beq     .Lg_f2
+        tst.l   S_STOPD(%a3)            | PLAY after a stop (or GATE_IDLE still): the position reset and
+        bne     .Lg_rst                 | the first tick come a frame apart (measured under the port):
+        tst.l   S_FSEEN(%a3)            | v7.5: the first move a fresh state sees (the first PLAY after
+        beq     .Lg_rst                 | boot) is a PLAY too
+        btst    #1,%d5                  | skip GATE_FSKIP intervals, and restart the last note's clock
+        beq     .Lg_sk                  | (no 1-frame snap before the START)
+.Lg_rst:
+        clr.l   S_STOPD(%a3)
+        moveq   #GATE_FSKIP,%d1
+        move.l  %d1,S_FSKIP(%a3)
+        clr.l   S_GEL(%a3)
+        clr.l   S_GELF(%a3)
+.Lg_sk:
+        move.l  S_FSKIP(%a3),%d1
+        beq     .Lg_sk0
+        subq.l  #1,%d1
+        move.l  %d1,S_FSKIP(%a3)
+        bra     .Lg_f2
+.Lg_sk0:
         tst.l   S_FSEEN(%a3)
         beq     .Lg_f2
         move.l  %d0,S_FPT(%a3)
@@ -1180,18 +1338,24 @@ o3_gate:
         moveq   #6,%d1
         divs.l  %d1,%d0
         move.l  %d0,S_GEND(%a3)
+        move.l  %d3,%d1                 | v7.4: the step word holds the NEXT step (measured under the
+        subq.l  #1,%d1                  | port): the note's step cur = (s - 1) mod L
+        bpl     .Lg_cur
+        move.l  %d6,%d1
+        subq.l  #1,%d1
+.Lg_cur:
         move.l  %d4,%d0                 | the note's step: past half a step, the next one's
         add.l   %d0,%d0
         cmp.l   S_TPS(%a3),%d0
         blt     .Lg_gs0
-        move.l  %d3,%d0
+        move.l  %d1,%d0
         addq.l  #1,%d0
         cmp.l   %d6,%d0
         blt     .Lg_gs
         moveq   #0,%d0
         bra     .Lg_gs
 .Lg_gs0:
-        move.l  %d3,%d0
+        move.l  %d1,%d0
 .Lg_gs:
         move.l  %d0,S_GSTEP(%a3)
 .Lg_nn:
@@ -2743,12 +2907,16 @@ o3_ctrl:
         asr.l   #8,%d0
         bsr     o3_inc
         move.l  %d0,S_INC(%a3)
-        move.l  S_PCUR(%a3),%d0         | v6.6: the square's duty by semitone (ref303: SQ_TH[pcur >> 16])
+        move.l  S_PCUR(%a3),%d0         | v7.6: Q8's square by semitone (ref303: SQC / SQK[pcur >> 16])
         asr.l   #8,%d0
         asr.l   #8,%d0
-        lea     O3_SQ_TH,%a0
-        move.l  (%a0,%d0.l*4),%d0
-        move.l  %d0,S_SQTH(%a3)
+        lea     O3_SQK,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_SQK(%a3)
+        lsl.l   #8,%d0                  | 128 shorts a row
+        lea     O3_SQC,%a0
+        add.l   %a0,%d0
+        move.l  %d0,S_SQTP(%a3)
         tst.l   S_ACCD(%a3)             | MEG: ADEC on accented notes, DEC otherwise
         beq     .Lc_n
         move.l  S_ADEC(%a3),%d1
@@ -2803,8 +2971,8 @@ o3_ctrl:
         bsr     o3_mul30
         move.l  %d0,%d4
 .Lc_v:
-        move.l  S_RES(%a3),%d5
-        move.l  S_CAP(%a3),%d1          | the accent-sweep capacitor, by SPD
+        move.l  S_RES(%a3),%d5          | v7.5: the accent stage is v7.3's again (the direct path plus the
+        move.l  S_CAP(%a3),%d1          | capacitor, fitted on Din Sync + tinyloops), by SPD
         move.l  S_SPD(%a3),%d0
         cmp.l   #2,%d0
         beq     .Lc_nm
@@ -2847,6 +3015,10 @@ o3_ctrl:
         move.l  #DF_DIS_SLOW,%d2
         MULQ15  %d0,%d2,%d3
         sub.l   %d0,%d1
+        cmp.l   #0x3FFFFFFF,%d1         | v7.5: cap * DF_SLOW_G must fit 32 bits (review)
+        ble     .Lc_s3
+        move.l  #0x3FFFFFFF,%d1
+.Lc_s3:
         move.l  %d1,S_CAP(%a3)
         move.l  %d1,%d0
         moveq   #DF_SLOW_G,%d2
@@ -2879,6 +3051,13 @@ o3_ctrl:
         move.l  (%a0,%d5.l*4),%d2
         MULQ15  %d0,%d2,%d3
         add.l   %d0,%d6
+        asr.l   #8,%d6                  | v7.4: in Q8 semitones here
+        asr.l   #7,%d6
+        move.l  #TB_SWEEP_ST,%d2
+        muls.l  %d2,%d6
+        asr.l   #8,%d6
+        asr.l   #7,%d6
+.Lc_env:
         tst.l   S_ENVX(%a3)             | env-mod depth
         bne     .Lc_ex
         move.l  S_ENV(%a3),%d0
@@ -2961,14 +3140,7 @@ o3_ctrl:
         asr.l   #8,%d0
         asr.l   #7,%d0
         add.l   %d0,%d3
-        move.l  %d6,%d0
-        asr.l   #8,%d0
-        asr.l   #7,%d0
-        move.l  #TB_SWEEP_ST,%d2
-        muls.l  %d2,%d0
-        asr.l   #8,%d0
-        asr.l   #7,%d0
-        add.l   %d0,%d3
+        add.l   %d6,%d3                 | the accent sweep (Q8 semitones)
         CLAMP   %d3,0,S_MAX-1
         move.l  S_TRKHZ(%a3),%d0        | TRCK, linear in Hz
         beq     .Lc_nt
@@ -3015,7 +3187,9 @@ o3_ctrl:
         moveq   #0,%d0
 .Lc_kp:
         move.l  %d0,S_K(%a3)
-        lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's
+        move.l  %d3,%d0                 | v7.3: the ladder clip's operating point
+        CLSET
+        lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's (v7.5: one gain, the part 0)
         move.l  (%a0),%d1               | factor (overdrive swamps the resonance)
         move.l  (%a0,%d5.l*4),%d0
         sub.l   %d1,%d0
@@ -3032,7 +3206,13 @@ o3_ctrl:
         asr.l   #8,%d0
         asr.l   #4,%d0
         move.l  %d0,S_GCOMP(%a3)
-        move.l  S_ACCVCA(%a3),%d1       | accent VCA path
+        lea     O3_VP_W2,%a0            | v7.4: the VCA pair's RES path, OVDR swamping it
+        move.l  (%a0,%d5.l*4),%d0
+        muls.l  S_OCOMP(%a3),%d0
+        asr.l   #8,%d0
+        asr.l   #4,%d0
+        move.l  %d0,S_W2(%a3)
+        move.l  S_ACCVCA(%a3),%d1       | accent VCA path (v7.5: v7.3's again)
         move.l  %d4,%d0
         sub.l   %d1,%d0
         move.l  #TB_ACC_VCA,%d2
@@ -3175,7 +3355,8 @@ o3_clone:                               | a0 = stock record, a1 = list, d1 = 0 P
 | >>> GENERATED TABLES (tools/octa303/gen_tables.py) -- do not edit by hand
         .align  4
 O3_K:
-        .long   687, 11746, 211, 41, 18889, 18830, 10923, 9618
+        .long   0, 18822, 533, 41, 17398, 18830, 10923, 9618
+        .long   333, 719
 O3_INC_TAB:
         .long   315993, 316279, 316564, 316850, 317136, 317423, 317709, 317996
         .long   318283, 318571, 318858, 319146, 319434, 319723, 320012, 320301
@@ -3274,209 +3455,192 @@ O3_INC_TAB:
         .long   622926, 623489, 624052, 624615, 625179, 625744, 626309, 626874
         .long   627440, 628007, 628574, 629141, 629710, 630278, 630847, 631417
 O3_TB_MEG:
-        .long   1063157368, 1063330513, 1063506593, 1063685258, 1063866166, 1064048983, 1064233384, 1064419052
-        .long   1064605681, 1064792974, 1064980646, 1065168423, 1065356041, 1065543248, 1065729805, 1065915484
-        .long   1066100068, 1066283353, 1066465148, 1066645273, 1066823558, 1066999848, 1067173998, 1067345873
-        .long   1067515352, 1067682322, 1067846681, 1068008339, 1068167215, 1068323236, 1068476340, 1068626474
-        .long   1068773593, 1068920178, 1069068236, 1069217051, 1069365956, 1069514335, 1069661624, 1069807313
-        .long   1069950942, 1070092101, 1070230432, 1070365621, 1070497402, 1070625551, 1070749883, 1070870252
-        .long   1070986547, 1071098685, 1071206617, 1071310317, 1071409783, 1071505032, 1071596103, 1071683047
-        .long   1071765930, 1071844829, 1071919831, 1071991028, 1072058522, 1072122415, 1072182815, 1072239828
-        .long   1072293565, 1072345432, 1072396616, 1072446914, 1072496149, 1072544166, 1072590836, 1072636053
-        .long   1072679727, 1072721790, 1072762191, 1072800892, 1072837870, 1072873114, 1072906623, 1072938405
-        .long   1072968476, 1072996856, 1073023573, 1073048655, 1073072135, 1073094046, 1073114425, 1073133304
-        .long   1073150717, 1073166696, 1073181270, 1073194465, 1073206303, 1073216803, 1073225977, 1073233833
-        .long   1073240954, 1073247917, 1073254715, 1073261341, 1073267791, 1073274057, 1073280137, 1073286024
-        .long   1073291715, 1073297205, 1073302490, 1073307567, 1073312433, 1073317084, 1073321516, 1073325727
-        .long   1073329713, 1073333471, 1073336999, 1073340292, 1073343348, 1073346162, 1073348732, 1073351052
-        .long   1073353120, 1073354931, 1073356479, 1073357759, 1073358767, 1073359495, 1073359938, 1073360087
+        .long   1068028173, 1068029539, 1068033594, 1068040277, 1068049522, 1068061257, 1068075412, 1068091911
+        .long   1068110676, 1068131630, 1068154689, 1068179773, 1068206798, 1068235678, 1068266329, 1068298664
+        .long   1068332597, 1068368042, 1068404913, 1068443124, 1068482589, 1068523225, 1068564948, 1068607674
+        .long   1068651322, 1068695812, 1068741066, 1068787005, 1068833554, 1068880639, 1068928188, 1068976130
+        .long   1069024397, 1069080003, 1069149164, 1069230560, 1069322820, 1069424551, 1069534358, 1069650870
+        .long   1069772759, 1069898752, 1070027649, 1070158329, 1070289760, 1070421004, 1070551217, 1070679651
+        .long   1070805649, 1070928650, 1071048174, 1071163827, 1071275287, 1071382302, 1071484684, 1071582298
+        .long   1071675060, 1071762928, 1071845896, 1071923987, 1071997251, 1072065755, 1072129582, 1072188824
+        .long   1072243579, 1072295947, 1072347798, 1072398913, 1072449099, 1072498185, 1072546027, 1072592503
+        .long   1072637510, 1072680967, 1072722809, 1072762988, 1072801473, 1072838241, 1072873284, 1072906603
+        .long   1072938208, 1072968116, 1072996347, 1073022929, 1073047892, 1073071269, 1073093093, 1073113400
+        .long   1073132223, 1073149595, 1073165548, 1073180112, 1073193312, 1073205171, 1073215707, 1073224934
+        .long   1073233429, 1073241753, 1073249896, 1073257848, 1073265598, 1073273139, 1073280462, 1073287559
+        .long   1073294425, 1073301053, 1073307436, 1073313571, 1073319452, 1073325073, 1073330432, 1073335524
+        .long   1073340345, 1073344891, 1073349157, 1073353141, 1073356838, 1073360244, 1073363354, 1073366164
+        .long   1073368669, 1073370863, 1073372741, 1073374295, 1073375518, 1073376404, 1073376942, 1073377124
 O3_TB_ACH:
-        .long   199, 199, 199, 199, 199, 199, 199, 199
-        .long   199, 199, 199, 199, 199, 199, 199, 199
-        .long   199, 199, 199, 199, 199, 199, 199, 199
-        .long   199, 199, 199, 199, 199, 199, 199, 199
-        .long   199, 199, 199, 198, 198, 198, 198, 198
-        .long   198, 198, 197, 197, 197, 196, 196, 196
-        .long   196, 195, 195, 195, 194, 194, 194, 193
-        .long   193, 193, 193, 192, 192, 192, 192, 191
-        .long   191, 191, 191, 191, 190, 190, 190, 190
-        .long   189, 189, 189, 189, 189, 188, 188, 188
-        .long   188, 188, 188, 187, 187, 187, 187, 187
-        .long   187, 187, 186, 186, 186, 186, 186, 186
-        .long   186, 186, 186, 187, 187, 187, 187, 187
-        .long   187, 188, 188, 188, 189, 189, 189, 190
-        .long   190, 191, 191, 192, 192, 193, 193, 194
-        .long   194, 195, 195, 196, 197, 197, 198, 199
+        .long   160, 160, 160, 159, 159, 159, 159, 158
+        .long   158, 158, 158, 157, 157, 157, 157, 156
+        .long   156, 156, 156, 155, 155, 155, 155, 154
+        .long   154, 154, 154, 153, 153, 153, 153, 152
+        .long   152, 152, 152, 151, 151, 151, 150, 150
+        .long   149, 149, 149, 148, 148, 147, 147, 147
+        .long   146, 146, 145, 145, 144, 144, 143, 143
+        .long   142, 142, 142, 141, 141, 140, 140, 140
+        .long   139, 139, 139, 138, 138, 137, 137, 137
+        .long   136, 136, 136, 135, 135, 135, 134, 134
+        .long   134, 133, 133, 133, 132, 132, 132, 132
+        .long   131, 131, 131, 131, 130, 130, 130, 130
+        .long   129, 129, 129, 129, 129, 129, 129, 129
+        .long   129, 129, 129, 129, 129, 129, 129, 129
+        .long   129, 129, 129, 130, 130, 130, 130, 130
+        .long   130, 131, 131, 131, 131, 132, 132, 132
 O3_TB_SWDIRECT:
-        .long   10253, 10172, 10092, 10011, 9930, 9850, 9769, 9688
-        .long   9607, 9527, 9446, 9365, 9284, 9204, 9123, 9042
-        .long   8961, 8881, 8800, 8719, 8639, 8558, 8477, 8396
-        .long   8316, 8235, 8154, 8073, 7993, 7912, 7831, 7750
-        .long   7670, 7589, 7508, 7428, 7347, 7266, 7185, 7105
-        .long   7024, 6943, 6862, 6782, 6701, 6620, 6539, 6459
-        .long   6378, 6297, 6217, 6136, 6055, 5974, 5894, 5813
-        .long   5732, 5651, 5571, 5490, 5409, 5328, 5248, 5167
-        .long   5086, 5006, 4925, 4844, 4763, 4683, 4602, 4521
-        .long   4440, 4360, 4279, 4198, 4117, 4037, 3956, 3875
-        .long   3794, 3714, 3633, 3552, 3472, 3391, 3310, 3229
-        .long   3149, 3068, 2987, 2906, 2826, 2745, 2664, 2583
-        .long   2503, 2422, 2341, 2261, 2180, 2099, 2018, 1938
-        .long   1857, 1776, 1695, 1615, 1534, 1453, 1372, 1292
-        .long   1211, 1130, 1050, 969, 888, 807, 727, 646
-        .long   565, 484, 404, 323, 242, 161, 81, 0
+        .long   5823, 5777, 5731, 5686, 5640, 5594, 5548, 5502
+        .long   5456, 5410, 5365, 5319, 5273, 5227, 5181, 5135
+        .long   5090, 5044, 4998, 4952, 4906, 4860, 4814, 4769
+        .long   4723, 4677, 4631, 4585, 4539, 4493, 4448, 4402
+        .long   4356, 4310, 4264, 4218, 4172, 4127, 4081, 4035
+        .long   3989, 3943, 3897, 3852, 3806, 3760, 3714, 3668
+        .long   3622, 3576, 3531, 3485, 3439, 3393, 3347, 3301
+        .long   3255, 3210, 3164, 3118, 3072, 3026, 2980, 2934
+        .long   2889, 2843, 2797, 2751, 2705, 2659, 2614, 2568
+        .long   2522, 2476, 2430, 2384, 2338, 2293, 2247, 2201
+        .long   2155, 2109, 2063, 2017, 1972, 1926, 1880, 1834
+        .long   1788, 1742, 1697, 1651, 1605, 1559, 1513, 1467
+        .long   1421, 1376, 1330, 1284, 1238, 1192, 1146, 1100
+        .long   1055, 1009, 963, 917, 871, 825, 779, 734
+        .long   688, 642, 596, 550, 504, 459, 413, 367
+        .long   321, 275, 229, 183, 138, 92, 46, 0
 O3_TB_SWCAP:
-        .long   0, 887, 1756, 2606, 3438, 4250, 5041, 5812
-        .long   6560, 7287, 7990, 8669, 9324, 9953, 10557, 11134
-        .long   11683, 12205, 12698, 13162, 13596, 13998, 14370, 14709
-        .long   15016, 15289, 15528, 15732, 15901, 16033, 16128, 16186
-        .long   16205, 16180, 16108, 15991, 15832, 15636, 15404, 15141
-        .long   14849, 14532, 14193, 13834, 13460, 13073, 12676, 12273
-        .long   11867, 11460, 11057, 10661, 10274, 9899, 9541, 9201
-        .long   8884, 8592, 8329, 8097, 7901, 7743, 7626, 7553
-        .long   7528, 7553, 7626, 7743, 7902, 8100, 8334, 8601
-        .long   8898, 9221, 9569, 9938, 10325, 10728, 11142, 11566
-        .long   11996, 12429, 12863, 13294, 13720, 14137, 14543, 14934
-        .long   15308, 15662, 15992, 16296, 16571, 16814, 17021, 17191
-        .long   17340, 17488, 17636, 17783, 17928, 18072, 18213, 18352
-        .long   18489, 18623, 18755, 18882, 19006, 19127, 19243, 19355
-        .long   19462, 19564, 19661, 19752, 19838, 19918, 19991, 20058
-        .long   20118, 20171, 20216, 20254, 20284, 20306, 20319, 20324
+        .long   0, 660, 1307, 1941, 2561, 3168, 3760, 4336
+        .long   4897, 5442, 5969, 6480, 6972, 7445, 7900, 8335
+        .long   8749, 9143, 9515, 9866, 10194, 10499, 10780, 11038
+        .long   11270, 11477, 11659, 11814, 11942, 12043, 12115, 12159
+        .long   12174, 12157, 12106, 12024, 11913, 11775, 11613, 11429
+        .long   11225, 11003, 10765, 10514, 10252, 9981, 9703, 9421
+        .long   9137, 8852, 8570, 8292, 8021, 7759, 7508, 7271
+        .long   7049, 6844, 6660, 6498, 6360, 6250, 6168, 6117
+        .long   6099, 6131, 6224, 6373, 6576, 6826, 7122, 7457
+        .long   7828, 8232, 8664, 9119, 9594, 10084, 10586, 11095
+        .long   11608, 12119, 12625, 13122, 13606, 14072, 14516, 14935
+        .long   15324, 15679, 15996, 16271, 16499, 16677, 16800, 16864
+        .long   16898, 16930, 16962, 16992, 17022, 17050, 17078, 17104
+        .long   17130, 17155, 17178, 17201, 17223, 17243, 17263, 17281
+        .long   17299, 17315, 17331, 17345, 17358, 17370, 17381, 17391
+        .long   17400, 17407, 17414, 17419, 17423, 17426, 17428, 17429
 O3_TB_CUT:
-        .long   9999, 10000, 10002, 10007, 10014, 10022, 10032, 10043
-        .long   10056, 10071, 10087, 10104, 10123, 10144, 10165, 10188
-        .long   10211, 10236, 10262, 10289, 10317, 10346, 10375, 10406
-        .long   10437, 10468, 10501, 10534, 10567, 10601, 10636, 10670
-        .long   10705, 10743, 10787, 10836, 10889, 10948, 11011, 11078
-        .long   11150, 11225, 11304, 11386, 11471, 11559, 11650, 11743
-        .long   11839, 11936, 12035, 12136, 12238, 12341, 12444, 12549
-        .long   12653, 12758, 12862, 12966, 13069, 13172, 13273, 13373
-        .long   13472, 13571, 13675, 13781, 13890, 14002, 14117, 14233
-        .long   14352, 14472, 14593, 14716, 14839, 14962, 15086, 15210
-        .long   15333, 15456, 15577, 15698, 15817, 15934, 16049, 16161
-        .long   16271, 16378, 16482, 16583, 16679, 16772, 16860, 16943
-        .long   17024, 17104, 17184, 17262, 17340, 17417, 17493, 17568
-        .long   17642, 17715, 17787, 17857, 17927, 17995, 18063, 18129
-        .long   18193, 18256, 18318, 18379, 18437, 18495, 18551, 18605
-        .long   18657, 18708, 18757, 18805, 18850, 18894, 18935, 18975
+        .long   9757, 9757, 9758, 9760, 9762, 9765, 9769, 9773
+        .long   9778, 9783, 9789, 9796, 9803, 9811, 9819, 9828
+        .long   9837, 9847, 9857, 9868, 9879, 9891, 9903, 9916
+        .long   9929, 9943, 9957, 9972, 9986, 10002, 10017, 10033
+        .long   10050, 10070, 10098, 10132, 10174, 10221, 10275, 10335
+        .long   10400, 10470, 10545, 10625, 10709, 10797, 10889, 10984
+        .long   11083, 11184, 11288, 11393, 11501, 11610, 11721, 11833
+        .long   11945, 12058, 12170, 12283, 12395, 12506, 12616, 12725
+        .long   12832, 12942, 13058, 13181, 13309, 13442, 13580, 13723
+        .long   13868, 14017, 14169, 14322, 14478, 14634, 14791, 14947
+        .long   15104, 15259, 15413, 15564, 15713, 15859, 16002, 16140
+        .long   16274, 16403, 16526, 16642, 16752, 16855, 16951, 17038
+        .long   17120, 17202, 17283, 17364, 17443, 17522, 17599, 17676
+        .long   17751, 17825, 17897, 17968, 18038, 18106, 18172, 18236
+        .long   18298, 18358, 18416, 18472, 18525, 18577, 18625, 18671
+        .long   18715, 18755, 18793, 18828, 18860, 18889, 18914, 18936
 O3_TB_OFF:
-        .long   9987, 9988, 9990, 9991, 9992, 9993, 9994, 9995
-        .long   9997, 9998, 9999, 10000, 10001, 10003, 10004, 10005
-        .long   10006, 10007, 10009, 10010, 10011, 10012, 10013, 10015
-        .long   10016, 10017, 10018, 10019, 10020, 10022, 10023, 10024
-        .long   10025, 10026, 10028, 10029, 10030, 10031, 10032, 10034
-        .long   10035, 10036, 10037, 10038, 10040, 10041, 10042, 10043
-        .long   10044, 10045, 10047, 10048, 10049, 10050, 10051, 10053
-        .long   10054, 10055, 10056, 10057, 10059, 10060, 10061, 10062
-        .long   10063, 10065, 10066, 10067, 10068, 10069, 10070, 10072
-        .long   10073, 10074, 10075, 10076, 10078, 10079, 10080, 10081
-        .long   10082, 10084, 10085, 10086, 10087, 10088, 10090, 10091
-        .long   10092, 10093, 10094, 10095, 10097, 10098, 10099, 10100
-        .long   10101, 10103, 10104, 10105, 10106, 10107, 10109, 10110
-        .long   10111, 10112, 10113, 10115, 10116, 10117, 10118, 10119
-        .long   10120, 10122, 10123, 10124, 10125, 10126, 10128, 10129
-        .long   10130, 10131, 10132, 10134, 10135, 10136, 10137, 10138
+        .long   11705, 11707, 11708, 11709, 11710, 11711, 11713, 11714
+        .long   11715, 11716, 11717, 11719, 11720, 11721, 11722, 11723
+        .long   11725, 11726, 11727, 11728, 11729, 11730, 11732, 11733
+        .long   11734, 11735, 11736, 11738, 11739, 11740, 11741, 11742
+        .long   11744, 11745, 11746, 11747, 11748, 11750, 11751, 11752
+        .long   11753, 11754, 11755, 11757, 11758, 11759, 11760, 11761
+        .long   11763, 11764, 11765, 11766, 11767, 11769, 11770, 11771
+        .long   11772, 11773, 11775, 11776, 11777, 11778, 11779, 11781
+        .long   11782, 11783, 11784, 11785, 11786, 11788, 11789, 11790
+        .long   11791, 11792, 11794, 11795, 11796, 11797, 11798, 11800
+        .long   11801, 11802, 11803, 11804, 11806, 11807, 11808, 11809
+        .long   11810, 11811, 11813, 11814, 11815, 11816, 11817, 11819
+        .long   11820, 11821, 11822, 11823, 11825, 11826, 11827, 11828
+        .long   11829, 11831, 11832, 11833, 11834, 11835, 11836, 11838
+        .long   11839, 11840, 11841, 11842, 11844, 11845, 11846, 11847
+        .long   11848, 11850, 11851, 11852, 11853, 11854, 11856, 11857
 O3_TB_SLO:
-        .long   1975, 1976, 1977, 1980, 1983, 1988, 1993, 1999
-        .long   2006, 2014, 2023, 2032, 2042, 2053, 2064, 2076
-        .long   2089, 2102, 2116, 2130, 2145, 2160, 2176, 2192
-        .long   2209, 2225, 2242, 2260, 2277, 2295, 2313, 2331
-        .long   2350, 2369, 2389, 2411, 2434, 2458, 2484, 2511
-        .long   2540, 2571, 2602, 2636, 2670, 2707, 2744, 2784
-        .long   2825, 2867, 2911, 2957, 3004, 3053, 3104, 3156
-        .long   3210, 3266, 3323, 3383, 3444, 3506, 3571, 3637
-        .long   3705, 3783, 3878, 3989, 4115, 4256, 4409, 4574
-        .long   4749, 4935, 5129, 5331, 5540, 5754, 5973, 6195
-        .long   6420, 6646, 6872, 7098, 7322, 7543, 7761, 7973
-        .long   8180, 8379, 8571, 8753, 8925, 9086, 9235, 9370
-        .long   9498, 9625, 9751, 9875, 9998, 10120, 10240, 10359
-        .long   10475, 10591, 10704, 10815, 10925, 11032, 11138, 11241
-        .long   11342, 11441, 11537, 11630, 11722, 11810, 11896, 11979
-        .long   12059, 12136, 12210, 12281, 12349, 12414, 12475, 12533
+        .long   2404, 2418, 2432, 2448, 2464, 2481, 2498, 2516
+        .long   2535, 2555, 2575, 2596, 2618, 2640, 2663, 2686
+        .long   2710, 2734, 2759, 2785, 2810, 2837, 2864, 2891
+        .long   2918, 2946, 2975, 3004, 3033, 3062, 3092, 3122
+        .long   3152, 3182, 3213, 3243, 3273, 3303, 3334, 3365
+        .long   3397, 3429, 3461, 3495, 3529, 3564, 3601, 3638
+        .long   3677, 3717, 3758, 3801, 3846, 3892, 3940, 3990
+        .long   4042, 4096, 4153, 4211, 4272, 4336, 4402, 4471
+        .long   4542, 4626, 4731, 4856, 4998, 5159, 5335, 5526
+        .long   5731, 5949, 6178, 6417, 6665, 6920, 7182, 7450
+        .long   7722, 7997, 8273, 8550, 8827, 9102, 9373, 9641
+        .long   9903, 10159, 10407, 10646, 10875, 11092, 11297, 11488
+        .long   11672, 11854, 12034, 12213, 12391, 12567, 12741, 12914
+        .long   13085, 13255, 13422, 13588, 13752, 13915, 14075, 14233
+        .long   14390, 14544, 14697, 14847, 14995, 15142, 15285, 15427
+        .long   15567, 15704, 15838, 15971, 16101, 16228, 16353, 16476
 O3_TB_SHI:
-        .long   2575, 2530, 2487, 2447, 2410, 2375, 2343, 2313
-        .long   2285, 2260, 2237, 2216, 2196, 2179, 2163, 2149
-        .long   2136, 2125, 2116, 2107, 2100, 2094, 2089, 2085
-        .long   2082, 2079, 2077, 2076, 2075, 2074, 2074, 2074
-        .long   2074, 2078, 2091, 2111, 2140, 2176, 2219, 2269
-        .long   2325, 2388, 2456, 2531, 2610, 2694, 2783, 2876
-        .long   2973, 3074, 3178, 3286, 3396, 3508, 3623, 3739
-        .long   3857, 3976, 4096, 4216, 4337, 4458, 4578, 4697
-        .long   4816, 4939, 5073, 5216, 5368, 5529, 5698, 5873
-        .long   6056, 6244, 6437, 6636, 6838, 7044, 7253, 7463
-        .long   7676, 7889, 8103, 8317, 8530, 8741, 8950, 9157
-        .long   9360, 9559, 9753, 9942, 10126, 10303, 10473, 10635
-        .long   10792, 10949, 11104, 11258, 11411, 11563, 11714, 11863
-        .long   12011, 12157, 12303, 12447, 12589, 12730, 12870, 13008
-        .long   13145, 13280, 13414, 13546, 13676, 13805, 13933, 14058
-        .long   14182, 14304, 14424, 14543, 14660, 14775, 14888, 14999
+        .long   2404, 2418, 2432, 2448, 2464, 2481, 2498, 2516
+        .long   2535, 2555, 2575, 2596, 2618, 2640, 2663, 2686
+        .long   2710, 2734, 2759, 2785, 2810, 2837, 2864, 2891
+        .long   2918, 2946, 2975, 3004, 3033, 3062, 3092, 3122
+        .long   3152, 3182, 3213, 3243, 3273, 3303, 3334, 3365
+        .long   3397, 3429, 3461, 3495, 3529, 3564, 3601, 3638
+        .long   3677, 3717, 3758, 3801, 3846, 3892, 3940, 3990
+        .long   4042, 4096, 4153, 4211, 4272, 4336, 4402, 4471
+        .long   4542, 4626, 4731, 4856, 4998, 5159, 5335, 5526
+        .long   5731, 5949, 6178, 6417, 6665, 6920, 7182, 7450
+        .long   7722, 7997, 8273, 8550, 8827, 9102, 9373, 9641
+        .long   9903, 10159, 10407, 10646, 10875, 11092, 11297, 11488
+        .long   11672, 11854, 12034, 12213, 12391, 12567, 12741, 12914
+        .long   13085, 13255, 13422, 13588, 13752, 13915, 14075, 14233
+        .long   14390, 14544, 14697, 14847, 14995, 15142, 15285, 15427
+        .long   15567, 15704, 15838, 15971, 16101, 16228, 16353, 16476
 O3_TB_KMUL:
-        .long   0, 3, 12, 28, 49, 76, 108, 146
-        .long   188, 236, 289, 347, 409, 475, 546, 621
-        .long   700, 782, 868, 958, 1051, 1147, 1246, 1348
-        .long   1453, 1560, 1669, 1781, 1894, 2010, 2127, 2246
-        .long   2366, 2508, 2690, 2910, 3165, 3452, 3767, 4109
-        .long   4475, 4861, 5264, 5683, 6114, 6555, 7001, 7452
-        .long   7903, 8353, 8798, 9235, 9662, 10076, 10473, 10852
-        .long   11209, 11542, 11847, 12123, 12365, 12571, 12739, 12866
-        .long   12948, 13003, 13049, 13088, 13121, 13150, 13175, 13198
-        .long   13221, 13243, 13268, 13295, 13327, 13364, 13408, 13460
-        .long   13521, 13628, 13813, 14066, 14379, 14746, 15157, 15606
-        .long   16083, 16581, 17091, 17607, 18120, 18621, 19103, 19558
-        .long   20024, 20534, 21081, 21653, 22241, 22834, 23424, 23999
-        .long   24551, 25069, 25542, 25962, 26318, 26601, 26799, 26951
-        .long   27097, 27238, 27372, 27500, 27621, 27734, 27839, 27935
-        .long   28022, 28099, 28166, 28222, 28266, 28298, 28318, 28325
+        .long   0, 153, 306, 460, 614, 769, 924, 1080
+        .long   1236, 1393, 1550, 1708, 1866, 2025, 2184, 2344
+        .long   2504, 2665, 2826, 2988, 3150, 3312, 3475, 3639
+        .long   3802, 3967, 4132, 4297, 4463, 4629, 4795, 4963
+        .long   5130, 5297, 5463, 5629, 5793, 5957, 6121, 6284
+        .long   6448, 6611, 6775, 6939, 7103, 7268, 7435, 7602
+        .long   7770, 7940, 8111, 8284, 8459, 8636, 8815, 8996
+        .long   9180, 9366, 9556, 9748, 9943, 10141, 10343, 10549
+        .long   10758, 10971, 11187, 11408, 11633, 11863, 12098, 12338
+        .long   12583, 12834, 13092, 13356, 13626, 13904, 14189, 14481
+        .long   14781, 15097, 15432, 15785, 16153, 16534, 16925, 17325
+        .long   17730, 18139, 18549, 18958, 19363, 19762, 20152, 20532
+        .long   20916, 21318, 21733, 22156, 22583, 23008, 23428, 23836
+        .long   24230, 24603, 24952, 25270, 25555, 25801, 26002, 26180
+        .long   26356, 26529, 26697, 26860, 27016, 27165, 27305, 27435
+        .long   27554, 27660, 27754, 27833, 27896, 27943, 27972, 27981
 O3_TB_GCOMP:
-        .long   19906, 19621, 19359, 19116, 18892, 18686, 18497, 18323
-        .long   18165, 18020, 17888, 17768, 17660, 17563, 17476, 17399
-        .long   17330, 17270, 17218, 17172, 17133, 17100, 17073, 17051
-        .long   17033, 17019, 17009, 17001, 16996, 16993, 16991, 16991
-        .long   16991, 17009, 17064, 17152, 17274, 17426, 17608, 17819
-        .long   18058, 18323, 18613, 18927, 19263, 19621, 19999, 20395
-        .long   20808, 21236, 21677, 22128, 22587, 23052, 23519, 23985
-        .long   24448, 24904, 25348, 25777, 26187, 26573, 26930, 27255
-        .long   27543, 27807, 28065, 28315, 28560, 28799, 29032, 29260
-        .long   29484, 29703, 29918, 30129, 30337, 30543, 30747, 30948
-        .long   31149, 31349, 31549, 31749, 31951, 32154, 32359, 32567
-        .long   32778, 32994, 33214, 33440, 33671, 33910, 34156, 34410
-        .long   34670, 34933, 35199, 35468, 35739, 36014, 36291, 36571
-        .long   36855, 37142, 37431, 37724, 38020, 38319, 38622, 38927
-        .long   39236, 39549, 39865, 40184, 40507, 40833, 41163, 41496
-        .long   41833, 42174, 42519, 42867, 43219, 43575, 43934, 44298
-O3_SQ_TH:
-        .long   2941621669, 2929094681, 2916567693, 2904040706, 2891513718, 2878986730, 2866459742, 2853932754
-        .long   2841405766, 2828878778, 2816351790, 2803824802, 2791297814, 2778770826, 2766243838, 2753716850
-        .long   2741189862, 2728662874, 2716135886, 2703608898, 2691081910, 2678554922, 2666027935, 2653500947
-        .long   2640973959, 2628446971, 2615919983, 2603392995, 2590866007, 2578339019, 2565812031, 2553285043
-        .long   2540758055, 2528231067, 2515704079, 2503177091, 2490650103, 2478123115, 2465596127, 2453069139
-        .long   2440542152, 2428015164, 2415488176, 2402961188, 2390434200, 2377907212, 2365380224, 2352853236
-        .long   2340326248, 2327799260, 2315272272, 2302745284, 2290218296, 2277691308, 2265164320, 2252637332
-        .long   2240110344, 2227583356, 2215056368, 2202529381, 2190002393, 2177475405, 2164948417, 2152421429
-        .long   2139894441, 2127367453, 2114840465, 2102313477, 2089786489, 2077259501, 2064732513, 2052205525
-        .long   2039678537, 2027151549, 2014624561, 2002097573, 1989570585, 1977043597, 1964516610, 1951989622
-        .long   1939462634, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283
-        .long   1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283
-        .long   1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283
-        .long   1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283
-        .long   1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283
-        .long   1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283, 1932735283
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
+        .long   10800, 10800, 10800, 10800, 10800, 10800, 10800, 10800
 O3_ACC_AMT:
-        .long   0, 1905080, 3945439, 6117910, 8419325, 10846514, 13396310, 16065544
-        .long   18851049, 21749655, 24758195, 27873500, 31092403, 34411734, 37828326, 41339009
-        .long   44940617, 48629980, 52403931, 56259301, 60192922, 64201625, 68282242, 72431606
-        .long   76646547, 80923897, 85260489, 89653154, 94098723, 98594029, 103135902, 107721176
-        .long   112346680, 117010359, 121718731, 126481496, 131308351, 136208997, 141193132, 146270453
-        .long   151450661, 156743454, 162158530, 167705588, 173394328, 179234447, 185235644, 191407619
-        .long   197760070, 204302695, 211045194, 217997264, 225168606, 232568917, 240207896, 248095242
-        .long   256240654, 264653831, 273344470, 282322272, 291596934, 301178155, 311075635, 321299071
-        .long   331858163, 343618968, 357361988, 372968588, 390320132, 409297987, 429783517, 451658086
-        .long   474803061, 499099805, 524429684, 550674063, 577714307, 605431781, 633707850, 662423879
-        .long   691461233, 720701277, 750025376, 779314894, 808451198, 837315652, 865789620, 893754469
-        .long   921091562, 947682265, 973407944, 998149962, 1021789685, 1044208479, 1065287707, 1084908735
-        .long   1103684215, 1122301783, 1140755280, 1159038549, 1177145431, 1195069767, 1212805400, 1230346170
-        .long   1247685920, 1264818491, 1281737724, 1298437463, 1314911547, 1331153819, 1347158120, 1362918292
-        .long   1378428177, 1393681617, 1408672452, 1423394525, 1437841676, 1452007749, 1465886585, 1479472024
-        .long   1492757910, 1505738082, 1518406384, 1530756657, 1542782742, 1554478481, 1565837715, 1576854287
+        .long   0, 13495, 53901, 121104, 214986, 335433, 482327, 655554
+        .long   854997, 1080539, 1332066, 1609461, 1912608, 2241391, 2595695, 2975402
+        .long   3380398, 3810565, 4265789, 4745954, 5250942, 5780639, 6334928, 6913693
+        .long   7516819, 8144189, 8795687, 9471198, 10170605, 10893792, 11640644, 12411044
+        .long   13204877, 14922542, 18411282, 23591244, 30382578, 38705430, 48479948, 59626280
+        .long   72064575, 85714980, 100497643, 116332712, 133140334, 150840658, 169353832, 188600003
+        .long   208499319, 228971929, 249937980, 271317619, 293030996, 314998257, 337139551, 359375026
+        .long   381624829, 403809108, 425848012, 447661687, 469170283, 490293947, 510952826, 531067069
+        .long   550556823, 569883308, 589550859, 609544303, 629848464, 650448168, 671328240, 692473504
+        .long   713868787, 735498914, 757348709, 779402998, 801646606, 824064359, 846641081, 869361599
+        .long   892210736, 915173318, 938234171, 961378120, 984589990, 1007854606, 1031156793, 1054481377
+        .long   1077813183, 1101137036, 1124437761, 1147700184, 1170909129, 1194049423, 1217105889, 1240063354
+        .long   1262988813, 1285959327, 1308974819, 1332035211, 1355140426, 1378290386, 1401485014, 1424724233
+        .long   1448007965, 1471336133, 1494708660, 1518125468, 1541586480, 1565091618, 1588640805, 1612233964
+        .long   1635871017, 1659551887, 1683276496, 1707044768, 1730856625, 1754711989, 1778610783, 1802552930
+        .long   1826538352, 1850566971, 1874638712, 1898753496, 1922911245, 1947111883, 1971355332, 1995641514
 O3_DF_GIN:
         .long   0, 918, 1835, 2753, 3670, 4588, 5505, 6423
         .long   7340, 8258, 9175, 10093, 11010, 11928, 12845, 13763
@@ -3546,22 +3710,22 @@ O3_DF_TRK_HZ:
         .long   2236, 2266, 2296, 2327, 2357, 2387, 2418, 2449
         .long   2480, 2511, 2542, 2573, 2605, 2636, 2668, 2700
 O3_DF_VEG:
-        .long   1049667915, 1051272637, 1052771463, 1054171241, 1055478396, 1056698951, 1057838552, 1058902487
-        .long   1059895711, 1060822863, 1061688286, 1062496043, 1063249936, 1063953524, 1064610131, 1065222869
-        .long   1065794646, 1066328180, 1066826012, 1067290515, 1067723907, 1068128262, 1068505513, 1068857470
-        .long   1069185821, 1069492142, 1069777907, 1070044488, 1070293170, 1070525151, 1070741550, 1070943409
-        .long   1071131704, 1071307343, 1071471176, 1071623995, 1071766538, 1071899495, 1072023510, 1072139183
-        .long   1072247075, 1072347708, 1072441570, 1072529116, 1072610771, 1072686931, 1072757964, 1072824217
-        .long   1072886010, 1072943643, 1072997396, 1073047531, 1073094290, 1073137901, 1073178575, 1073216511
-        .long   1073251892, 1073284891, 1073315668, 1073344372, 1073371143, 1073396111, 1073419397, 1073441116
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
-        .long   1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371, 1073461371
+        .long   1049667915, 1051330796, 1052879959, 1054323027, 1055667134, 1056918950, 1058084712, 1059170249
+        .long   1060181007, 1061122072, 1061998193, 1062813803, 1063573040, 1064279763, 1064937573, 1065549827
+        .long   1066119658, 1066649983, 1067143525, 1067602818, 1068030226, 1068427952, 1068798047, 1069142420
+        .long   1069462854, 1069761005, 1070038417, 1070296529, 1070536678, 1070760111, 1070967989, 1071161391
+        .long   1071341324, 1071508723, 1071664460, 1071809346, 1071944135, 1072069530, 1072186184, 1072294707
+        .long   1072395664, 1072489581, 1072576950, 1072658226, 1072733834, 1072804169, 1072869598, 1072930463
+        .long   1072987083, 1073039752, 1073088747, 1073134324, 1073176721, 1073216160, 1073252847, 1073286975
+        .long   1073318720, 1073348251, 1073375721, 1073401273, 1073425043, 1073447154, 1073467721, 1073486854
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
+        .long   1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651, 1073504651
 O3_DF_VSUS:
         .long   0, 0, 0, 0, 0, 0, 0, 0
         .long   0, 0, 0, 0, 0, 0, 0, 0
@@ -3603,7 +3767,7 @@ O3_DF_ADEC:
         .long   1061291154, 1061732053, 1062157425, 1062567810, 1062963731, 1063345692, 1063714181, 1064069668
         .long   1064412608, 1064743441, 1065062589, 1065370463, 1065667457, 1065953952, 1066230319, 1066496911
         .long   1066754073, 1067002135, 1067241419, 1067472231, 1067694872, 1067909628, 1068116777, 1068316587
-        .long   1068509317, 1068695216, 1066886531, 1069047479, 1069214299, 1069375204, 1069530401, 1069680092
+        .long   1068509317, 1068695216, 1068028173, 1069047479, 1069214299, 1069375204, 1069530401, 1069680092
         .long   1069824473, 1069963730, 1070098046, 1070227594, 1070352544, 1070473058, 1070589293, 1070701400
         .long   1070809527, 1070913813, 1071014395, 1071111404, 1071204967, 1071295205, 1071382238, 1071466177
         .long   1071547134, 1071625213, 1071700518, 1071773145, 1071843191, 1071910747, 1071975901, 1072038738
@@ -3614,7 +3778,7 @@ O3_DF_ADEC:
         .long   1073226842, 1073245177, 1073262860, 1073279913, 1073296359, 1073312219, 1073327515, 1073342267
         .long   1073356493, 1073370213, 1073383444, 1073396205, 1073408511, 1073420379, 1073431824, 1073442863
 O3_DF_SATK:
-        .long   727855836, 1007439732, 1000471088, 993059915, 985205808, 976910498, 968177822, 959013679
+        .long   584137310, 1007439732, 1000471088, 993059915, 985205808, 976910498, 968177822, 959013679
         .long   949425959, 939424457, 929020773, 918228195, 907061574, 895537185, 883672587, 871486473
         .long   858998522, 846229246, 833199839, 819932031, 806447945, 792769954, 778920551, 764922226
         .long   750797344, 736568037, 722256105, 707882922, 693469355, 679035687, 664601558, 650185904
@@ -3705,39 +3869,39 @@ O3_DF_HZ:
         .long   10240, 10389, 10540, 10693, 10849, 11007, 11167, 11329
         .long   11494, 11661, 11831, 12003, 12177, 12355
 O3_DF_ACH_SLOW:
-        .long   99, 99, 99, 99, 99, 99, 99, 99
-        .long   99, 99, 99, 99, 99, 99, 99, 99
-        .long   99, 99, 99, 99, 99, 99, 99, 99
-        .long   99, 99, 99, 99, 99, 99, 99, 99
-        .long   99, 99, 99, 99, 99, 99, 99, 99
-        .long   99, 99, 98, 98, 98, 98, 98, 98
-        .long   98, 97, 97, 97, 97, 97, 97, 96
-        .long   96, 96, 96, 96, 96, 96, 96, 95
-        .long   95, 95, 95, 95, 95, 95, 95, 95
-        .long   94, 94, 94, 94, 94, 94, 94, 94
-        .long   94, 94, 94, 93, 93, 93, 93, 93
-        .long   93, 93, 93, 93, 93, 93, 93, 93
-        .long   93, 93, 93, 93, 93, 93, 93, 93
-        .long   93, 94, 94, 94, 94, 94, 94, 95
-        .long   95, 95, 95, 96, 96, 96, 96, 97
-        .long   97, 97, 97, 98, 98, 98, 99, 99
+        .long   80, 80, 80, 79, 79, 79, 79, 79
+        .long   79, 79, 79, 78, 78, 78, 78, 78
+        .long   78, 78, 78, 77, 77, 77, 77, 77
+        .long   77, 77, 77, 76, 76, 76, 76, 76
+        .long   76, 76, 76, 75, 75, 75, 75, 75
+        .long   74, 74, 74, 74, 74, 73, 73, 73
+        .long   73, 73, 72, 72, 72, 72, 71, 71
+        .long   71, 71, 71, 70, 70, 70, 70, 70
+        .long   69, 69, 69, 69, 69, 68, 68, 68
+        .long   68, 68, 68, 67, 67, 67, 67, 67
+        .long   67, 66, 66, 66, 66, 66, 66, 66
+        .long   65, 65, 65, 65, 65, 65, 65, 65
+        .long   64, 64, 64, 64, 64, 64, 64, 64
+        .long   64, 64, 64, 64, 64, 64, 64, 64
+        .long   64, 64, 64, 65, 65, 65, 65, 65
+        .long   65, 65, 65, 65, 65, 66, 66, 66
 O3_DF_ACH_FAST:
-        .long   12736, 12736, 12736, 12736, 12736, 12736, 12736, 12736
-        .long   12736, 12736, 12736, 12736, 12736, 12736, 12736, 12736
-        .long   12736, 12736, 12736, 12736, 12736, 12736, 12736, 12736
-        .long   12736, 12736, 12736, 12736, 12736, 12736, 12736, 12736
-        .long   12736, 12736, 12736, 12672, 12672, 12672, 12672, 12672
-        .long   12672, 12672, 12608, 12608, 12608, 12544, 12544, 12544
-        .long   12544, 12480, 12480, 12480, 12416, 12416, 12416, 12352
-        .long   12352, 12352, 12352, 12288, 12288, 12288, 12288, 12224
-        .long   12224, 12224, 12224, 12224, 12160, 12160, 12160, 12160
-        .long   12096, 12096, 12096, 12096, 12096, 12032, 12032, 12032
-        .long   12032, 12032, 12032, 11968, 11968, 11968, 11968, 11968
-        .long   11968, 11968, 11904, 11904, 11904, 11904, 11904, 11904
-        .long   11904, 11904, 11904, 11968, 11968, 11968, 11968, 11968
-        .long   11968, 12032, 12032, 12032, 12096, 12096, 12096, 12160
-        .long   12160, 12224, 12224, 12288, 12288, 12352, 12352, 12416
-        .long   12416, 12480, 12480, 12544, 12608, 12608, 12672, 12736
+        .long   10240, 10240, 10240, 10176, 10176, 10176, 10176, 10112
+        .long   10112, 10112, 10112, 10048, 10048, 10048, 10048, 9984
+        .long   9984, 9984, 9984, 9920, 9920, 9920, 9920, 9856
+        .long   9856, 9856, 9856, 9792, 9792, 9792, 9792, 9728
+        .long   9728, 9728, 9728, 9664, 9664, 9664, 9600, 9600
+        .long   9536, 9536, 9536, 9472, 9472, 9408, 9408, 9408
+        .long   9344, 9344, 9280, 9280, 9216, 9216, 9152, 9152
+        .long   9088, 9088, 9088, 9024, 9024, 8960, 8960, 8960
+        .long   8896, 8896, 8896, 8832, 8832, 8768, 8768, 8768
+        .long   8704, 8704, 8704, 8640, 8640, 8640, 8576, 8576
+        .long   8576, 8512, 8512, 8512, 8448, 8448, 8448, 8448
+        .long   8384, 8384, 8384, 8384, 8320, 8320, 8320, 8320
+        .long   8256, 8256, 8256, 8256, 8256, 8256, 8256, 8256
+        .long   8256, 8256, 8256, 8256, 8256, 8256, 8256, 8256
+        .long   8256, 8256, 8256, 8320, 8320, 8320, 8320, 8320
+        .long   8320, 8384, 8384, 8384, 8384, 8448, 8448, 8448
 O3_LADDER_B:
         .long   66, 67, 68, 69, 70, 71, 72, 73
         .long   74, 75, 76, 77, 78, 79, 80, 82
@@ -3853,227 +4017,1314 @@ O3_LADDER_K:
         .long   16179, 16362, 16547, 16734, 16923, 17113, 17305, 17499
         .long   17694, 17890, 18088, 18287, 18487, 18688
 O3_KF:
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6932, 6932, 6932, 6932, 6932, 6932, 6932
-        .long   6932, 6846, 6774, 6692, 6614, 6539, 6465, 6395
-        .long   6326, 6259, 6194, 6126, 6064, 6000, 5943, 5882
-        .long   5828, 5770, 5715, 5661, 5609, 5559, 5508, 5457
-        .long   5410, 5366, 5319, 5274, 5233, 5191, 5148, 5109
-        .long   5069, 5032, 4991, 4955, 4919, 4885, 4851, 4817
-        .long   4784, 4753, 4722, 4694, 4665, 4635, 4609, 4580
-        .long   4555, 4529, 4503, 4480, 4457, 4434, 4411, 4388
-        .long   4367, 4348, 4328, 4307, 4288, 4270, 4252, 4235
-        .long   4220, 4202, 4186, 4172, 4157, 4144, 4128, 4116
-        .long   4103, 4091, 4079, 4067, 4057, 4046, 4037, 4029
-        .long   4021, 4015, 4009, 4004, 3999, 3996, 3993, 3989
-        .long   3988, 3986, 3986, 3986, 3986, 3987, 3990, 3991
-        .long   3995, 3997, 4002, 4006, 4011, 4016, 4022, 4027
-        .long   4034, 4041, 4048, 4055, 4064, 4072, 4080, 4090
-        .long   4098, 4108, 4117, 4128, 4138, 4149, 4159, 4170
-        .long   4181, 4192, 4203, 4214, 4227, 4239, 4250, 4263
-        .long   4274, 4287, 4299, 4311, 4323, 4335, 4347, 4359
-        .long   4371, 4382, 4393, 4405, 4417, 4428, 4439, 4450
-        .long   4461, 4470, 4480, 4491, 4500, 4510, 4518, 4527
-        .long   4534, 4543, 4550, 4557, 4563, 4570, 4575, 4580
-        .long   4584, 4589, 4595, 4599, 4604, 4610, 4615, 4619
-        .long   4626, 4631, 4635, 4641, 4647, 4652, 4657, 4663
-        .long   4668, 4674, 4679, 4684, 4690, 4696, 4701, 4707
-        .long   4713, 4719, 4724, 4729, 4736, 4741, 4746, 4751
-        .long   4758, 4763, 4768, 4773, 4780, 4786, 4791, 4796
-        .long   4802, 4807, 4813, 4817, 4823, 4828, 4834, 4839
-        .long   4844, 4849, 4855, 4859, 4864, 4869, 4873, 4878
-        .long   4883, 4887, 4892, 4897, 4901, 4906, 4910, 4915
-        .long   4918, 4922, 4927, 4930, 4935, 4938, 4942, 4946
-        .long   4949, 4952, 4956, 4959, 4963, 4966, 4970, 4972
-        .long   4976, 4980, 4983, 4987, 4991, 4995, 4998, 5003
-        .long   5006, 5011, 5014, 5019, 5024, 5027, 5032, 5037
-        .long   5042, 5046, 5050, 5056, 5060, 5065, 5069, 5076
-        .long   5081, 5086, 5091, 5098, 5103, 5109, 5114, 5120
-        .long   5126, 5131, 5139, 5145, 5151, 5158, 5165, 5171
-        .long   5178, 5184, 5190, 5198, 5205, 5213, 5221, 5229
-        .long   5234, 5243, 5251, 5259, 5266, 5275, 5283, 5291
-        .long   5300, 5308, 5317, 5328, 5335, 5346, 5354, 5363
-        .long   5374, 5383, 5393, 5403, 5414, 5424, 5434, 5446
-        .long   5455, 5466, 5476, 5489, 5499, 5511, 5523, 5534
-        .long   5547, 5558, 5571, 5582, 5595, 5607, 5619, 5633
-        .long   5646, 5659, 5672, 5685, 5699, 5712
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9520, 9520, 9520, 9520, 9520, 9520, 9520
+        .long   9520, 9439, 9382, 9304, 9229, 9160, 9091, 9024
+        .long   8960, 8901, 8839, 8766, 8709, 8642, 8592, 8527
+        .long   8481, 8419, 8364, 8306, 8253, 8202, 8153, 8092
+        .long   8044, 8001, 7946, 7895, 7855, 7808, 7761, 7716
+        .long   7672, 7631, 7580, 7539, 7494, 7459, 7415, 7373
+        .long   7332, 7296, 7257, 7221, 7186, 7145, 7113, 7075
+        .long   7040, 7005, 6970, 6939, 6906, 6874, 6839, 6805
+        .long   6777, 6747, 6715, 6682, 6651, 6623, 6592, 6562
+        .long   6537, 6507, 6477, 6450, 6423, 6395, 6366, 6340
+        .long   6314, 6286, 6260, 6233, 6207, 6182, 6156, 6132
+        .long   6106, 6083, 6058, 6034, 6011, 5989, 5967, 5943
+        .long   5923, 5900, 5880, 5857, 5836, 5817, 5796, 5777
+        .long   5758, 5737, 5720, 5702, 5682, 5664, 5647, 5628
+        .long   5611, 5594, 5578, 5560, 5545, 5530, 5512, 5498
+        .long   5483, 5468, 5453, 5438, 5424, 5412, 5399, 5385
+        .long   5372, 5359, 5346, 5334, 5322, 5310, 5299, 5288
+        .long   5276, 5265, 5255, 5245, 5235, 5225, 5215, 5207
+        .long   5198, 5189, 5180, 5171, 5165, 5157, 5148, 5141
+        .long   5135, 5128, 5121, 5115, 5108, 5103, 5098, 5091
+        .long   5086, 5082, 5077, 5073, 5069, 5066, 5062, 5058
+        .long   5055, 5053, 5050, 5048, 5047, 5045, 5044, 5043
+        .long   5043, 5043, 5042, 5043, 5043, 5045, 5045, 5047
+        .long   5049, 5050, 5052, 5054, 5056, 5058, 5061, 5064
+        .long   5067, 5070, 5073, 5076, 5080, 5084, 5087, 5090
+        .long   5094, 5099, 5102, 5106, 5111, 5116, 5119, 5124
+        .long   5128, 5132, 5136, 5141, 5145, 5149, 5153, 5157
+        .long   5162, 5166, 5171, 5174, 5179, 5182, 5186, 5190
+        .long   5193, 5197, 5200, 5204, 5207, 5209, 5212, 5215
+        .long   5217, 5220, 5222, 5223, 5226, 5227, 5228, 5229
+        .long   5231, 5232, 5232, 5232, 5232, 5232, 5233, 5233
+        .long   5233, 5234, 5234, 5235, 5236, 5237, 5239, 5240
+        .long   5241, 5243, 5243, 5245, 5247, 5249, 5250, 5253
+        .long   5255, 5257, 5259, 5262, 5265, 5267, 5270, 5273
+        .long   5276, 5280, 5283, 5287, 5289, 5294, 5297, 5302
+        .long   5306, 5308, 5313, 5318, 5323, 5327, 5332, 5337
+        .long   5342, 5347, 5352, 5358, 5363, 5370, 5376, 5382
+        .long   5386, 5394, 5400, 5406, 5413, 5421, 5427, 5434
+        .long   5441, 5450, 5457, 5466, 5472, 5481, 5489, 5498
+        .long   5507, 5516, 5524, 5534, 5544, 5553, 5562, 5573
+        .long   5581, 5593, 5603, 5614, 5624, 5635, 5647, 5658
+        .long   5670, 5681, 5693, 5704, 5716, 5728, 5740, 5754
+        .long   5767, 5779, 5792, 5804, 5818, 5831
 O3_LG:
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1255, 1255, 1255, 1255, 1255
-        .long   1255, 1255, 1255, 1256, 1256, 1256, 1256, 1256
-        .long   1257, 1257, 1257, 1258, 1258, 1259, 1259, 1260
-        .long   1261, 1261, 1262, 1263, 1263, 1264, 1265, 1266
-        .long   1267, 1267, 1268, 1269, 1270, 1271, 1272, 1273
-        .long   1274, 1276, 1277, 1278, 1279, 1280, 1281, 1283
-        .long   1284, 1285, 1287, 1288, 1289, 1291, 1292, 1294
-        .long   1295, 1297, 1298, 1300, 1301, 1303, 1305, 1306
-        .long   1308, 1309, 1311, 1313, 1314, 1316, 1318, 1320
-        .long   1321, 1323, 1325, 1327, 1329, 1330, 1332, 1334
-        .long   1336, 1338, 1340, 1342, 1344, 1346, 1348, 1350
-        .long   1352, 1355, 1358, 1360, 1363, 1366, 1369, 1373
-        .long   1376, 1379, 1383, 1387, 1390, 1394, 1398, 1402
-        .long   1407, 1411, 1415, 1420, 1424, 1429, 1434, 1439
-        .long   1444, 1449, 1454, 1460, 1465, 1471, 1476, 1482
-        .long   1488, 1494, 1500, 1506, 1512, 1518, 1524, 1531
-        .long   1537, 1544, 1550, 1557, 1564, 1571, 1578, 1585
-        .long   1592, 1599, 1606, 1614, 1621, 1629, 1636, 1644
-        .long   1651, 1659, 1667, 1675, 1682, 1690, 1698, 1706
-        .long   1714, 1722, 1731, 1739, 1747, 1755, 1764, 1772
-        .long   1780, 1789, 1797, 1806, 1814, 1823, 1831, 1840
-        .long   1848, 1857, 1866, 1875, 1884, 1893, 1902, 1911
-        .long   1920, 1929, 1939, 1948, 1958, 1968, 1978, 1988
-        .long   1998, 2008, 2018, 2029, 2039, 2050, 2061, 2072
-        .long   2083, 2094, 2105, 2117, 2128, 2140, 2152, 2164
-        .long   2176, 2189, 2201, 2214, 2227, 2240, 2253, 2266
-        .long   2280, 2293, 2307, 2322, 2336, 2350, 2365, 2380
-        .long   2395, 2410, 2426, 2442, 2458, 2474, 2490, 2507
-        .long   2524, 2541, 2559, 2577, 2595, 2613, 2632, 2650
-        .long   2670, 2689, 2709, 2729, 2749, 2770, 2791, 2812
-        .long   2834, 2856, 2879, 2901, 2925, 2948, 2973, 2998
-        .long   3023, 3049, 3075, 3102, 3130, 3158, 3187, 3217
-        .long   3247, 3277, 3309, 3341, 3373, 3407, 3441, 3475
-        .long   3511, 3547, 3583, 3621, 3659, 3698, 3738, 3779
-        .long   3820, 3862, 3905, 3949, 3994, 4040, 4086, 4134
-        .long   4182, 4231, 4281, 4333, 4385, 4438, 4492, 4547
-        .long   4604, 4661, 4720, 4779, 4840, 4902, 4965, 5029
-        .long   5095, 5161, 5229, 5299, 5369, 5441, 5514, 5589
-        .long   5665, 5742, 5821, 5902, 5984, 6067, 6152, 6239
-        .long   6327, 6417, 6509, 6602, 6697, 6794, 6893, 6993
-        .long   7096, 7200, 7306, 7415, 7525, 7637, 7752, 7793
-        .long   7793, 7793, 7793, 7793, 7793, 7793, 7793, 7793
-        .long   7793, 7793, 7793, 7793, 7793, 7793
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1913, 1913, 1913, 1913, 1913, 1913, 1913, 1913
+        .long   1910, 1904, 1898, 1893, 1887, 1882, 1877, 1872
+        .long   1867, 1862, 1857, 1852, 1848, 1843, 1839, 1834
+        .long   1830, 1826, 1822, 1818, 1814, 1810, 1806, 1802
+        .long   1799, 1795, 1792, 1788, 1785, 1782, 1779, 1776
+        .long   1773, 1770, 1767, 1764, 1762, 1759, 1757, 1754
+        .long   1752, 1749, 1747, 1745, 1743, 1741, 1739, 1737
+        .long   1735, 1734, 1732, 1730, 1729, 1727, 1726, 1725
+        .long   1723, 1722, 1721, 1720, 1719, 1718, 1717, 1716
+        .long   1716, 1715, 1714, 1714, 1713, 1713, 1713, 1712
+        .long   1712, 1712, 1712, 1712, 1712, 1712, 1712, 1712
+        .long   1713, 1714, 1714, 1715, 1716, 1717, 1718, 1720
+        .long   1721, 1723, 1724, 1726, 1728, 1730, 1732, 1734
+        .long   1736, 1739, 1741, 1744, 1746, 1749, 1752, 1754
+        .long   1757, 1760, 1764, 1767, 1770, 1773, 1777, 1780
+        .long   1784, 1788, 1791, 1795, 1799, 1803, 1807, 1811
+        .long   1815, 1819, 1823, 1827, 1832, 1836, 1840, 1845
+        .long   1849, 1854, 1858, 1863, 1868, 1872, 1877, 1882
+        .long   1887, 1891, 1896, 1901, 1906, 1911, 1916, 1921
+        .long   1926, 1931, 1936, 1941, 1946, 1951, 1956, 1960
+        .long   1965, 1970, 1975, 1980, 1985, 1990, 1995, 2000
+        .long   2005, 2010, 2015, 2020, 2025, 2030, 2035, 2040
+        .long   2045, 2050, 2056, 2061, 2066, 2072, 2077, 2083
+        .long   2088, 2094, 2099, 2105, 2111, 2117, 2123, 2129
+        .long   2135, 2141, 2147, 2153, 2160, 2166, 2173, 2180
+        .long   2186, 2193, 2200, 2207, 2214, 2221, 2229, 2236
+        .long   2244, 2252, 2259, 2267, 2275, 2283, 2292, 2300
+        .long   2309, 2317, 2326, 2335, 2344, 2354, 2363, 2373
+        .long   2383, 2393, 2403, 2413, 2423, 2434, 2445, 2456
+        .long   2467, 2479, 2490, 2502, 2514, 2526, 2539, 2552
+        .long   2564, 2578, 2591, 2605, 2619, 2633, 2649, 2665
+        .long   2681, 2698, 2716, 2734, 2753, 2772, 2792, 2813
+        .long   2835, 2857, 2880, 2903, 2927, 2952, 2978, 3004
+        .long   3031, 3058, 3087, 3116, 3146, 3177, 3208, 3240
+        .long   3273, 3307, 3342, 3378, 3414, 3451, 3490, 3529
+        .long   3569, 3610, 3651, 3694, 3738, 3783, 3829, 3875
+        .long   3923, 3972, 4022, 4073, 4126, 4179, 4234, 4289
+        .long   4346, 4404, 4464, 4524, 4586, 4649, 4714, 4779
+        .long   4847, 4915, 4985, 5057, 5130, 5204, 5280, 5357
+        .long   5436, 5517, 5599, 5683, 5768, 5855, 5944, 6035
+        .long   6128, 6222, 6318, 6416, 6516, 6618, 6721, 6759
+        .long   6759, 6759, 6759, 6759, 6759, 6759, 6759, 6759
+        .long   6759, 6759, 6759, 6759, 6759, 6759
 O3_TB_UD:
-        .long   0, 23, 46, 69, 92, 114, 136, 158
-        .long   180, 201, 222, 242, 262, 281, 300, 318
-        .long   335, 352, 367, 382, 397, 410, 422, 434
-        .long   444, 453, 461, 469, 474, 479, 482, 484
-        .long   485, 485, 485, 485, 485, 485, 484, 484
-        .long   484, 483, 483, 482, 482, 481, 481, 480
-        .long   479, 479, 478, 477, 476, 475, 474, 473
-        .long   472, 471, 469, 468, 467, 465, 464, 462
-        .long   461, 458, 453, 446, 438, 428, 416, 404
-        .long   390, 375, 360, 345, 329, 313, 298, 282
-        .long   268, 252, 233, 212, 190, 166, 142, 118
-        .long   95, 73, 53, 36, 21, 10, 3, 0
-        .long   6, 21, 46, 78, 116, 159, 205, 253
-        .long   302, 350, 396, 439, 477, 509, 534, 554
-        .long   574, 594, 613, 631, 649, 667, 683, 698
-        .long   713, 726, 737, 748, 757, 764, 769, 773
+        .long   0, 24, 48, 71, 94, 117, 139, 161
+        .long   182, 203, 224, 244, 263, 282, 300, 318
+        .long   334, 350, 365, 380, 393, 406, 418, 429
+        .long   438, 447, 455, 461, 467, 471, 474, 476
+        .long   477, 477, 476, 474, 472, 470, 467, 464
+        .long   461, 457, 453, 448, 444, 439, 434, 430
+        .long   425, 420, 415, 410, 405, 401, 397, 393
+        .long   389, 385, 382, 379, 377, 375, 374, 373
+        .long   372, 374, 377, 383, 390, 399, 409, 420
+        .long   431, 443, 455, 467, 478, 489, 498, 507
+        .long   513, 519, 524, 530, 535, 540, 544, 549
+        .long   553, 557, 561, 565, 568, 572, 575, 578
+        .long   582, 585, 587, 590, 593, 596, 598, 601
+        .long   603, 605, 608, 610, 612, 613, 615, 616
+        .long   618, 619, 621, 622, 624, 625, 626, 627
+        .long   628, 630, 631, 631, 632, 633, 633, 634
 O3_KD:
-        .long   25530, 25033, 24553, 24090, 23642, 23208, 22789, 22383
-        .long   21991, 21610, 21242, 20884, 20538, 20201, 19875, 19251
-        .long   18952, 18661, 18379, 18104, 17577, 17323, 17077, 16603
-        .long   16375, 16153, 15725, 15518, 15317, 14929, 14742, 14380
-        .long   14205, 13867, 13704, 13388, 13235, 12939, 12795, 12517
-        .long   12250, 12121, 11869, 11628, 11395, 11282, 11062, 10850
-        .long   10646, 10449, 10259, 10075, 9898, 9726, 9560, 9399
-        .long   9244, 9093, 8947, 8805, 8667, 8469, 8341, 8217
-        .long   8038, 7922, 7810, 7647, 7542, 7390, 7291, 7149
-        .long   7011, 6922, 6793, 6668, 6588, 6470, 6357, 6247
-        .long   6141, 6038, 5939, 5843, 5750, 5659, 5572, 5459
-        .long   5378, 5298, 5196, 5122, 5050, 4957, 4867, 4801
-        .long   4717, 4656, 4576, 4499, 4425, 4353, 4283, 4216
-        .long   4150, 4087, 4025, 3951, 3893, 3837, 3769, 3717
-        .long   3653, 3592, 3544, 3486, 3430, 3375, 3323, 3272
-        .long   3222, 3174, 3128, 3073, 3030, 2979, 2938, 2890
-        .long   2851, 2806, 2762, 2720, 2679, 2639, 2600, 2557
-        .long   2520, 2485, 2445, 2406, 2374, 2338, 2302, 2268
-        .long   2235, 2202, 2167, 2136, 2103, 2074, 2042, 2011
-        .long   1982, 1953, 1925, 1897, 1871, 1842, 1817, 1789
-        .long   1763, 1737, 1712, 1688, 1664, 1642, 1617, 1593
-        .long   1572, 1549, 1527, 1504, 1483, 1463, 1442, 1421
-        .long   1402, 1383, 1362, 1343, 1325, 1306, 1288, 1271
-        .long   1253, 1235, 1218, 1201, 1185, 1169, 1153, 1137
-        .long   1121, 1106, 1091, 1076, 1062, 1047, 1034, 1019
-        .long   1006, 993, 980, 966, 954, 941, 928, 916
-        .long   904, 892, 881, 869, 858, 847, 836, 825
-        .long   814, 804, 794, 783, 774, 764, 754, 744
-        .long   735, 726, 717, 708, 699, 690, 682, 673
-        .long   665, 657, 649, 641, 633, 625, 618, 610
-        .long   603, 596, 589, 582, 575, 568, 562, 555
-        .long   549, 542, 536, 530, 524, 518, 512, 506
-        .long   500, 495, 489, 484, 478, 473, 468, 463
-        .long   458, 453, 448, 443, 439, 434, 430, 425
-        .long   421, 416, 412, 408, 404, 400, 396, 392
-        .long   388, 384, 380, 377, 373, 369, 366, 362
-        .long   359, 356, 353, 349, 346, 343, 340, 337
-        .long   334, 331, 328, 326, 323, 320, 317, 315
-        .long   312, 310, 307, 305, 303, 300, 298, 296
-        .long   294, 291, 289, 287, 285, 283, 281, 279
-        .long   278, 276, 274, 272, 270, 269, 267, 266
-        .long   264, 263, 261, 260, 258, 257, 256, 254
-        .long   253, 252, 251, 249, 248, 247, 246, 245
-        .long   244, 243, 242, 242, 241, 240, 239, 238
-        .long   238, 237, 236, 236, 235, 235, 234, 234
-        .long   233, 233, 232, 232, 232, 231, 231, 231
-        .long   231, 231, 230, 230, 230, 230, 230, 230
-        .long   230, 231, 231, 231, 231, 231, 232, 232
-        .long   232, 233, 233, 234, 234, 235, 235, 236
-        .long   237, 237, 238, 239, 240, 240, 241, 242
-        .long   243, 244, 245, 246, 248, 249, 250, 251
-        .long   252, 254, 255, 257, 258, 260, 261, 263
-        .long   265, 266, 268, 270, 272, 274, 276, 278
-        .long   280, 282, 284, 286, 288, 291, 293, 295
-        .long   298, 300, 303, 305, 308, 311, 313, 316
-        .long   319, 322, 325, 327, 330, 333
+        .long   75019, 73177, 71401, 69690, 68039, 66446, 64910, 63426
+        .long   61994, 60610, 59273, 57980, 56731, 55522, 54353, 52126
+        .long   51065, 50038, 49042, 48077, 46235, 45355, 44501, 42867
+        .long   42086, 41327, 39872, 39175, 38498, 37197, 36573, 35375
+        .long   34799, 33692, 33159, 32134, 31641, 30690, 30232, 29349
+        .long   28507, 28101, 27317, 26567, 25851, 25505, 24835, 24194
+        .long   23580, 22991, 22426, 21884, 21364, 20864, 20383, 19920
+        .long   19475, 19046, 18633, 18235, 17851, 17300, 16949, 16609
+        .long   16121, 15809, 15507, 15073, 14794, 14393, 14136, 13764
+        .long   13409, 13182, 12852, 12536, 12333, 12039, 11757, 11487
+        .long   11226, 10976, 10736, 10505, 10282, 10068, 9861, 9596
+        .long   9406, 9223, 8987, 8818, 8654, 8444, 8242, 8097
+        .long   7910, 7775, 7601, 7434, 7273, 7119, 6970, 6827
+        .long   6689, 6556, 6427, 6273, 6155, 6040, 5902, 5796
+        .long   5668, 5546, 5451, 5336, 5226, 5120, 5018, 4920
+        .long   4825, 4733, 4645, 4543, 4461, 4366, 4290, 4202
+        .long   4131, 4048, 3969, 3893, 3819, 3748, 3679, 3602
+        .long   3538, 3477, 3407, 3340, 3285, 3223, 3162, 3104
+        .long   3048, 2994, 2934, 2884, 2828, 2781, 2729, 2679
+        .long   2631, 2584, 2539, 2495, 2453, 2407, 2368, 2325
+        .long   2283, 2243, 2205, 2167, 2131, 2096, 2058, 2022
+        .long   1990, 1956, 1923, 1888, 1858, 1828, 1796, 1766
+        .long   1739, 1710, 1680, 1653, 1627, 1600, 1573, 1549
+        .long   1524, 1498, 1475, 1451, 1429, 1406, 1383, 1362
+        .long   1339, 1319, 1298, 1278, 1258, 1239, 1220, 1201
+        .long   1184, 1165, 1148, 1130, 1113, 1096, 1079, 1063
+        .long   1048, 1032, 1017, 1002, 987, 973, 959, 945
+        .long   931, 918, 905, 891, 879, 867, 854, 842
+        .long   830, 819, 807, 796, 785, 774, 764, 753
+        .long   743, 733, 723, 713, 704, 694, 685, 676
+        .long   667, 658, 650, 642, 633, 625, 617, 609
+        .long   602, 594, 586, 579, 572, 565, 558, 551
+        .long   544, 538, 531, 525, 519, 512, 506, 500
+        .long   495, 489, 483, 478, 472, 467, 462, 456
+        .long   451, 446, 441, 437, 432, 427, 423, 418
+        .long   414, 409, 405, 401, 397, 393, 389, 385
+        .long   381, 377, 374, 370, 366, 363, 359, 356
+        .long   353, 349, 346, 343, 340, 337, 334, 331
+        .long   328, 326, 323, 320, 318, 315, 312, 310
+        .long   307, 305, 303, 300, 298, 296, 294, 292
+        .long   290, 288, 286, 284, 282, 280, 278, 277
+        .long   275, 273, 272, 270, 268, 267, 265, 264
+        .long   263, 261, 260, 259, 258, 256, 255, 254
+        .long   253, 252, 251, 250, 249, 248, 247, 246
+        .long   246, 245, 244, 243, 243, 242, 242, 241
+        .long   240, 240, 240, 239, 239, 238, 238, 238
+        .long   238, 237, 237, 237, 237, 237, 237, 237
+        .long   237, 237, 237, 237, 237, 238, 238, 238
+        .long   239, 239, 239, 240, 240, 241, 241, 242
+        .long   243, 243, 244, 245, 246, 246, 247, 248
+        .long   249, 250, 251, 252, 254, 255, 256, 257
+        .long   259, 260, 261, 263, 264, 266, 267, 269
+        .long   271, 272, 274, 276, 278, 280, 282, 284
+        .long   286, 288, 290, 292, 295, 297, 299, 302
+        .long   304, 307, 309, 312, 315, 317, 320, 323
+        .long   326, 329, 331, 334, 337, 340
 O3_DRV_IN:
-        .long   535, 544, 553, 562, 571, 580, 590, 600
-        .long   610, 620, 630, 640, 651, 661, 672, 683
-        .long   695, 706, 718, 729, 741, 754, 766, 779
-        .long   791, 804, 818, 831, 845, 859, 873, 887
-        .long   902, 917, 932, 947, 963, 978, 995, 1011
-        .long   1028, 1044, 1062, 1079, 1097, 1115, 1133, 1152
-        .long   1171, 1190, 1210, 1230, 1250, 1270, 1291, 1313
-        .long   1334, 1356, 1378, 1401, 1424, 1448, 1471, 1496
-        .long   1520, 1545, 1571, 1596, 1623, 1649, 1677, 1704
-        .long   1732, 1761, 1790, 1819, 1849, 1879, 1910, 1942
-        .long   1974, 2006, 2039, 2073, 2107, 2141, 2177, 2213
-        .long   2249, 2286, 2324, 2362, 2401, 2440, 2480, 2521
-        .long   2563, 2605, 2648, 2691, 2735, 2780, 2826, 2873
-        .long   2920, 2968, 3017, 3066, 3117, 3168, 3220, 3273
-        .long   3327, 3382, 3437, 3494, 3551, 3610, 3669, 3730
-        .long   3791, 3853, 3917, 3981, 4047, 4113, 4181, 4250
+        .long   529, 538, 547, 556, 565, 574, 583, 593
+        .long   603, 613, 623, 633, 643, 654, 665, 676
+        .long   687, 698, 710, 721, 733, 745, 757, 770
+        .long   783, 795, 809, 822, 835, 849, 863, 877
+        .long   892, 906, 921, 936, 952, 968, 983, 1000
+        .long   1016, 1033, 1050, 1067, 1085, 1102, 1121, 1139
+        .long   1158, 1177, 1196, 1216, 1236, 1256, 1277, 1298
+        .long   1319, 1341, 1363, 1385, 1408, 1431, 1455, 1479
+        .long   1503, 1528, 1553, 1579, 1605, 1631, 1658, 1685
+        .long   1713, 1741, 1770, 1799, 1828, 1858, 1889, 1920
+        .long   1952, 1984, 2016, 2049, 2083, 2117, 2152, 2188
+        .long   2224, 2260, 2297, 2335, 2374, 2413, 2452, 2493
+        .long   2534, 2575, 2618, 2661, 2705, 2749, 2794, 2840
+        .long   2887, 2935, 2983, 3032, 3082, 3133, 3184, 3236
+        .long   3290, 3344, 3399, 3455, 3512, 3569, 3628, 3688
+        .long   3748, 3810, 3873, 3936, 4001, 4067, 4134, 4202
 O3_DRV_LIM:
-        .long   16055948, 15790316, 15533328, 15284576, 15043664, 14810228, 14559204, 14316552
-        .long   14081852, 13854728, 13634812, 13421768, 13194980, 12995356, 12782636, 12576764
-        .long   12359612, 12167040, 11963692, 11783168, 11592348, 11392480, 11214008, 11026868
-        .long   10859584, 10683992, 10501136, 10336860, 10165596, 9999916, 9839552, 9684248
-        .long   9523204, 9367424, 9216664, 9070676, 8919968, 8783160, 8633096, 8496468
-        .long   8355960, 8227900, 8088444, 7961008, 7830380, 7703972, 7581576, 7456536
-        .long   7335548, 7218428, 7099112, 6983680, 6871940, 6763724, 6653700, 6542212
-        .long   6439224, 6334756, 6233620, 6131284, 6032252, 5932268, 5839516, 5741928
-        .long   5651268, 5559824, 5467808, 5382160, 5292620, 5209172, 5122196, 5041036
-        .long   4959540, 4877868, 4798840, 4722332, 4645712, 4571540, 4497340, 4423236
-        .long   4351532, 4282116, 4212812, 4143716, 4076848, 4012108, 3945760, 3881572
-        .long   3819440, 3757620, 3696180, 3636716, 3577644, 3520460, 3463676, 3407348
-        .long   3351508, 3297472, 3243928, 3192092, 3140736, 3089900, 3039604, 2989876
-        .long   2941752, 2894176, 2847172, 2801668, 2755828, 2711464, 2667676, 2624476
-        .long   2581880, 2539892, 2499248, 2458476, 2419012, 2379476, 2341212, 2302924
-        .long   2265868, 2229408, 2192984, 2157728, 2122536, 2088476, 2054512, 2021156
+        .long   16238056, 15966416, 15703712, 15449516, 15203420, 14965036, 14734016, 14485548
+        .long   14245324, 14012936, 13788012, 13570192, 13359144, 13134452, 12917188, 12706996
+        .long   12503536, 12306492, 12098492, 11913912, 11718868, 11530108, 11347332, 11155752
+        .long   10970536, 10804944, 10617960, 10450036, 10287340, 10117704, 9953568, 9794676
+        .long   9629964, 9481160, 9326740, 9177276, 9023036, 8873892, 8738484, 8589928
+        .long   8454656, 8315516, 8180884, 8050540, 7916984, 7794852, 7662736, 7541640
+        .long   7417900, 7298156, 7182212, 7064084, 6949780, 6839112, 6726644, 6617816
+        .long   6512452, 6405612, 6302220, 6202112, 6100800, 6002744, 5903728, 5807928
+        .long   5715188, 5621680, 5531180, 5440104, 5351980, 5266660, 5180896, 5097880
+        .long   5014552, 4933904, 4853064, 4774832, 4699084, 4623208, 4547340, 4473920
+        .long   4400576, 4329600, 4260876, 4192252, 4123824, 4057592, 3991600, 3925924
+        .long   3862376, 3800852, 3739624, 3678768, 3618332, 3559852, 3503228, 3445616
+        .long   3389864, 3335892, 3281100, 3228080, 3175572, 3124744, 3074416, 3024620
+        .long   2975380, 2926716, 2879624, 2833084, 2787124, 2741756, 2697836, 2654484
+        .long   2610916, 2568756, 2527188, 2486228, 2445876, 2406812, 2367672, 2329152
+        .long   2291864, 2254572, 2217896, 2182396, 2146940, 2112100, 2077868, 2044244
+O3_CL_G:
+        .long   4096, 4053, 4011, 3968, 3925, 3883, 3840, 3797
+        .long   3755, 3712, 3669, 3627, 3584, 3541, 3499, 3456
+        .long   3413, 3371, 3328, 3285, 3243, 3200, 3157, 3115
+        .long   3072, 3029, 2987, 2944, 2901, 2859, 2816, 2773
+        .long   2731, 2688, 2645, 2603, 2560, 2517, 2475, 2432
+        .long   2389, 2347, 2304, 2261, 2219, 2176, 2133, 2091
+        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048
+        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048
+O3_CL_INV:
+        .long   4096, 4139, 4183, 4228, 4274, 4321, 4369, 4419
+        .long   4468, 4520, 4573, 4626, 4681, 4738, 4795, 4855
+        .long   4916, 4977, 5041, 5107, 5173, 5243, 5314, 5386
+        .long   5461, 5539, 5617, 5699, 5783, 5868, 5958, 6050
+        .long   6143, 6242, 6343, 6445, 6554, 6666, 6779, 6899
+        .long   7023, 7148, 7282, 7420, 7561, 7710, 7866, 8024
+        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192
+        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192
+O3_CL_LIM:
+        .long   1482910, 1498642, 1514335, 1530745, 1547515, 1564254, 1581770, 1599683
+        .long   1617576, 1636314, 1655491, 1674662, 1694754, 1715334, 1735924, 1757522
+        .long   1779665, 1801839, 1825120, 1849010, 1872956, 1898124, 1923978, 1949919
+        .long   1977213, 2005282, 2033478, 2063179, 2093760, 2124518, 2156960, 2190407
+        .long   2224093, 2259672, 2296408, 2333461, 2372656, 2413190, 2454141, 2497532
+        .long   2542486, 2587984, 2636284, 2686421, 2737268, 2791360, 2847632, 2904829
+        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
+        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
+O3_VP_W2:
+        .long   0, 71, 142, 213, 284, 355, 426, 497
+        .long   568, 639, 710, 780, 851, 922, 993, 1064
+        .long   1135, 1206, 1277, 1348, 1419, 1490, 1561, 1632
+        .long   1703, 1774, 1845, 1916, 1987, 2058, 2129, 2200
+        .long   2271, 2341, 2412, 2483, 2554, 2625, 2696, 2767
+        .long   2838, 2909, 2980, 3051, 3122, 3193, 3264, 3335
+        .long   3406, 3477, 3548, 3619, 3690, 3761, 3832, 3902
+        .long   3973, 4044, 4115, 4186, 4257, 4328, 4399, 4470
+        .long   4541, 4612, 4683, 4754, 4825, 4896, 4967, 5038
+        .long   5109, 5180, 5251, 5322, 5393, 5463, 5534, 5605
+        .long   5676, 5747, 5818, 5889, 5960, 6031, 6102, 6173
+        .long   6244, 6315, 6386, 6457, 6528, 6599, 6670, 6741
+        .long   6812, 6883, 6954, 7024, 7095, 7166, 7237, 7308
+        .long   7379, 7450, 7521, 7592, 7663, 7734, 7805, 7876
+        .long   7947, 8018, 8089, 8160, 8231, 8302, 8373, 8444
+        .long   8515, 8585, 8656, 8727, 8798, 8869, 8940, 9011
+O3_SQK:
+        .long   -29275, -29275, -29275, -29275, -29275, -29275, -29275, -29275
+        .long   -29275, -29275, -29275, -29275, -29275, -29275, -29275, -29275
+        .long   -29275, -29275, -29275, -29275, -29275, -29275, -29275, -29275
+        .long   -29275, -29275, -29275, -29275, -29275, -29164, -29017, -28838
+        .long   -28631, -28400, -28140, -27854, -27542, -27203, -26840, -26458
+        .long   -26061, -25662, -25264, -24873, -24494, -24128, -23775, -23442
+        .long   -23125, -22826, -22545, -22282, -22035, -21809, -21598, -21403
+        .long   -21225, -21064, -20916, -20786, -20667, -20565, -20477, -20404
+        .long   -20340, -20292, -20259, -20237, -20231, -20237, -20255, -20288
+        .long   -20333, -20396, -20469, -20562, -20666, -20789, -20931, -21086
+        .long   -21261, -21449, -21647, -21852, -22055, -22255, -22435, -22596
+        .long   -22726, -22832, -22907, -22955, -22982, -22988, -22979, -22956
+        .long   -22919, -22880, -22830, -22778, -22720, -22720, -22720, -22720
+        .long   -22720, -22720, -22720, -22720, -22720, -22720, -22720, -22720
+        .long   -22720, -22720, -22720, -22720, -22720, -22720, -22720, -22720
+        .long   -22720, -22720, -22720, -22720, -22720, -22720, -22720, -22720
+        .align  4
+O3_SQC:
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11271, 9576, 7631, 5913, 4347, 2928, 1644, 486, -555, -1488, -2320, -3058, -3710, -4280, -4775, -5200
+        .short  -5561, -5861, -6106, -6298, -6442, -6541, -6599, -6617, -6600, -6548, -6467, -6355, -6219, -6055, -5870, -5662
+        .short  -5436, -5188, -4927, -4646, -4354, -4044, -3725, -3390, -3049, -2692, -2332, -1956, -1580, -1187, -797, -389
+        .short  12, 434, 841, 1282, 1681, 2171, 1930, -102, -2181, -3383, -4154, -4642, -4923, -5060, -5090, -5047
+        .short  -4948, -4812, -4647, -4464, -4265, -4057, -3840, -3620, -3394, -3167, -2937, -2706, -2473, -2240, -2005, -1770
+        .short  -1535, -1299, -1063, -826, -590, -352, -114, 124, 363, 602, 842, 1082, 1323, 1565, 1807, 2051
+        .short  2294, 2540, 2785, 3033, 3280, 3531, 3781, 4035, 4289, 4547, 4805, 5068, 5331, 5601, 5871, 6149
+        .short  6427, 6715, 7005, 7306, 7609, 7926, 8245, 8581, 8921, 9279, 9639, 10023, 10404, 10815, 11209, 11643
+        .short  11230, 9646, 7830, 6228, 4760, 3426, 2214, 1115, 124, -769, -1570, -2283, -2917, -3475, -3963, -4385
+        .short  -4747, -5051, -5303, -5505, -5661, -5773, -5846, -5880, -5880, -5846, -5784, -5691, -5574, -5429, -5264, -5075
+        .short  -4868, -4640, -4398, -4136, -3862, -3570, -3269, -2951, -2627, -2287, -1941, -1582, -1219, -842, -464, -71
+        .short  318, 726, 1123, 1548, 1942, 2414, 2340, 388, -1898, -3271, -4161, -4751, -5118, -5324, -5412, -5413
+        .short  -5351, -5243, -5102, -4935, -4751, -4554, -4347, -4132, -3913, -3689, -3463, -3234, -3005, -2773, -2541, -2307
+        .short  -2073, -1838, -1603, -1367, -1131, -893, -656, -417, -180, 61, 300, 541, 782, 1025, 1268, 1513
+        .short  1757, 2005, 2252, 2503, 2753, 3007, 3261, 3520, 3778, 4043, 4307, 4578, 4850, 5130, 5411, 5702
+        .short  5995, 6299, 6607, 6927, 7252, 7593, 7938, 8300, 8667, 9053, 9441, 9851, 10257, 10689, 11104, 11553
+        .short  11172, 9694, 8004, 6513, 5144, 3894, 2754, 1716, 776, -75, -840, -1526, -2138, -2680, -3157, -3573
+        .short  -3932, -4238, -4493, -4701, -4866, -4988, -5073, -5121, -5136, -5119, -5072, -4997, -4897, -4771, -4624, -4454
+        .short  -4265, -4056, -3831, -3588, -3331, -3059, -2774, -2475, -2166, -1844, -1514, -1172, -822, -463, -97, 278
+        .short  657, 1047, 1437, 1842, 2235, 2674, 2789, 1012, -1490, -3076, -4099, -4806, -5272, -5559, -5714, -5769
+        .short  -5753, -5680, -5568, -5424, -5260, -5076, -4882, -4676, -4465, -4247, -4027, -3802, -3576, -3346, -3117, -2885
+        .short  -2654, -2419, -2186, -1950, -1716, -1478, -1243, -1004, -766, -526, -287, -44, 197, 442, 685, 932
+        .short  1179, 1429, 1679, 1934, 2187, 2447, 2706, 2972, 3237, 3510, 3784, 4067, 4351, 4645, 4942, 5251
+        .short  5563, 5889, 6220, 6566, 6918, 7286, 7659, 8050, 8444, 8856, 9267, 9698, 10122, 10569, 10996, 11454
+        .short  11090, 9713, 8143, 6762, 5488, 4322, 3254, 2279, 1392, 586, -141, -797, -1384, -1907, -2370, -2776
+        .short  -3129, -3432, -3687, -3898, -4068, -4199, -4292, -4352, -4378, -4375, -4342, -4283, -4198, -4089, -3958, -3806
+        .short  -3634, -3444, -3235, -3011, -2770, -2517, -2248, -1968, -1674, -1370, -1054, -730, -395, -53, 300, 657
+        .short  1026, 1397, 1780, 2161, 2557, 2955, 3227, 1731, -937, -2784, -3960, -4798, -5375, -5754, -5989, -6108
+        .short  -6147, -6116, -6041, -5926, -5785, -5620, -5442, -5249, -5049, -4839, -4626, -4406, -4186, -3959, -3734, -3504
+        .short  -3276, -3043, -2812, -2577, -2344, -2107, -1872, -1633, -1395, -1154, -914, -671, -428, -182, 64, 314
+        .short  564, 819, 1073, 1333, 1594, 1861, 2128, 2404, 2681, 2966, 3255, 3553, 3856, 4169, 4488, 4821
+        .short  5159, 5511, 5871, 6245, 6625, 7021, 7422, 7837, 8253, 8684, 9113, 9556, 9990, 10443, 10876, 11335
+        .short  10978, 9698, 8244, 6967, 5789, 4704, 3710, 2797, 1965, 1205, 518, -105, -664, -1165, -1609, -2003
+        .short  -2346, -2643, -2895, -3107, -3278, -3414, -3513, -3582, -3617, -3625, -3604, -3559, -3486, -3394, -3276, -3141
+        .short  -2983, -2811, -2617, -2411, -2186, -1950, -1697, -1435, -1156, -871, -569, -263, 59, 382, 724, 1062
+        .short  1421, 1771, 2147, 2505, 2901, 3258, 3654, 2550, -215, -2381, -3733, -4716, -5418, -5903, -6228, -6422
+        .short  -6524, -6545, -6514, -6434, -6324, -6183, -6026, -5848, -5662, -5463, -5260, -5047, -4833, -4612, -4392, -4165
+        .short  -3939, -3709, -3480, -3246, -3014, -2777, -2542, -2303, -2065, -1822, -1581, -1335, -1090, -840, -590, -335
+        .short  -80, 182, 444, 713, 984, 1262, 1543, 1833, 2127, 2431, 2740, 3061, 3388, 3727, 4074, 4435
+        .short  4803, 5184, 5573, 5974, 6381, 6799, 7220, 7651, 8082, 8523, 8960, 9407, 9845, 10298, 10732, 11189
+        .short  10833, 9644, 8302, 7126, 6040, 5036, 4114, 3264, 2488, 1776, 1131, 543, 15, -463, -886, -1264
+        .short  -1593, -1882, -2127, -2337, -2506, -2645, -2747, -2821, -2863, -2880, -2867, -2833, -2772, -2693, -2587, -2467
+        .short  -2323, -2166, -1987, -1797, -1586, -1367, -1128, -883, -619, -351, -64, 225, 533, 840, 1167, 1489
+        .short  1834, 2168, 2531, 2873, 3259, 3593, 4032, 3371, 674, -1846, -3412, -4552, -5391, -5994, -6420, -6700
+        .short  -6875, -6959, -6979, -6942, -6868, -6758, -6625, -6469, -6300, -6116, -5924, -5722, -5516, -5302, -5086, -4864
+        .short  -4641, -4414, -4186, -3954, -3722, -3486, -3250, -3010, -2769, -2525, -2279, -2030, -1779, -1523, -1266, -1003
+        .short  -738, -466, -191, 91, 379, 674, 975, 1286, 1604, 1933, 2270, 2618, 2976, 3345, 3722, 4112
+        .short  4508, 4915, 5328, 5749, 6173, 6605, 7037, 7476, 7912, 8355, 8794, 9240, 9678, 10128, 10560, 11013
+        .short  10651, 9550, 8315, 7237, 6240, 5315, 4465, 3677, 2958, 2295, 1693, 1142, 647, 196, -203, -563
+        .short  -876, -1154, -1390, -1593, -1759, -1896, -1999, -2076, -2121, -2145, -2139, -2113, -2061, -1992, -1899, -1790
+        .short  -1658, -1514, -1349, -1173, -977, -772, -549, -318, -69, 185, 456, 731, 1022, 1315, 1625, 1935
+        .short  2262, 2586, 2930, 3263, 3628, 3957, 4377, 4155, 1718, -1154, -2990, -4299, -5287, -6021, -6557, -6936
+        .short  -7191, -7347, -7426, -7442, -7410, -7338, -7234, -7106, -6957, -6792, -6614, -6426, -6229, -6025, -5814, -5599
+        .short  -5379, -5156, -4928, -4698, -4465, -4229, -3989, -3747, -3501, -3253, -3000, -2744, -2484, -2219, -1949, -1674
+        .short  -1392, -1105, -810, -507, -196, 123, 452, 790, 1139, 1497, 1866, 2244, 2632, 3028, 3433, 3844
+        .short  4262, 4685, 5112, 5542, 5975, 6411, 6846, 7285, 7722, 8162, 8599, 9041, 9477, 9923, 10352, 10800
+        .short  10429, 9414, 8279, 7295, 6384, 5538, 4757, 4033, 3369, 2756, 2199, 1687, 1225, 804, 429, 92
+        .short  -205, -467, -692, -886, -1046, -1178, -1280, -1356, -1404, -1430, -1430, -1409, -1365, -1303, -1220, -1119
+        .short  -1000, -866, -714, -549, -367, -174, 34, 254, 485, 728, 982, 1246, 1519, 1802, 2093, 2393
+        .short  2700, 3016, 3338, 3668, 4003, 4343, 4705, 4835, 2862, -283, -2463, -3956, -5104, -5978, -6634, -7120
+        .short  -7465, -7703, -7848, -7925, -7941, -7913, -7845, -7749, -7625, -7484, -7322, -7151, -6965, -6772, -6568, -6360
+        .short  -6143, -5923, -5696, -5467, -5230, -4992, -4747, -4500, -4246, -3989, -3725, -3457, -3181, -2901, -2611, -2316
+        .short  -2012, -1700, -1378, -1048, -707, -357, 4, 373, 753, 1141, 1538, 1941, 2351, 2767, 3187, 3611
+        .short  4038, 4467, 4898, 5331, 5764, 6199, 6632, 7068, 7501, 7938, 8371, 8809, 9240, 9682, 10107, 10550
+        .short  10165, 9232, 8192, 7300, 6472, 5702, 4989, 4328, 3719, 3157, 2643, 2172, 1744, 1355, 1006, 693
+        .short  416, 172, -40, -222, -374, -499, -597, -669, -718, -743, -747, -728, -691, -633, -559, -465
+        .short  -356, -229, -89, 67, 235, 420, 613, 822, 1039, 1271, 1509, 1762, 2018, 2291, 2564, 2856
+        .short  3143, 3452, 3752, 4078, 4386, 4733, 5040, 5379, 4014, 772, -1821, -3524, -4841, -5863, -6648, -7249
+        .short  -7693, -8019, -8238, -8382, -8453, -8475, -8447, -8388, -8293, -8178, -8038, -7884, -7712, -7531, -7335, -7133
+        .short  -6920, -6702, -6474, -6242, -6001, -5755, -5502, -5243, -4976, -4704, -4422, -4134, -3837, -3532, -3217, -2893
+        .short  -2559, -2216, -1862, -1500, -1127, -747, -357, 39, 443, 851, 1265, 1683, 2104, 2528, 2953, 3380
+        .short  3808, 4237, 4666, 5096, 5525, 5956, 6385, 6817, 7245, 7678, 8106, 8539, 8965, 9402, 9822, 10261
+        .short  9859, 9004, 8055, 7250, 6500, 5805, 5158, 4558, 4004, 3493, 3023, 2593, 2201, 1846, 1524, 1237
+        .short  981, 756, 559, 392, 250, 135, 42, -24, -71, -93, -98, -80, -46, 9, 77, 166
+        .short  267, 388, 518, 667, 824, 999, 1181, 1380, 1584, 1806, 2030, 2272, 2515, 2776, 3035, 3315
+        .short  3588, 3885, 4170, 4485, 4776, 5115, 5397, 5799, 5071, 1984, -1051, -3011, -4502, -5678, -6600, -7321
+        .short  -7872, -8290, -8592, -8805, -8939, -9013, -9032, -9011, -8951, -8862, -8746, -8610, -8454, -8283, -8096, -7898
+        .short  -7687, -7466, -7235, -6995, -6745, -6486, -6218, -5941, -5654, -5358, -5052, -4735, -4409, -4073, -3727, -3370
+        .short  -3005, -2630, -2248, -1858, -1461, -1058, -651, -239, 176, 594, 1013, 1435, 1857, 2281, 2704, 3129
+        .short  3552, 3978, 4402, 4828, 5251, 5678, 6101, 6529, 6951, 7379, 7800, 8230, 8649, 9082, 9496, 9930
+        .short  9512, 8731, 7869, 7146, 6473, 5848, 5265, 4726, 4225, 3764, 3338, 2950, 2594, 2272, 1980, 1719
+        .short  1486, 1282, 1103, 951, 821, 717, 634, 574, 533, 513, 511, 529, 563, 615, 682, 766
+        .short  863, 977, 1101, 1242, 1392, 1558, 1732, 1920, 2115, 2325, 2540, 2769, 3003, 3250, 3500, 3763
+        .short  4029, 4308, 4586, 4882, 5170, 5483, 5770, 6135, 5937, 3273, -140, -2424, -4095, -5430, -6493, -7338
+        .short  -8001, -8514, -8904, -9190, -9391, -9519, -9589, -9606, -9582, -9521, -9429, -9310, -9168, -9004, -8824, -8624
+        .short  -8412, -8183, -7943, -7687, -7422, -7142, -6852, -6548, -6235, -5908, -5572, -5224, -4868, -4500, -4125, -3741
+        .short  -3352, -2955, -2555, -2148, -1741, -1328, -915, -498, -84, 335, 752, 1172, 1589, 2010, 2427, 2848
+        .short  3266, 3687, 4104, 4526, 4943, 5364, 5781, 6203, 6620, 7042, 7458, 7882, 8296, 8722, 9131, 9560
+        .short  9130, 8418, 7638, 6992, 6392, 5834, 5315, 4832, 4384, 3971, 3591, 3242, 2923, 2634, 2373, 2139
+        .short  1930, 1747, 1588, 1452, 1338, 1245, 1173, 1121, 1088, 1073, 1076, 1095, 1131, 1182, 1249, 1330
+        .short  1425, 1533, 1655, 1788, 1934, 2090, 2259, 2436, 2626, 2823, 3033, 3248, 3475, 3707, 3952, 4199
+        .short  4459, 4720, 4995, 5268, 5557, 5841, 6143, 6444, 6600, 4548, 912, -1767, -3630, -5126, -6333, -7302
+        .short  -8082, -8693, -9173, -9534, -9804, -9987, -10107, -10164, -10175, -10138, -10069, -9962, -9831, -9669, -9488, -9282
+        .short  -9061, -8817, -8559, -8282, -7993, -7685, -7368, -7034, -6692, -6335, -5972, -5596, -5217, -4827, -4435, -4035
+        .short  -3635, -3228, -2823, -2412, -2003, -1591, -1180, -766, -355, 60, 471, 886, 1297, 1712, 2124, 2539
+        .short  2951, 3366, 3778, 4193, 4604, 5020, 5431, 5847, 6257, 6674, 7084, 7501, 7910, 8330, 8734, 9155
+        .short  8722, 8076, 7373, 6798, 6268, 5774, 5314, 4885, 4490, 4123, 3786, 3476, 3195, 2938, 2708, 2500
+        .short  2318, 2156, 2018, 1898, 1801, 1721, 1662, 1618, 1595, 1585, 1595, 1617, 1658, 1709, 1778, 1857
+        .short  1952, 2056, 2176, 2303, 2447, 2595, 2760, 2929, 3114, 3301, 3504, 3709, 3930, 4150, 4387, 4621
+        .short  4875, 5121, 5390, 5646, 5932, 6194, 6502, 6756, 7084, 5712, 2079, -1034, -3117, -4774, -6123, -7220
+        .short  -8114, -8827, -9397, -9835, -10172, -10413, -10580, -10675, -10717, -10703, -10648, -10550, -10421, -10256, -10067, -9847
+        .short  -9607, -9342, -9061, -8758, -8441, -8107, -7762, -7403, -7037, -6659, -6278, -5888, -5495, -5097, -4699, -4296
+        .short  -3893, -3487, -3083, -2676, -2271, -1863, -1457, -1049, -643, -235, 171, 579, 986, 1394, 1800, 2208
+        .short  2614, 3023, 3429, 3837, 4243, 4651, 5057, 5466, 5871, 6281, 6685, 7096, 7499, 7912, 8311, 8725
+        .short  8301, 7715, 7083, 6575, 6110, 5675, 5272, 4895, 4549, 4226, 3932, 3659, 3414, 3189, 2990, 2808
+        .short  2652, 2511, 2394, 2292, 2212, 2146, 2101, 2068, 2055, 2053, 2070, 2097, 2142, 2196, 2267, 2346
+        .short  2442, 2545, 2664, 2788, 2928, 3073, 3233, 3397, 3576, 3757, 3953, 4150, 4364, 4575, 4805, 5030
+        .short  5274, 5511, 5771, 6017, 6293, 6544, 6842, 7082, 7446, 6700, 3315, -218, -2564, -4381, -5871, -7096
+        .short  -8102, -8917, -9575, -10092, -10494, -10791, -11002, -11134, -11200, -11205, -11158, -11063, -10928, -10754, -10547, -10310
+        .short  -10046, -9758, -9450, -9123, -8782, -8427, -8062, -7687, -7307, -6920, -6530, -6137, -5741, -5344, -4945, -4546
+        .short  -4146, -3746, -3345, -2945, -2544, -2143, -1742, -1341, -940, -539, -138, 262, 663, 1064, 1465, 1866
+        .short  2267, 2668, 3069, 3470, 3871, 4272, 4673, 5074, 5474, 5876, 6276, 6679, 7077, 7482, 7877, 8283
+        .short  7875, 7345, 6780, 6333, 5928, 5549, 5199, 4871, 4571, 4291, 4037, 3801, 3590, 3396, 3226, 3072
+        .short  2939, 2822, 2725, 2642, 2578, 2527, 2495, 2474, 2471, 2479, 2503, 2537, 2587, 2646, 2720, 2802
+        .short  2899, 3002, 3120, 3244, 3381, 3524, 3680, 3841, 4014, 4192, 4381, 4574, 4779, 4986, 5205, 5426
+        .short  5659, 5892, 6138, 6381, 6641, 6892, 7168, 7417, 7744, 7491, 4551, 683, -1978, -3956, -5584, -6933
+        .short  -8049, -8966, -9710, -10305, -10770, -11122, -11373, -11538, -11623, -11642, -11597, -11500, -11352, -11164, -10936, -10678
+        .short  -10391, -10081, -9751, -9406, -9048, -8681, -8304, -7924, -7538, -7151, -6760, -6369, -5975, -5582, -5187, -4794
+        .short  -4399, -4005, -3610, -3216, -2820, -2426, -2031, -1637, -1241, -847, -452, -58, 337, 732, 1127, 1521
+        .short  1916, 2311, 2706, 3100, 3495, 3890, 4285, 4679, 5074, 5469, 5863, 6259, 6652, 7050, 7439, 7839
+        .short  7452, 6977, 6471, 6082, 5732, 5405, 5104, 4822, 4565, 4325, 4108, 3908, 3730, 3567, 3424, 3296
+        .short  3187, 3093, 3015, 2951, 2904, 2869, 2850, 2843, 2850, 2868, 2900, 2942, 2997, 3062, 3139, 3226
+        .short  3323, 3430, 3547, 3672, 3807, 3951, 4102, 4263, 4430, 4606, 4789, 4980, 5176, 5381, 5591, 5809
+        .short  6030, 6262, 6494, 6737, 6979, 7235, 7486, 7751, 8021, 8099, 5722, 1656, -1361, -3507, -5271, -6740
+        .short  -7962, -8978, -9806, -10477, -11002, -11406, -11694, -11888, -11989, -12016, -11969, -11864, -11702, -11497, -11248, -10971
+        .short  -10663, -10338, -9992, -9636, -9268, -8896, -8516, -8136, -7750, -7366, -6978, -6592, -6202, -5815, -5426, -5039
+        .short  -4649, -4261, -3872, -3484, -3095, -2707, -2317, -1930, -1540, -1152, -763, -375, 14, 402, 791, 1179
+        .short  1569, 1957, 2346, 2734, 3123, 3511, 3900, 4289, 4677, 5066, 5454, 5844, 6231, 6623, 7006, 7399
+        .short  7041, 6614, 6162, 5827, 5526, 5249, 4992, 4754, 4536, 4335, 4153, 3987, 3838, 3706, 3589, 3487
+        .short  3400, 3328, 3270, 3225, 3194, 3175, 3169, 3175, 3192, 3222, 3262, 3313, 3374, 3447, 3527, 3619
+        .short  3718, 3829, 3946, 4074, 4208, 4352, 4501, 4662, 4825, 5001, 5178, 5367, 5557, 5760, 5962, 6178
+        .short  6390, 6619, 6841, 7083, 7312, 7568, 7801, 8075, 8304, 8553, 6756, 2668, -717, -3045, -4940, -6524
+        .short  -7849, -8959, -9868, -10612, -11196, -11648, -11971, -12189, -12303, -12334, -12282, -12167, -11989, -11767, -11501, -11208
+        .short  -10886, -10548, -10194, -9833, -9462, -9089, -8710, -8333, -7951, -7570, -7187, -6806, -6423, -6041, -5657, -5276
+        .short  -4892, -4510, -4127, -3745, -3362, -2979, -2596, -2214, -1831, -1449, -1065, -683, -300, 82, 465, 848
+        .short  1231, 1613, 1996, 2379, 2761, 3144, 3527, 3910, 4292, 4676, 5057, 5442, 5821, 6208, 6585, 6973
+        .short  6643, 6262, 5860, 5572, 5318, 5086, 4870, 4673, 4492, 4327, 4177, 4043, 3923, 3818, 3726, 3650
+        .short  3584, 3534, 3494, 3468, 3452, 3450, 3456, 3476, 3504, 3545, 3593, 3654, 3721, 3801, 3887, 3984
+        .short  4087, 4202, 4320, 4451, 4585, 4731, 4879, 5040, 5201, 5376, 5549, 5737, 5923, 6124, 6320, 6533
+        .short  6739, 6965, 7179, 7418, 7638, 7891, 8113, 8388, 8595, 8921, 7663, 3688, -53, -2582, -4603, -6295
+        .short  -7718, -8916, -9905, -10716, -11356, -11853, -12209, -12448, -12572, -12604, -12546, -12419, -12228, -11991, -11711, -11405
+        .short  -11074, -10729, -10372, -10009, -9639, -9267, -8893, -8518, -8141, -7766, -7388, -7012, -6635, -6258, -5881, -5504
+        .short  -5127, -4750, -4373, -3996, -3619, -3242, -2865, -2488, -2111, -1734, -1357, -980, -604, -226, 150, 528
+        .short  904, 1282, 1658, 2036, 2412, 2790, 3166, 3544, 3920, 4298, 4673, 5053, 5427, 5808, 6179, 6562
+        .short  6262, 5925, 5568, 5324, 5112, 4921, 4744, 4584, 4437, 4305, 4186, 4082, 3989, 3911, 3843, 3789
+        .short  3745, 3714, 3693, 3685, 3684, 3697, 3717, 3750, 3789, 3841, 3899, 3969, 4043, 4130, 4222, 4325
+        .short  4432, 4551, 4672, 4806, 4941, 5089, 5237, 5398, 5559, 5733, 5906, 6092, 6275, 6473, 6667, 6876
+        .short  7079, 7300, 7511, 7743, 7960, 8206, 8425, 8691, 8895, 9227, 8400, 4656, 616, -2129, -4270, -6065
+        .short  -7580, -8859, -9923, -10796, -11490, -12026, -12413, -12669, -12803, -12832, -12769, -12631, -12428, -12178, -11889, -11573
+        .short  -11237, -10889, -10531, -10168, -9802, -9433, -9064, -8693, -8322, -7951, -7580, -7208, -6837, -6465, -6094, -5722
+        .short  -5351, -4979, -4608, -4236, -3865, -3493, -3122, -2750, -2380, -2007, -1637, -1264, -894, -521, -151, 222
+        .short  592, 965, 1335, 1708, 2078, 2451, 2821, 3194, 3563, 3937, 4306, 4680, 5048, 5425, 5789, 6167
+        .short  5901, 5603, 5288, 5083, 4909, 4755, 4614, 4488, 4373, 4272, 4182, 4105, 4038, 3984, 3939, 3907
+        .short  3883, 3872, 3868, 3876, 3892, 3919, 3952, 3998, 4048, 4111, 4178, 4257, 4340, 4434, 4532, 4640
+        .short  4753, 4875, 5001, 5137, 5276, 5425, 5576, 5737, 5899, 6072, 6245, 6429, 6612, 6807, 7000, 7205
+        .short  7407, 7622, 7833, 8058, 8275, 8512, 8732, 8985, 9195, 9507, 9015, 5554, 1275, -1695, -3952, -5841
+        .short  -7441, -8796, -9929, -10859, -11603, -12175, -12590, -12860, -13001, -13029, -12960, -12811, -12599, -12337, -12042, -11720
+        .short  -11382, -11032, -10677, -10316, -9954, -9588, -9224, -8857, -8492, -8125, -7760, -7393, -7027, -6660, -6295, -5928
+        .short  -5562, -5195, -4830, -4462, -4097, -3730, -3365, -2997, -2632, -2265, -1900, -1532, -1167, -799, -435, -67
+        .short  298, 666, 1030, 1398, 1763, 2131, 2495, 2864, 3228, 3596, 3960, 4329, 4692, 5063, 5423, 5795
+        .short  5561, 5299, 5022, 4852, 4713, 4594, 4486, 4391, 4306, 4233, 4169, 4118, 4075, 4044, 4021, 4009
+        .short  4004, 4011, 4024, 4049, 4079, 4120, 4167, 4224, 4287, 4359, 4436, 4523, 4615, 4716, 4821, 4935
+        .short  5054, 5180, 5311, 5450, 5593, 5743, 5897, 6059, 6223, 6395, 6570, 6752, 6937, 7128, 7322, 7523
+        .short  7726, 7936, 8146, 8365, 8583, 8811, 9034, 9274, 9493, 9778, 9521, 6347, 1894, -1294, -3662, -5638
+        .short  -7315, -8737, -9932, -10914, -11702, -12306, -12745, -13027, -13173, -13197, -13123, -12964, -12745, -12476, -12175, -11850
+        .short  -11512, -11163, -10810, -10451, -10094, -9732, -9373, -9011, -8651, -8288, -7928, -7566, -7206, -6843, -6483, -6120
+        .short  -5760, -5398, -5038, -4675, -4315, -3952, -3593, -3230, -2870, -2507, -2147, -1785, -1425, -1062, -702, -339
+        .short  20, 383, 743, 1106, 1465, 1829, 2188, 2551, 2911, 3274, 3633, 3997, 4355, 4721, 5076, 5443
+        .short  5243, 5013, 4771, 4633, 4526, 4438, 4360, 4293, 4236, 4189, 4151, 4123, 4103, 4093, 4090, 4097
+        .short  4111, 4134, 4164, 4203, 4249, 4303, 4363, 4431, 4505, 4587, 4675, 4770, 4870, 4978, 5091, 5211
+        .short  5335, 5467, 5602, 5745, 5891, 6044, 6201, 6364, 6531, 6703, 6880, 7061, 7247, 7437, 7632, 7830
+        .short  8033, 8240, 8451, 8664, 8883, 9104, 9330, 9559, 9786, 10045, 9950, 7029, 2453, -936, -3408, -5462
+        .short  -7207, -8689, -9939, -10966, -11794, -12425, -12883, -13174, -13324, -13345, -13265, -13098, -12872, -12596, -12293, -11966
+        .short  -11629, -11281, -10932, -10576, -10223, -9865, -9511, -9152, -8798, -8439, -8084, -7726, -7371, -7013, -6658, -6300
+        .short  -5945, -5586, -5231, -4873, -4518, -4160, -3805, -3446, -3091, -2733, -2378, -2020, -1665, -1306, -952, -593
+        .short  -238, 120, 475, 833, 1188, 1547, 1901, 2260, 2615, 2974, 3328, 3687, 4041, 4401, 4752, 5114
+        .short  4947, 4747, 4537, 4427, 4350, 4289, 4239, 4199, 4167, 4144, 4129, 4123, 4124, 4133, 4150, 4175
+        .short  4206, 4245, 4291, 4344, 4403, 4470, 4543, 4622, 4707, 4799, 4896, 5000, 5109, 5224, 5344, 5469
+        .short  5600, 5736, 5878, 6024, 6175, 6330, 6491, 6655, 6825, 6999, 7177, 7359, 7546, 7735, 7931, 8128
+        .short  8331, 8535, 8747, 8957, 9176, 9392, 9619, 9841, 10073, 10313, 10311, 7581, 2925, -636, -3202, -5324
+        .short  -7127, -8660, -9957, -11023, -11883, -12537, -13010, -13307, -13458, -13473, -13387, -13213, -12982, -12702, -12397, -12069
+        .short  -11734, -11387, -11042, -10690, -10340, -9987, -9637, -9283, -8932, -8578, -8228, -7874, -7523, -7169, -6819, -6465
+        .short  -6114, -5760, -5410, -5056, -4705, -4351, -4001, -3647, -3296, -2942, -2592, -2238, -1887, -1533, -1183, -829
+        .short  -478, -124, 226, 580, 931, 1285, 1635, 1990, 2340, 2694, 3044, 3399, 3748, 4104, 4451, 4809
+        .short  4673, 4501, 4320, 4236, 4185, 4150, 4125, 4109, 4100, 4100, 4106, 4120, 4141, 4169, 4203, 4245
+        .short  4292, 4346, 4407, 4474, 4546, 4625, 4709, 4800, 4895, 4997, 5103, 5215, 5332, 5454, 5582, 5713
+        .short  5851, 5992, 6138, 6288, 6444, 6603, 6767, 6934, 7107, 7282, 7463, 7645, 7834, 8023, 8220, 8416
+        .short  8620, 8823, 9035, 9243, 9462, 9675, 9902, 10119, 10354, 10583, 10636, 8017, 3289, -407, -3052, -5233
+        .short  -7084, -8659, -9994, -11091, -11975, -12646, -13129, -13429, -13577, -13587, -13495, -13314, -13077, -12794, -12488, -12160
+        .short  -11827, -11483, -11141, -10792, -10447, -10097, -9751, -9401, -9055, -8705, -8359, -8009, -7662, -7312, -6966, -6616
+        .short  -6270, -5920, -5573, -5224, -4877, -4527, -4181, -3831, -3484, -3135, -2788, -2438, -2092, -1742, -1396, -1046
+        .short  -699, -350, -3, 347, 693, 1043, 1390, 1739, 2086, 2436, 2782, 3132, 3478, 3829, 4173, 4526
+        .short  4421, 4276, 4122, 4061, 4033, 4022, 4020, 4026, 4039, 4059, 4085, 4118, 4156, 4202, 4253, 4310
+        .short  4372, 4441, 4515, 4595, 4680, 4770, 4866, 4967, 5072, 5183, 5299, 5419, 5544, 5673, 5808, 5946
+        .short  6089, 6235, 6387, 6542, 6702, 6864, 7032, 7202, 7378, 7555, 7738, 7922, 8113, 8303, 8501, 8697
+        .short  8902, 9104, 9316, 9523, 9742, 9954, 10181, 10395, 10630, 10854, 10916, 8310, 3522, -263, -2970, -5195
+        .short  -7084, -8692, -10055, -11175, -12076, -12757, -13244, -13542, -13685, -13688, -13588, -13401, -13160, -12874, -12567, -12240
+        .short  -11909, -11568, -11228, -10883, -10542, -10196, -9854, -9507, -9165, -8819, -8476, -8130, -7788, -7442, -7099, -6753
+        .short  -6411, -6065, -5722, -5376, -5033, -4688, -4345, -3999, -3656, -3310, -2968, -2622, -2279, -1933, -1591, -1245
+        .short  -902, -556, -213, 132, 475, 821, 1164, 1510, 1852, 2198, 2541, 2887, 3229, 3576, 3916, 4265
+        .short  4192, 4071, 3940, 3901, 3894, 3905, 3923, 3950, 3982, 4021, 4065, 4116, 4171, 4232, 4299, 4371
+        .short  4447, 4530, 4616, 4709, 4805, 4907, 5013, 5124, 5239, 5359, 5483, 5611, 5744, 5881, 6022, 6166
+        .short  6315, 6467, 6624, 6784, 6948, 7115, 7286, 7460, 7638, 7818, 8004, 8190, 8382, 8574, 8773, 8971
+        .short  9176, 9379, 9591, 9798, 10017, 10228, 10454, 10668, 10900, 11127, 11167, 8479, 3622, -209, -2957, -5215
+        .short  -7131, -8762, -10143, -11278, -12188, -12872, -13357, -13650, -13785, -13779, -13670, -13476, -13231, -12943, -12636, -12310
+        .short  -11980, -11642, -11306, -10964, -10626, -10283, -9945, -9602, -9263, -8921, -8582, -8239, -7900, -7558, -7219, -6876
+        .short  -6537, -6195, -5856, -5513, -5174, -4832, -4493, -4150, -3811, -3469, -3129, -2787, -2448, -2106, -1766, -1424
+        .short  -1085, -743, -403, -61, 278, 620, 959, 1302, 1641, 1983, 2322, 2665, 3003, 3347, 3684, 4029
+        .short  3985, 3887, 3778, 3758, 3770, 3800, 3838, 3883, 3933, 3990, 4051, 4117, 4188, 4265, 4345, 4431
+        .short  4521, 4616, 4715, 4819, 4926, 5039, 5154, 5275, 5399, 5528, 5660, 5797, 5936, 6080, 6228, 6379
+        .short  6533, 6691, 6853, 7018, 7186, 7357, 7532, 7710, 7891, 8075, 8262, 8451, 8645, 8840, 9039, 9239
+        .short  9445, 9650, 9861, 10070, 10287, 10501, 10723, 10941, 11167, 11404, 11368, 8484, 3567, -257, -3025, -5302
+        .short  -7232, -8876, -10265, -11405, -12314, -12994, -13471, -13753, -13876, -13859, -13741, -13540, -13290, -13001, -12693, -12369
+        .short  -12041, -11705, -11372, -11033, -10698, -10359, -10024, -9684, -9349, -9009, -8674, -8335, -7999, -7660, -7324, -6985
+        .short  -6649, -6310, -5974, -5635, -5299, -4960, -4624, -4285, -3949, -3610, -3274, -2935, -2600, -2261, -1925, -1586
+        .short  -1250, -911, -575, -236, 100, 439, 775, 1114, 1450, 1789, 2124, 2464, 2799, 3140, 3473, 3815
+        .short  3800, 3723, 3634, 3631, 3661, 3708, 3763, 3826, 3893, 3966, 4041, 4124, 4208, 4299, 4392, 4492
+        .short  4593, 4701, 4810, 4926, 5043, 5166, 5291, 5422, 5554, 5692, 5831, 5976, 6122, 6274, 6427, 6585
+        .short  6744, 6909, 7075, 7245, 7417, 7593, 7771, 7953, 8137, 8325, 8514, 8707, 8902, 9100, 9300, 9503
+        .short  9708, 9916, 10126, 10339, 10553, 10771, 10989, 11213, 11429, 11684, 11524, 8338, 3361, -411, -3176, -5457
+        .short  -7391, -9036, -10423, -11557, -12457, -13126, -13587, -13854, -13961, -13931, -13802, -13594, -13340, -13048, -12740, -12417
+        .short  -12091, -11759, -11427, -11092, -10760, -10424, -10091, -9755, -9422, -9086, -8753, -8417, -8085, -7749, -7416, -7080
+        .short  -6747, -6411, -6078, -5742, -5409, -5073, -4740, -4404, -4072, -3736, -3403, -3067, -2734, -2398, -2065, -1729
+        .short  -1396, -1060, -727, -391, -59, 277, 610, 946, 1279, 1615, 1948, 2284, 2616, 2954, 3284, 3623
+        .short  3636, 3579, 3509, 3522, 3567, 3631, 3701, 3780, 3861, 3949, 4039, 4135, 4233, 4337, 4443, 4554
+        .short  4667, 4786, 4906, 5032, 5159, 5292, 5426, 5565, 5706, 5852, 5998, 6151, 6304, 6462, 6621, 6786
+        .short  6950, 7121, 7291, 7467, 7643, 7824, 8005, 8192, 8378, 8570, 8761, 8958, 9154, 9356, 9557, 9763
+        .short  9968, 10180, 10389, 10606, 10817, 11040, 11253, 11486, 11689, 11970, 11589, 7997, 3003, -671, -3414, -5683
+        .short  -7608, -9244, -10617, -11737, -12618, -13267, -13705, -13952, -14040, -13995, -13853, -13639, -13379, -13086, -12777, -12456
+        .short  -12131, -11801, -11472, -11140, -10810, -10477, -10147, -9814, -9483, -9150, -8820, -8487, -8157, -7824, -7494, -7161
+        .short  -6830, -6497, -6167, -5834, -5504, -5171, -4841, -4508, -4177, -3844, -3514, -3181, -2851, -2518, -2188, -1854
+        .short  -1524, -1191, -861, -528, -198, 135, 465, 799, 1129, 1462, 1792, 2126, 2455, 2790, 3117, 3453
+        .short  3495, 3455, 3403, 3430, 3489, 3567, 3651, 3744, 3840, 3942, 4045, 4154, 4264, 4380, 4497, 4620
+        .short  4744, 4873, 5003, 5139, 5275, 5417, 5559, 5708, 5856, 6010, 6163, 6323, 6482, 6648, 6812, 6983
+        .short  7153, 7329, 7504, 7685, 7865, 8051, 8235, 8427, 8616, 8812, 9005, 9207, 9404, 9610, 9811, 10022
+        .short  10226, 10442, 10649, 10871, 11080, 11309, 11515, 11759, 11947, 12254, 11509, 7440, 2506, -1034, -3737, -5981
+        .short  -7883, -9499, -10847, -11943, -12795, -13416, -13825, -14048, -14112, -14050, -13895, -13673, -13408, -13114, -12804, -12485
+        .short  -12161, -11834, -11506, -11177, -10849, -10519, -10191, -9861, -9532, -9203, -8874, -8544, -8216, -7886, -7558, -7228
+        .short  -6900, -6570, -6241, -5911, -5583, -5253, -4925, -4595, -4267, -3937, -3608, -3278, -2950, -2620, -2292, -1962
+        .short  -1634, -1303, -976, -645, -317, 13, 341, 671, 999, 1330, 1657, 1988, 2315, 2647, 2972, 3305
+        .short  3373, 3352, 3316, 3356, 3428, 3519, 3617, 3723, 3831, 3945, 4061, 4182, 4304, 4431, 4559, 4692
+        .short  4826, 4965, 5105, 5250, 5395, 5545, 5696, 5852, 6007, 6169, 6329, 6496, 6661, 6833, 7003, 7180
+        .short  7355, 7537, 7716, 7902, 8086, 8277, 8465, 8661, 8853, 9053, 9248, 9454, 9653, 9863, 10064, 10280
+        .short  10484, 10704, 10910, 11137, 11343, 11578, 11780, 12032, 12212, 12518, 11225, 6656, 1875, -1506, -4150, -6354
+        .short  -8220, -9803, -11115, -12176, -12988, -13575, -13947, -14140, -14177, -14097, -13927, -13698, -13426, -13131, -12820, -12503
+        .short  -12179, -11855, -11529, -11203, -10876, -10550, -10222, -9896, -9569, -9242, -8915, -8589, -8262, -7935, -7608, -7281
+        .short  -6955, -6628, -6301, -5974, -5648, -5321, -4994, -4667, -4340, -4013, -3687, -3360, -3033, -2706, -2380, -2052
+        .short  -1726, -1399, -1073, -745, -419, -91, 234, 562, 888, 1216, 1541, 1870, 2195, 2524, 2847, 3178
+        .short  3274, 3267, 3248, 3298, 3382, 3484, 3595, 3712, 3833, 3958, 4086, 4217, 4351, 4488, 4626, 4769
+        .short  4913, 5060, 5210, 5362, 5516, 5674, 5833, 5996, 6159, 6327, 6495, 6668, 6840, 7017, 7194, 7375
+        .short  7556, 7742, 7927, 8118, 8306, 8501, 8694, 8893, 9089, 9292, 9492, 9699, 9902, 10114, 10319, 10536
+        .short  10743, 10965, 11174, 11401, 11610, 11845, 12051, 12300, 12493, 12713, 10657, 5671, 1146, -2071, -4641, -6791
+        .short  -8611, -10150, -11415, -12430, -13194, -13737, -14068, -14227, -14235, -14136, -13950, -13713, -13435, -13140, -12827, -12512
+        .short  -12189, -11867, -11542, -11219, -10893, -10569, -10243, -9920, -9594, -9270, -8944, -8621, -8295, -7971, -7645, -7321
+        .short  -6996, -6672, -6346, -6022, -5697, -5373, -5047, -4723, -4398, -4074, -3748, -3424, -3099, -2774, -2449, -2125
+        .short  -1800, -1475, -1150, -826, -501, -176, 149, 474, 798, 1123, 1447, 1773, 2097, 2423, 2745, 3073
+        .short  3195, 3203, 3199, 3260, 3355, 3467, 3590, 3717, 3850, 3984, 4124, 4264, 4409, 4554, 4704, 4854
+        .short  5008, 5163, 5322, 5482, 5645, 5809, 5976, 6145, 6317, 6490, 6666, 6843, 7023, 7204, 7388, 7573
+        .short  7761, 7950, 8142, 8335, 8530, 8727, 8925, 9126, 9328, 9533, 9738, 9946, 10154, 10366, 10577, 10793
+        .short  11007, 11226, 11442, 11665, 11884, 12111, 12332, 12559, 12800, 12744, 9722, 4500, 317, -2737, -5217, -7299
+        .short  -9059, -10539, -11747, -12703, -13412, -13902, -14187, -14307, -14285, -14163, -13963, -13717, -13434, -13136, -12824, -12509
+        .short  -12187, -11867, -11543, -11222, -10898, -10577, -10252, -9931, -9606, -9285, -8960, -8639, -8315, -7993, -7669, -7347
+        .short  -7023, -6701, -6377, -6056, -5731, -5410, -5086, -4764, -4440, -4118, -3794, -3472, -3148, -2826, -2502, -2180
+        .short  -1857, -1535, -1211, -889, -565, -243, 81, 403, 727, 1049, 1372, 1695, 2018, 2341, 2663, 2987
+        .short  3137, 3159, 3169, 3239, 3344, 3465, 3598, 3735, 3879, 4022, 4172, 4321, 4476, 4630, 4789, 4947
+        .short  5110, 5273, 5440, 5607, 5778, 5949, 6124, 6298, 6478, 6656, 6840, 7021, 7208, 7394, 7585, 7773
+        .short  7968, 8160, 8358, 8554, 8756, 8954, 9159, 9361, 9570, 9775, 9987, 10194, 10410, 10620, 10839, 11051
+        .short  11274, 11488, 11716, 11931, 12164, 12376, 12622, 12816, 13122, 12466, 8408, 3227, -588, -3483, -5862, -7863
+        .short  -9554, -10961, -12102, -12989, -13636, -14065, -14301, -14377, -14326, -14180, -13967, -13710, -13425, -13123, -12812, -12496
+        .short  -12176, -11857, -11535, -11215, -10893, -10572, -10250, -9930, -9608, -9287, -8965, -8645, -8322, -8002, -7680, -7359
+        .short  -7037, -6717, -6394, -6074, -5752, -5431, -5109, -4789, -4467, -4146, -3824, -3503, -3181, -2861, -2539, -2218
+        .short  -1896, -1576, -1253, -933, -611, -290, 32, 352, 675, 995, 1317, 1638, 1960, 2281, 2601, 2924
+        .short  3099, 3135, 3157, 3237, 3351, 3481, 3622, 3769, 3921, 4075, 4233, 4392, 4555, 4717, 4884, 5051
+        .short  5222, 5392, 5567, 5741, 5919, 6097, 6279, 6460, 6645, 6830, 7019, 7206, 7399, 7590, 7786, 7980
+        .short  8179, 8376, 8579, 8779, 8985, 9187, 9397, 9602, 9815, 10022, 10239, 10448, 10669, 10880, 11104, 11317
+        .short  11545, 11758, 11992, 12204, 12445, 12653, 12909, 13096, 13373, 11664, 6740, 1900, -1570, -4306, -6573, -8480
+        .short  -10089, -11411, -12475, -13281, -13860, -14222, -14407, -14437, -14356, -14186, -13960, -13692, -13405, -13099, -12789, -12472
+        .short  -12155, -11835, -11517, -11196, -10877, -10556, -10237, -9916, -9597, -9276, -8957, -8636, -8317, -7997, -7677, -7357
+        .short  -7037, -6717, -6397, -6077, -5758, -5437, -5118, -4797, -4478, -4157, -3838, -3518, -3198, -2878, -2558, -2238
+        .short  -1918, -1598, -1278, -958, -638, -318, 2, 322, 641, 962, 1281, 1602, 1921, 2242, 2560, 2882
+        .short  3081, 3132, 3164, 3254, 3374, 3513, 3662, 3818, 3978, 4141, 4306, 4475, 4644, 4817, 4990, 5166
+        .short  5342, 5522, 5702, 5884, 6068, 6254, 6440, 6629, 6819, 7011, 7204, 7399, 7595, 7793, 7992, 8193
+        .short  8395, 8599, 8804, 9010, 9218, 9427, 9638, 9850, 10063, 10278, 10494, 10711, 10930, 11149, 11371, 11592
+        .short  11817, 12040, 12267, 12492, 12723, 12950, 13180, 13428, 13347, 10227, 4881, 558, -2621, -5193, -7338, -9142
+        .short  -10653, -11882, -12855, -13576, -14076, -14370, -14499, -14486, -14373, -14181, -13942, -13665, -13373, -13066, -12756, -12438
+        .short  -12123, -11803, -11486, -11166, -10849, -10529, -10211, -9891, -9574, -9253, -8936, -8616, -8299, -7978, -7661, -7341
+        .short  -7023, -6703, -6386, -6066, -5748, -5428, -5111, -4790, -4473, -4153, -3835, -3515, -3198, -2878, -2560, -2240
+        .short  -1923, -1602, -1285, -965, -647, -327, -10, 310, 628, 948, 1265, 1586, 1903, 2224, 2540, 2861
+        .short  3084, 3148, 3192, 3291, 3418, 3565, 3721, 3886, 4052, 4225, 4397, 4574, 4750, 4931, 5110, 5294
+        .short  5477, 5664, 5850, 6040, 6229, 6422, 6613, 6810, 7004, 7203, 7400, 7602, 7801, 8006, 8208, 8416
+        .short  8620, 8831, 9038, 9251, 9460, 9677, 9888, 10107, 10320, 10542, 10757, 10982, 11199, 11427, 11645, 11877
+        .short  12095, 12332, 12549, 12792, 13005, 13262, 13452, 13769, 12687, 8153, 2975, -813, -3740, -6142, -8153, -9843
+        .short  -11240, -12368, -13235, -13867, -14279, -14505, -14573, -14520, -14373, -14163, -13908, -13627, -13329, -13022, -12709, -12394
+        .short  -12077, -11760, -11442, -11125, -10807, -10489, -10171, -9854, -9536, -9218, -8900, -8582, -8265, -7947, -7629, -7311
+        .short  -6994, -6675, -6358, -6040, -5723, -5404, -5087, -4769, -4451, -4133, -3816, -3497, -3180, -2862, -2545, -2226
+        .short  -1909, -1590, -1274, -955, -638, -319, -2, 317, 633, 952, 1269, 1588, 1904, 2224, 2539, 2860
+        .short  3109, 3183, 3240, 3345, 3481, 3633, 3798, 3968, 4144, 4321, 4503, 4685, 4870, 5056, 5245, 5434
+        .short  5625, 5817, 6010, 6205, 6401, 6599, 6798, 6998, 7199, 7402, 7606, 7812, 8018, 8226, 8434, 8645
+        .short  8856, 9069, 9282, 9498, 9713, 9931, 10148, 10369, 10588, 10811, 11032, 11258, 11480, 11709, 11933, 12165
+        .short  12389, 12624, 12849, 13089, 13312, 13557, 13786, 13851, 11101, 5735, 1153, -2203, -4895, -7127, -8996, -10560
+        .short  -11834, -12848, -13606, -14140, -14464, -14621, -14631, -14537, -14359, -14132, -13864, -13578, -13274, -12967, -12653, -12339
+        .short  -12021, -11707, -11388, -11073, -10754, -10439, -10120, -9805, -9486, -9170, -8852, -8536, -8218, -7902, -7584, -7268
+        .short  -6950, -6634, -6316, -6000, -5681, -5366, -5047, -4731, -4413, -4097, -3779, -3463, -3145, -2829, -2511, -2195
+        .short  -1877, -1561, -1243, -927, -609, -292, 25, 342, 659, 976, 1293, 1610, 1927, 2245, 2561, 2879
+        .short  3156, 3240, 3307, 3419, 3562, 3720, 3892, 4067, 4251, 4435, 4624, 4812, 5005, 5196, 5392, 5587
+        .short  5785, 5982, 6184, 6383, 6587, 6788, 6994, 7198, 7407, 7613, 7824, 8032, 8246, 8456, 8672, 8884
+        .short  9103, 9317, 9538, 9754, 9977, 10195, 10420, 10640, 10868, 11089, 11319, 11542, 11775, 11998, 12235, 12458
+        .short  12699, 12921, 13168, 13385, 13646, 13840, 14161, 13118, 8587, 3309, -596, -3613, -6079, -8135, -9858, -11279
+        .short  -12426, -13312, -13959, -14387, -14628, -14711, -14670, -14534, -14333, -14085, -13809, -13515, -13211, -12900, -12587, -12272
+        .short  -11956, -11640, -11324, -11007, -10691, -10374, -10057, -9741, -9424, -9108, -8791, -8475, -8158, -7842, -7525, -7209
+        .short  -6892, -6576, -6259, -5943, -5626, -5310, -4993, -4677, -4359, -4043, -3726, -3410, -3093, -2777, -2460, -2144
+        .short  -1827, -1511, -1194, -878, -561, -245, 72, 388, 705, 1021, 1338, 1654, 1971, 2288, 2604, 2921
+        .short  3222, 3319, 3395, 3516, 3663, 3829, 4005, 4189, 4376, 4569, 4762, 4959, 5156, 5356, 5556, 5759
+        .short  5961, 6166, 6371, 6578, 6785, 6994, 7204, 7415, 7627, 7840, 8054, 8269, 8485, 8703, 8921, 9140
+        .short  9360, 9581, 9803, 10026, 10250, 10475, 10701, 10928, 11156, 11384, 11614, 11844, 12076, 12307, 12542, 12774
+        .short  13011, 13244, 13484, 13718, 13957, 14209, 14156, 11074, 5609, 1056, -2321, -5036, -7283, -9159, -10723, -11993
+        .short  -13000, -13752, -14282, -14605, -14762, -14775, -14685, -14512, -14288, -14023, -13740, -13439, -13134, -12821, -12509, -12192
+        .short  -11878, -11560, -11246, -10928, -10613, -10296, -9981, -9663, -9349, -9031, -8716, -8399, -8084, -7766, -7451, -7134
+        .short  -6819, -6501, -6187, -5869, -5554, -5237, -4922, -4604, -4290, -3972, -3657, -3340, -3025, -2707, -2392, -2075
+        .short  -1760, -1443, -1128, -810, -495, -178, 137, 455, 769, 1087, 1402, 1719, 2034, 2352, 2666, 2985
+        .short  3312, 3419, 3504, 3632, 3785, 3956, 4137, 4327, 4520, 4719, 4918, 5121, 5324, 5530, 5736, 5945
+        .short  6153, 6364, 6574, 6787, 6999, 7214, 7428, 7645, 7861, 8081, 8298, 8519, 8738, 8962, 9182, 9408
+        .short  9630, 9858, 10082, 10312, 10536, 10769, 10995, 11229, 11456, 11693, 11921, 12161, 12389, 12632, 12859, 13106
+        .short  13332, 13586, 13806, 14073, 14272, 14564, 12917, 7912, 2763, -1028, -4007, -6447, -8477, -10173, -11562, -12680
+        .short  -13534, -14156, -14562, -14789, -14859, -14814, -14674, -14473, -14225, -13951, -13657, -13355, -13044, -12733, -12417, -12103
+        .short  -11786, -11471, -11154, -10839, -10522, -10207, -9890, -9575, -9258, -8943, -8626, -8310, -7994, -7678, -7362, -7046
+        .short  -6729, -6414, -6097, -5781, -5465, -5149, -4833, -4517, -4201, -3885, -3569, -3253, -2937, -2620, -2304, -1988
+        .short  -1672, -1356, -1040, -724, -408, -91, 224, 541, 856, 1173, 1488, 1805, 2120, 2438, 2752, 3070
+        .short  3425, 3540, 3636, 3769, 3929, 4104, 4292, 4485, 4686, 4888, 5095, 5302, 5513, 5722, 5936, 6148
+        .short  6364, 6578, 6796, 7012, 7232, 7449, 7671, 7890, 8114, 8335, 8560, 8783, 9010, 9235, 9464, 9689
+        .short  9920, 10147, 10380, 10609, 10843, 11073, 11309, 11541, 11779, 12011, 12251, 12485, 12727, 12961, 13206, 13439
+        .short  13689, 13918, 14178, 14390, 14706, 14082, 9968, 4461, 217, -3028, -5659, -7839, -9656, -11158, -12372, -13321
+        .short  -14025, -14509, -14799, -14927, -14923, -14819, -14641, -14412, -14147, -13862, -13562, -13255, -12943, -12630, -12314, -12000
+        .short  -11683, -11368, -11051, -10735, -10418, -10103, -9786, -9471, -9154, -8838, -8521, -8206, -7889, -7573, -7256, -6941
+        .short  -6624, -6309, -5992, -5676, -5359, -5044, -4727, -4412, -4094, -3779, -3462, -3147, -2830, -2514, -2197, -1882
+        .short  -1565, -1250, -932, -617, -300, 15, 332, 648, 965, 1280, 1597, 1912, 2229, 2545, 2861, 3178
+        .short  3559, 3686, 3790, 3931, 4095, 4277, 4468, 4669, 4873, 5082, 5292, 5506, 5721, 5938, 6155, 6374
+        .short  6593, 6815, 7036, 7259, 7482, 7706, 7931, 8157, 8384, 8611, 8839, 9068, 9298, 9529, 9760, 9992
+        .short  10225, 10458, 10693, 10928, 11164, 11400, 11638, 11875, 12114, 12353, 12594, 12833, 13076, 13316, 13561, 13802
+        .short  14048, 14291, 14536, 14797, 14736, 11607, 6057, 1377, -2129, -4945, -7264, -9193, -10794, -12094, -13126, -13902
+        .short  -14455, -14803, -14984, -15019, -14950, -14794, -14583, -14328, -14052, -13755, -13452, -13140, -12829, -12513, -12199, -11881
+        .short  -11566, -11248, -10933, -10615, -10300, -9982, -9668, -9350, -9035, -8717, -8402, -8084, -7769, -7451, -7136, -6818
+        .short  -6503, -6185, -5870, -5552, -5237, -4919, -4604, -4286, -3971, -3653, -3338, -3020, -2705, -2387, -2072, -1754
+        .short  -1439, -1121, -806, -488, -173, 144, 460, 777, 1093, 1410, 1726, 2043, 2358, 2677, 2991, 3310
+        .short  3719, 3854, 3968, 4115, 4285, 4471, 4668, 4872, 5082, 5295, 5511, 5730, 5950, 6172, 6394, 6619
+        .short  6843, 7070, 7296, 7524, 7752, 7982, 8211, 8442, 8673, 8906, 9137, 9372, 9605, 9841, 10075, 10313
+        .short  10548, 10788, 11024, 11266, 11503, 11746, 11984, 12229, 12467, 12715, 12953, 13203, 13441, 13694, 13931, 14189
+        .short  14421, 14689, 14912, 15110, 12822, 7457, 2416, -1337, -4322, -6768, -8797, -10484, -11859, -12960, -13799, -14411
+        .short  -14810, -15036, -15109, -15069, -14935, -14742, -14498, -14229, -13937, -13637, -13326, -13016, -12699, -12385, -12067, -11752
+        .short  -11433, -11118, -10800, -10484, -10166, -9850, -9532, -9216, -8898, -8582, -8264, -7948, -7630, -7314, -6996, -6680
+        .short  -6362, -6046, -5728, -5412, -5094, -4778, -4460, -4144, -3826, -3510, -3192, -2876, -2558, -2242, -1924, -1608
+        .short  -1290, -974, -656, -339, -22, 295, 612, 929, 1246, 1563, 1880, 2197, 2513, 2831, 3147, 3465
+        .short  3904, 4048, 4172, 4325, 4501, 4691, 4893, 5101, 5317, 5534, 5756, 5978, 6205, 6430, 6659, 6887
+        .short  7118, 7348, 7581, 7812, 8047, 8279, 8515, 8749, 8986, 9221, 9460, 9696, 9937, 10174, 10416, 10654
+        .short  10898, 11137, 11382, 11622, 11869, 12109, 12358, 12599, 12850, 13090, 13345, 13584, 13842, 14079, 14343, 14574
+        .short  14851, 15061, 15356, 13648, 8544, 3257, -705, -3832, -6384, -8495, -10251, -11686, -12842, -13731, -14388, -14829
+        .short  -15091, -15195, -15180, -15067, -14887, -14655, -14392, -14105, -13807, -13498, -13187, -12871, -12556, -12238, -11922, -11603
+        .short  -11287, -10968, -10651, -10333, -10016, -9698, -9381, -9062, -8745, -8427, -8110, -7792, -7474, -7156, -6839, -6521
+        .short  -6204, -5885, -5568, -5250, -4933, -4615, -4297, -3979, -3662, -3344, -3027, -2709, -2391, -2073, -1756, -1438
+        .short  -1120, -803, -485, -167, 150, 468, 786, 1103, 1421, 1739, 2057, 2374, 2692, 3010, 3327, 3645
+        .short  4114, 4269, 4399, 4560, 4740, 4936, 5141, 5355, 5573, 5797, 6022, 6251, 6480, 6713, 6944, 7180
+        .short  7413, 7650, 7885, 8124, 8360, 8601, 8838, 9080, 9319, 9562, 9801, 10046, 10286, 10533, 10774, 11022
+        .short  11264, 11513, 11756, 12007, 12250, 12502, 12746, 13001, 13244, 13501, 13744, 14005, 14245, 14512, 14745, 15026
+        .short  15236, 15563, 14205, 9324, 3884, -239, -3476, -6111, -8288, -10097, -11579, -12774, -13701, -14392, -14865, -15155
+        .short  -15285, -15290, -15194, -15027, -14804, -14547, -14264, -13968, -13660, -13349, -13033, -12717, -12399, -12081, -11762, -11444
+        .short  -11125, -10807, -10488, -10169, -9850, -9532, -9213, -8895, -8576, -8257, -7938, -7620, -7301, -6982, -6664, -6345
+        .short  -6026, -5708, -5389, -5070, -4752, -4433, -4114, -3795, -3477, -3158, -2840, -2521, -2202, -1883, -1565, -1246
+        .short  -928, -609, -291, 29, 347, 666, 984, 1304, 1621, 1941, 2259, 2579, 2896, 3216, 3533, 3854
+        .short  4353, 4515, 4657, 4823, 5010, 5209, 5421, 5637, 5862, 6088, 6320, 6551, 6788, 7022, 7262, 7498
+        .short  7740, 7979, 8222, 8462, 8706, 8947, 9193, 9436, 9683, 9926, 10175, 10419, 10669, 10914, 11165, 11411
+        .short  11664, 11910, 12164, 12411, 12667, 12914, 13172, 13419, 13679, 13925, 14189, 14432, 14702, 14939, 15222, 15435
+        .short  15769, 14514, 9704, 4199, -8, -3309, -5995, -8211, -10051, -11559, -12778, -13726, -14436, -14928, -15235, -15380
+        .short  -15399, -15315, -15156, -14940, -14687, -14407, -14113, -13806, -13495, -13178, -12862, -12542, -12224, -11904, -11584, -11264
+        .short  -10945, -10625, -10305, -9985, -9665, -9346, -9026, -8706, -8386, -8066, -7747, -7427, -7107, -6787, -6467, -6148
+        .short  -5828, -5508, -5188, -4868, -4548, -4229, -3909, -3589, -3269, -2950, -2629, -2310, -1990, -1670, -1350, -1031
+        .short  -710, -391, -71, 248, 569, 888, 1208, 1528, 1848, 2167, 2488, 2807, 3127, 3447, 3767, 4086
+        .short  4620, 4793, 4940, 5114, 5304, 5510, 5724, 5947, 6173, 6406, 6640, 6879, 7117, 7359, 7600, 7845
+        .short  8088, 8335, 8579, 8828, 9073, 9323, 9569, 9820, 10068, 10320, 10568, 10822, 11071, 11326, 11576, 11832
+        .short  12082, 12340, 12591, 12850, 13101, 13362, 13612, 13876, 14126, 14393, 14640, 14912, 15153, 15439, 15656, 15988
+        .short  14644, 9750, 4235, 13, -3312, -6019, -8252, -10104, -11621, -12848, -13803, -14520, -15019, -15335, -15488, -15514
+        .short  -15436, -15283, -15071, -14822, -14543, -14249, -13943, -13631, -13314, -12996, -12675, -12355, -12034, -11713, -11392, -11071
+        .short  -10749, -10428, -10107, -9786, -9464, -9143, -8822, -8500, -8179, -7858, -7537, -7215, -6894, -6573, -6252, -5930
+        .short  -5609, -5288, -4967, -4645, -4324, -4002, -3681, -3360, -3039, -2717, -2396, -2075, -1754, -1432, -1111, -789
+        .short  -469, -147, 174, 496, 816, 1138, 1459, 1781, 2101, 2424, 2744, 3066, 3386, 3709, 4028, 4352
+        .short  4919, 5098, 5257, 5436, 5634, 5842, 6063, 6288, 6521, 6756, 6997, 7238, 7483, 7727, 7976, 8222
+        .short  8473, 8721, 8973, 9223, 9476, 9727, 9982, 10234, 10490, 10742, 11000, 11253, 11512, 11765, 12025, 12279
+        .short  12541, 12795, 13058, 13312, 13577, 13831, 14099, 14351, 14622, 14872, 15149, 15392, 15681, 15904, 16211, 14513
+        .short  9360, 3916, -240, -3537, -6227, -8444, -10284, -11787, -13001, -13945, -14654, -15145, -15456, -15607, -15633, -15554
+        .short  -15403, -15191, -14942, -14664, -14370, -14062, -13750, -13432, -13113, -12790, -12469, -12146, -11824, -11500, -11178, -10855
+        .short  -10533, -10209, -9887, -9563, -9241, -8917, -8595, -8272, -7949, -7626, -7303, -6980, -6658, -6334, -6012, -5689
+        .short  -5366, -5043, -4720, -4397, -4074, -3751, -3428, -3105, -2783, -2460, -2137, -1814, -1491, -1168, -845, -522
+        .short  -199, 123, 447, 769, 1092, 1415, 1738, 2061, 2384, 2707, 3030, 3352, 3675, 3998, 4321, 4644
+        .short  5249, 5437, 5603, 5790, 5992, 6207, 6431, 6662, 6898, 7139, 7382, 7629, 7877, 8128, 8379, 8632
+        .short  8885, 9140, 9395, 9652, 9907, 10166, 10422, 10682, 10939, 11200, 11457, 11719, 11978, 12241, 12500, 12764
+        .short  13023, 13289, 13549, 13816, 14075, 14345, 14603, 14876, 15132, 15409, 15660, 15946, 16189, 16395, 14079, 8598
+        .short  3313, -722, -3951, -6591, -8769, -10574, -12045, -13230, -14146, -14833, -15305, -15601, -15740, -15759, -15675, -15520
+        .short  -15306, -15056, -14776, -14481, -14172, -13859, -13538, -13218, -12893, -12570, -12245, -11921, -11595, -11272, -10946, -10622
+        .short  -10296, -9973, -9647, -9323, -8997, -8673, -8347, -8024, -7698, -7374, -7048, -6724, -6399, -6075, -5749, -5425
+        .short  -5099, -4775, -4450, -4126, -3800, -3476, -3150, -2826, -2501, -2177, -1851, -1527, -1202, -877, -552, -227
+        .short  98, 422, 747, 1072, 1397, 1722, 2046, 2371, 2696, 3021, 3346, 3671, 3995, 4321, 4644, 4970
+        .short  5611, 5809, 5982, 6176, 6383, 6604, 6831, 7067, 7307, 7553, 7801, 8052, 8305, 8560, 8816, 9073
+        .short  9331, 9591, 9851, 10112, 10373, 10635, 10897, 11160, 11423, 11687, 11951, 12216, 12481, 12746, 13012, 13278
+        .short  13545, 13812, 14080, 14347, 14616, 14883, 15154, 15421, 15692, 15961, 16229, 16518, 16456, 13254, 7492, 2457
+        .short  -1420, -4545, -7108, -9224, -10972, -12393, -13531, -14407, -15056, -15498, -15770, -15889, -15893, -15799, -15636, -15416
+        .short  -15163, -14879, -14582, -14271, -13955, -13632, -13310, -12983, -12659, -12331, -12005, -11677, -11352, -11023, -10697, -10369
+        .short  -10043, -9715, -9389, -9061, -8735, -8407, -8081, -7753, -7427, -7099, -6773, -6445, -6119, -5790, -5465, -5136
+        .short  -4811, -4482, -4156, -3828, -3502, -3174, -2848, -2520, -2194, -1866, -1540, -1212, -886, -558, -232, 96
+        .short  422, 750, 1076, 1404, 1730, 2058, 2384, 2713, 3039, 3367, 3693, 4021, 4347, 4675, 5000, 5329
+        .short  6009, 6213, 6397, 6596, 6811, 7035, 7269, 7508, 7755, 8002, 8257, 8511, 8770, 9027, 9290, 9550
+        .short  9815, 10077, 10344, 10607, 10875, 11140, 11409, 11674, 11945, 12211, 12482, 12749, 13021, 13288, 13562, 13829
+        .short  14104, 14372, 14648, 14915, 15194, 15459, 15742, 16003, 16295, 16537, 16884, 16202, 11907, 6063, 1350, -2339
+        .short  -5331, -7788, -9818, -11486, -12838, -13909, -14728, -15324, -15725, -15958, -16050, -16030, -15921, -15745, -15518, -15256
+        .short  -14970, -14668, -14354, -14035, -13711, -13385, -13057, -12729, -12399, -12071, -11741, -11412, -11082, -10753, -10423, -10094
+        .short  -9764, -9435, -9105, -8776, -8446, -8117, -7787, -7458, -7128, -6800, -6469, -6141, -5810, -5482, -5151, -4823
+        .short  -4492, -4164, -3834, -3505, -3175, -2846, -2516, -2187, -1857, -1528, -1198, -869, -539, -211, 120, 448
+        .short  779, 1107, 1438, 1766, 2097, 2425, 2756, 3084, 3415, 3743, 4074, 4402, 4732, 5061, 5391, 5720
+        .short  6437, 6651, 6841, 7049, 7268, 7499, 7736, 7982, 8230, 8486, 8741, 9003, 9263, 9529, 9793, 10061
+        .short  10327, 10598, 10865, 11138, 11406, 11680, 11950, 12225, 12495, 12771, 13041, 13319, 13590, 13869, 14139, 14420
+        .short  14690, 14973, 15241, 15528, 15793, 16085, 16344, 16648, 16886, 17208, 15485, 10184, 4500, 101, -3399, -6247
+        .short  -8585, -10515, -12087, -13356, -14346, -15097, -15629, -15978, -16165, -16225, -16175, -16047, -15853, -15618, -15346, -15055
+        .short  -14746, -14431, -14106, -13781, -13450, -13121, -12789, -12458, -12125, -11794, -11461, -11130, -10797, -10465, -10132, -9801
+        .short  -9468, -9136, -8804, -8472, -8139, -7807, -7475, -7143, -6811, -6479, -6146, -5814, -5482, -5150, -4817, -4485
+        .short  -4153, -3821, -3489, -3156, -2824, -2492, -2160, -1828, -1496, -1163, -831, -499, -167, 166, 497, 830
+        .short  1162, 1494, 1826, 2159, 2490, 2823, 3155, 3488, 3819, 4152, 4483, 4817, 5148, 5481, 5812, 6146
+        .short  6895, 7118, 7316, 7532, 7756, 7993, 8235, 8485, 8740, 8997, 9261, 9523, 9793, 10059, 10332, 10600
+        .short  10876, 11147, 11424, 11697, 11974, 12250, 12526, 12805, 13080, 13362, 13636, 13920, 14193, 14480, 14752, 15041
+        .short  15312, 15602, 15875, 16164, 16439, 16727, 17003, 17302, 17308, 14197, 8227, 2869, -1265, -4581, -7280, -9494
+        .short  -11305, -12775, -13939, -14843, -15505, -15971, -16251, -16393, -16404, -16328, -16170, -15962, -15709, -15430, -15130, -14817
+        .short  -14496, -14168, -13839, -13505, -13174, -12837, -12505, -12167, -11835, -11497, -11164, -10828, -10493, -10158, -9822, -9488
+        .short  -9152, -8818, -8481, -8148, -7811, -7478, -7141, -6807, -6471, -6137, -5801, -5466, -5131, -4795, -4461, -4125
+        .short  -3791, -3454, -3121, -2784, -2451, -2114, -1780, -1444, -1110, -774, -439, -104, 232, 566, 902, 1236
+        .short  1573, 1906, 2243, 2576, 2913, 3247, 3583, 3917, 4253, 4588, 4922, 5259, 5592, 5930, 6262, 6600
+        .short  7379, 7605, 7816, 8036, 8269, 8511, 8757, 9015, 9270, 9538, 9801, 10073, 10343, 10617, 10894, 11166
+        .short  11449, 11721, 12007, 12281, 12566, 12845, 13126, 13412, 13688, 13980, 14254, 14547, 14823, 15114, 15396, 15679
+        .short  15972, 16243, 16551, 16807, 17134, 17363, 17753, 17036, 12542, 6285, 1255, -2688, -5834, -8396, -10484, -12168
+        .short  -13528, -14575, -15384, -15948, -16335, -16545, -16627, -16597, -16478, -16300, -16063, -15803, -15506, -15203, -14880, -14555
+        .short  -14224, -13888, -13555, -13214, -12881, -12539, -12205, -11864, -11527, -11190, -10849, -10514, -10172, -9838, -9496, -9160
+        .short  -8821, -8483, -8146, -7805, -7470, -7128, -6793, -6453, -6116, -5777, -5438, -5102, -4761, -4426, -4085, -3749
+        .short  -3409, -3072, -2733, -2394, -2058, -1717, -1382, -1041, -705, -365, -28, 310, 650, 986, 1327, 1662
+        .short  2003, 2339, 2679, 3017, 3354, 3694, 4030, 4371, 4706, 5047, 5383, 5723, 6061, 6398, 6738, 7074
+        .short  7870, 8112, 8327, 8554, 8797, 9038, 9298, 9553, 9819, 10089, 10355, 10636, 10905, 11190, 11466, 11746
+        .short  12034, 12309, 12603, 12879, 13169, 13456, 13737, 14035, 14309, 14610, 14890, 15180, 15477, 15750, 16062, 16327
+        .short  16639, 16918, 17203, 17524, 17753, 18144, 16481, 10913, 4570, -253, -4085, -7103, -9545, -11520, -13072, -14323
+        .short  -15247, -15949, -16419, -16710, -16859, -16866, -16799, -16635, -16429, -16177, -15889, -15594, -15269, -14950, -14614, -14278
+        .short  -13943, -13598, -13264, -12917, -12580, -12238, -11894, -11558, -11210, -10875, -10529, -10189, -9849, -9504, -9168, -8821
+        .short  -8483, -8141, -7798, -7460, -7114, -6777, -6432, -6092, -5752, -5407, -5070, -4724, -4386, -4043, -3701, -3363
+        .short  -3017, -2680, -2335, -1995, -1654, -1310, -973, -627, -289, 54, 396, 735, 1080, 1417, 1763, 2102
+        .short  2443, 2787, 3124, 3471, 3808, 4152, 4493, 4832, 5178, 5514, 5860, 6198, 6541, 6884, 7221, 7569
+        .short  8367, 8617, 8834, 9080, 9318, 9573, 9837, 10092, 10372, 10639, 10915, 11201, 11470, 11765, 12043, 12327
+        .short  12624, 12898, 13200, 13484, 13769, 14075, 14348, 14655, 14943, 15226, 15542, 15808, 16124, 16413, 16689, 17025
+        .short  17266, 17612, 17879, 18163, 18456, 15942, 9616, 3145, -1619, -5418, -8364, -10696, -12582, -13999, -15134, -15947
+        .short  -16516, -16908, -17090, -17170, -17122, -16987, -16809, -16553, -16289, -15990, -15668, -15354, -15010, -14679, -14339, -13990
+        .short  -13657, -13304, -12964, -12622, -12270, -11935, -11583, -11241, -10900, -10548, -10212, -9861, -9518, -9177, -8825, -8488
+        .short  -8139, -7794, -7454, -7102, -6764, -6416, -6071, -5731, -5380, -5041, -4694, -4347, -4008, -3657, -3317, -2972
+        .short  -2624, -2285, -1934, -1594, -1249, -901, -562, -212, 130, 473, 823, 1161, 1511, 1853, 2196, 2546
+        .short  2884, 3233, 3577, 3918, 4269, 4607, 4956, 5301, 5641, 5992, 6330, 6678, 7024, 7363, 7715, 8054
+        .short  8852, 9096, 9331, 9582, 9820, 10090, 10353, 10614, 10903, 11169, 11451, 11746, 12014, 12315, 12604, 12881
+        .short  13193, 13472, 13763, 14076, 14346, 14659, 14959, 15231, 15561, 15838, 16129, 16464, 16715, 17045, 17356, 17594
+        .short  17988, 18200, 18536, 18803, 15950, 9158, 2278, -2651, -6518, -9513, -11756, -13588, -14913, -15901, -16645, -17079
+        .short  -17371, -17497, -17465, -17389, -17203, -16967, -16721, -16407, -16102, -15785, -15433, -15110, -14762, -14409, -14079, -13719
+        .short  -13375, -13036, -12674, -12338, -11989, -11632, -11298, -10940, -10593, -10254, -9894, -9555, -9208, -8851, -8515, -8160
+        .short  -7811, -7472, -7114, -6772, -6426, -6070, -5732, -5379, -5029, -4690, -4333, -3989, -3645, -3288, -2949, -2599
+        .short  -2246, -1908, -1552, -1206, -864, -507, -167, 182, 536, 874, 1229, 1577, 1917, 2275, 2616, 2963
+        .short  3318, 3656, 4010, 4359, 4699, 5057, 5398, 5744, 6101, 6438, 6791, 7142, 7480, 7838, 8181, 8525
+        .short  9300, 9546, 9802, 10053, 10296, 10579, 10843, 11105, 11406, 11677, 11954, 12265, 12537, 12826, 13144, 13413
+        .short  13714, 14034, 14299, 14614, 14931, 15192, 15522, 15832, 16089, 16439, 16734, 16988, 17367, 17629, 17890, 18318
+        .short  18486, 18838, 19224, 16552, 9569, 1997, -3381, -7369, -10535, -12756, -14488, -15807, -16640, -17269, -17662, -17795
+        .short  -17864, -17798, -17607, -17423, -17160, -16845, -16564, -16227, -15877, -15564, -15202, -14848, -14523, -14154, -13805, -13472
+        .short  -13102, -12757, -12419, -12049, -11709, -11366, -10997, -10660, -10311, -9946, -9610, -9257, -8895, -8560, -8203, -7845
+        .short  -7510, -7149, -6795, -6458, -6095, -5745, -5407, -5042, -4696, -4354, -3989, -3647, -3301, -2937, -2597, -2248
+        .short  -1885, -1547, -1194, -834, -497, -141, 217, 553, 913, 1267, 1604, 1967, 2317, 2656, 3020, 3366
+        .short  3708, 4073, 4416, 4761, 5126, 5465, 5814, 6178, 6514, 6868, 7230, 7563, 7922, 8280, 8613, 8977
+        .short  9704, 9962, 10198, 10480, 10733, 10988, 11291, 11558, 11826, 12144, 12419, 12693, 13022, 13302, 13579, 13918
+        .short  14200, 14477, 14825, 15108, 15383, 15742, 16021, 16291, 16667, 16939, 17200, 17603, 17857, 18103, 18566, 18753
+        .short  18999, 19639, 17936, 11433, 2963, -3446, -7757, -11176, -13599, -15230, -16535, -17364, -17813, -18157, -18262, -18179
+        .short  -18099, -17899, -17606, -17361, -17052, -16691, -16389, -16047, -15669, -15349, -14999, -14619, -14293, -13942, -13563, -13234
+        .short  -12882, -12506, -12174, -11823, -11448, -11114, -10764, -10389, -10055, -9704, -9331, -8995, -8645, -8272, -7936, -7586
+        .short  -7214, -6876, -6526, -6155, -5817, -5467, -5096, -4757, -4408, -4037, -3698, -3349, -2978, -2638, -2290, -1919
+        .short  -1579, -1231, -860, -520, -172, 199, 540, 887, 1258, 1599, 1946, 2317, 2658, 3005, 3376, 3718
+        .short  4064, 4436, 4777, 5123, 5495, 5836, 6181, 6554, 6896, 7240, 7614, 7955, 8299, 8673, 9014, 9358
+        .short  10059, 10324, 10554, 10850, 11124, 11362, 11667, 11973, 12219, 12520, 12851, 13109, 13396, 13747, 14023, 14291
+        .short  14650, 14952, 15199, 15556, 15892, 16121, 16461, 16838, 17057, 17361, 17790, 18007, 18247, 18755, 18972, 19083
+        .short  19845, 19348, 14233, 5368, -2658, -7784, -11371, -14188, -15944, -17054, -17951, -18411, -18528, -18630, -18583, -18330
+        .short  -18116, -17893, -17531, -17198, -16920, -16545, -16167, -15866, -15506, -15112, -14792, -14451, -14054, -13716, -13389, -12998
+        .short  -12642, -12321, -11943, -11572, -11250, -10887, -10506, -10177, -9828, -9443, -9103, -8767, -8384, -8031, -7701, -7326
+        .short  -6960, -6632, -6268, -5893, -5561, -5209, -4829, -4489, -4148, -3768, -3417, -3083, -2709, -2346, -2016, -1651
+        .short  -1278, -946, -592, -213, 126, 469, 849, 1198, 1533, 1908, 2269, 2599, 2967, 3338, 3669, 4025
+        .short  4404, 4740, 5085, 5467, 5813, 6147, 6527, 6885, 7213, 7584, 7955, 8282, 8642, 9022, 9354, 9700
+        .short  10298, 10626, 10887, 11110, 11415, 11727, 11965, 12246, 12592, 12866, 13118, 13467, 13791, 14029, 14347, 14718
+        .short  14975, 15241, 15632, 15944, 16162, 16527, 16916, 17120, 17409, 17871, 18122, 18288, 18791, 19175, 19151, 19682
+        .short  20342, 17725, 9936, 285, -6846, -11051, -14106, -16378, -17576, -18267, -18847, -19036, -18912, -18844, -18715, -18369
+        .short  -18051, -17819, -17459, -17052, -16759, -16436, -16017, -15669, -15370, -14977, -14587, -14282, -13930, -13523, -13188, -12867
+        .short  -12471, -12101, -11789, -11421, -11028, -10700, -10364, -9968, -9612, -9293, -8915, -8534, -8210, -7860, -7468, -7123
+        .short  -6795, -6411, -6041, -5718, -5356, -4969, -4633, -4295, -3908, -3549, -3224, -2853, -2472, -2142, -1795, -1406
+        .short  -1057, -728, -349, 23, 349, 707, 1094, 1434, 1769, 2154, 2517, 2842, 3210, 3593, 3924, 4267
+        .short  4658, 5010, 5335, 5713, 6091, 6414, 6768, 7160, 7501, 7829, 8218, 8587, 8904, 9269, 9664, 9991
+        .short  10565, 10806, 11110, 11424, 11655, 11917, 12267, 12564, 12793, 13112, 13478, 13736, 13987, 14363, 14706, 14926
+        .short  15232, 15645, 15926, 16137, 16527, 16931, 17123, 17383, 17871, 18186, 18288, 18705, 19268, 19314, 19419, 20384
+        .short  20175, 15212, 5624, -4019, -10203, -13633, -16171, -17961, -18703, -19019, -19354, -19392, -19093, -18872, -18724, -18368
+        .short  -17943, -17676, -17389, -16951, -16570, -16300, -15938, -15504, -15176, -14880, -14473, -14075, -13776, -13436, -13017, -12662
+        .short  -12362, -11981, -11576, -11256, -10930, -10526, -10153, -9845, -9484, -9079, -8740, -8422, -8032, -7646, -7329, -6984
+        .short  -6582, -6226, -5911, -5537, -5143, -4813, -4481, -4086, -3715, -3398, -3039, -2641, -2298, -1975, -1591, -1207
+        .short  -884, -540, -142, 215, 533, 905, 1298, 1630, 1962, 2355, 2727, 3044, 3402, 3801, 4145, 4466
+        .short  4851, 5238, 5557, 5899, 6302, 6661, 6972, 7345, 7746, 8073, 8398, 8799, 9176, 9481, 9840, 10251
+        .short  10730, 11068, 11282, 11525, 11883, 12199, 12412, 12694, 13081, 13385, 13595, 13914, 14322, 14602, 14809, 15171
+        .short  15591, 15833, 16040, 16457, 16880, 17063, 17281, 17779, 18184, 18265, 18526, 19173, 19492, 19337, 19844, 20926
+        .short  19482, 12617, 2023, -7360, -12791, -15554, -17597, -19030, -19461, -19445, -19570, -19576, -19204, -18809, -18627, -18366
+        .short  -17894, -17497, -17263, -16929, -16460, -16099, -15843, -15473, -15022, -14687, -14411, -14017, -13587, -13271, -12974, -12566
+        .short  -12156, -11852, -11534, -11117, -10729, -10430, -10091, -9672, -9303, -9004, -8647, -8230, -7879, -7576, -7201, -6791
+        .short  -6455, -6144, -5756, -5355, -5031, -4709, -4310, -3922, -3607, -3271, -2866, -2491, -2181, -1831, -1423, -1063
+        .short  -754, -389, 18, 363, 675, 1054, 1457, 1788, 2107, 2499, 2893, 3213, 3541, 3944, 4327, 4637
+        .short  4978, 5389, 5757, 6062, 6418, 6833, 7185, 7487, 7861, 8275, 8610, 8915, 9306, 9715, 10034, 10345
+        .short  10815, 11085, 11449, 11768, 11972, 12225, 12610, 12958, 13169, 13417, 13821, 14196, 14404, 14640, 15062, 15466
+        .short  15665, 15877, 16322, 16764, 16942, 17114, 17595, 18098, 18229, 18321, 18883, 19509, 19494, 19391, 20319, 21243
+        .short  18681, 10573, -543, -9764, -14737, -16932, -18484, -19689, -19996, -19713, -19586, -19612, -19326, -18793, -18450, -18288
+        .short  -17947, -17429, -17056, -16843, -16504, -16015, -15632, -15392, -15059, -14591, -14203, -13944, -13617, -13165, -12772, -12499
+        .short  -12176, -11737, -11340, -11056, -10736, -10307, -9907, -9613, -9297, -8876, -8473, -8171, -7858, -7445, -7039, -6730
+        .short  -6419, -6013, -5605, -5290, -4981, -4581, -4171, -3849, -3543, -3149, -2736, -2409, -2105, -1717, -1301, -969
+        .short  -667, -284, 133, 472, 771, 1148, 1568, 1912, 2209, 2581, 3003, 3352, 3647, 4013, 4437, 4793
+        .short  5085, 5445, 5872, 6234, 6523, 6876, 7307, 7676, 7961, 8307, 8741, 9118, 9399, 9736, 10177, 10561
+        .short  10967, 11295, 11478, 11715, 12106, 12482, 12697, 12896, 13266, 13701, 13972, 14137, 14455, 14930, 15280, 15428
+        .short  15666, 16153, 16604, 16767, 16898, 17356, 17935, 18159, 18147, 18513, 19275, 19643, 19370, 19519, 20803, 21409
+        .short  17895, 8961, -2438, -11585, -16290, -17989, -19018, -20021, -20371, -19966, -19533, -19469, -19379, -18909, -18341, -18057
+        .short  -17907, -17534, -16989, -16602, -16406, -16109, -15616, -15169, -14913, -14659, -14228, -13754, -13436, -13193, -12823, -12351
+        .short  -11976, -11720, -11401, -10952, -10534, -10246, -9961, -9550, -9108, -8778, -8507, -8140, -7694, -7321, -7044, -6717
+        .short  -6286, -5878, -5577, -5280, -4878, -4448, -4113, -3831, -3465, -3029, -2657, -2371, -2043, -1618, -1213, -908
+        .short  -607, -209, 219, 555, 840, 1204, 1639, 2012, 2298, 2626, 3051, 3458, 3762, 4059, 4459, 4891
+        .short  5227, 5506, 5869, 6312, 6687, 6965, 7288, 7721, 8136, 8433, 8719, 9125, 9570, 9903, 10167, 10528
+        .short  11026, 11215, 11466, 11868, 12247, 12460, 12644, 13002, 13455, 13759, 13912, 14176, 14647, 15071, 15256, 15409
+        .short  15817, 16354, 16652, 16720, 16980, 17576, 18070, 18129, 18155, 18705, 19491, 19677, 19319, 19641, 21091, 21530
+        .short  17563, 8177, -3505, -12763, -17369, -18733, -19368, -20187, -20568, -20148, -19539, -19340, -19328, -18985, -18360, -17919
+        .short  -17773, -17555, -17053, -16523, -16240, -16059, -15689, -15162, -14760, -14542, -14269, -13806, -13333, -13033, -12802, -12428
+        .short  -11944, -11557, -11308, -11012, -10569, -10121, -9814, -9557, -9182, -8719, -8341, -8076, -7768, -7334, -6900, -6589
+        .short  -6319, -5943, -5491, -5118, -4845, -4529, -4100, -3674, -3362, -3085, -2707, -2260, -1890, -1615, -1295, -866
+        .short  -444, -134, 146, 527, 972, 1340, 1614, 1936, 2368, 2789, 3096, 3375, 3759, 4208, 4572, 4842
+        .short  5164, 5602, 6025, 6326, 6599, 6989, 7447, 7808, 8066, 8388, 8839, 9267, 9555, 9817, 10219, 10691
+        .short  10877, 11334, 11695, 11872, 12039, 12395, 12870, 13215, 13365, 13549, 13965, 14474, 14786, 14891, 15097, 15589
+        .short  16130, 16384, 16421, 16662, 17268, 17846, 17983, 17902, 18226, 19055, 19672, 19501, 19146, 19830, 21463, 21645
+        .short  17331, 7861, -3831, -13347, -18265, -19503, -19585, -20032, -20578, -20458, -19735, -19138, -19028, -19014, -18622, -17957
+        .short  -17482, -17337, -17187, -16742, -16152, -15756, -15589, -15362, -14893, -14357, -14010, -13823, -13541, -13061, -12567, -12254
+        .short  -12046, -11723, -11239, -10781, -10491, -10263, -9906, -9423, -8997, -8724, -8475, -8090, -7612, -7216, -6954, -6682
+        .short  -6276, -5806, -5436, -5180, -4887, -4462, -4003, -3658, -3404, -3088, -2648, -2204, -1881, -1626, -1287, -835
+        .short  -408, -105, 155, 517, 977, 1386, 1670, 1938, 2323, 2788, 3176, 3443, 3724, 4132, 4598, 4963
+        .short  5216, 5512, 5944, 6406, 6746, 6988, 7304, 7759, 8214, 8525, 8759, 9098, 9576, 10020, 10303, 10527
+        .short  11055, 11402, 11555, 11725, 12101, 12590, 12938, 13079, 13240, 13638, 14169, 14535, 14652, 14786, 15207, 15797
+        .short  16184, 16250, 16333, 16790, 17479, 17892, 17851, 17828, 18368, 19271, 19718, 19371, 19076, 19976, 21700, 21737
+        .short  17207, 7611, -4171, -13855, -18926, -20077, -19811, -19943, -20481, -20561, -19906, -19120, -18811, -18854, -18690, -18100
+        .short  -17442, -17115, -17041, -16822, -16290, -15703, -15368, -15233, -14987, -14490, -13944, -13603, -13430, -13168, -12694, -12174
+        .short  -11828, -11631, -11359, -10901, -10399, -10049, -9834, -9555, -9109, -8619, -8265, -8038, -7756, -7317, -6836, -6480
+        .short  -6243, -5959, -5527, -5051, -4692, -4450, -4164, -3737, -3264, -2903, -2656, -2371, -1947, -1477, -1113, -864
+        .short  -579, -158, 313, 678, 928, 1211, 1630, 2103, 2471, 2720, 3000, 3418, 3894, 4265, 4512, 4787
+        .short  5205, 5687, 6061, 6303, 6572, 6992, 7481, 7858, 8094, 8355, 8777, 9276, 9658, 9885, 10137, 10559
+        .short  10799, 11063, 11517, 12000, 12296, 12406, 12561, 12953, 13501, 13926, 14084, 14150, 14430, 14992, 15560, 15826
+        .short  15828, 15943, 16450, 17169, 17624, 17609, 17489, 17834, 18718, 19515, 19555, 19014, 18954, 20194, 21986, 21922
+        .short  17534, 8399, -3101, -13180, -19118, -20823, -20304, -19753, -19992, -20454, -20322, -19530, -18704, -18383, -18452, -18382
+        .short  -17868, -17143, -16645, -16511, -16448, -16116, -15508, -14935, -14641, -14532, -14308, -13824, -13243, -12829, -12638, -12464
+        .short  -12094, -11551, -11061, -10774, -10600, -10320, -9847, -9325, -8947, -8732, -8509, -8119, -7606, -7156, -6876, -6670
+        .short  -6359, -5889, -5397, -5041, -4818, -4566, -4162, -3662, -3237, -2965, -2744, -2411, -1938, -1463, -1125, -901
+        .short  -631, -212, 283, 690, 950, 1179, 1529, 2011, 2477, 2796, 3014, 3296, 3734, 4233, 4625, 4866
+        .short  5094, 5464, 5964, 6425, 6722, 6924, 7215, 7679, 8192, 8567, 8779, 8997, 9392, 9925, 10390, 10648
+        .short  10726, 11247, 11710, 11946, 12026, 12200, 12626, 13191, 13617, 13769, 13815, 14059, 14604, 15217, 15568, 15598
+        .short  15615, 15977, 16683, 17328, 17525, 17362, 17370, 17970, 18949, 19582, 19392, 18807, 18922, 20353, 22174, 22032
+        .short  17659, 8694, -2678, -12909, -19251, -21286, -20717, -19789, -19699, -20191, -20374, -19806, -18864, -18219, -18126, -18234
+        .short  -18033, -17401, -16674, -16252, -16172, -16110, -15752, -15126, -14539, -14232, -14133, -13952, -13507, -12909, -12425, -12186
+        .short  -12051, -11777, -11282, -10725, -10325, -10122, -9942, -9593, -9073, -8565, -8232, -8043, -7812, -7403, -6878, -6423
+        .short  -6143, -5951, -5665, -5210, -4696, -4296, -4056, -3845, -3504, -3017, -2528, -2183, -1967, -1726, -1332, -827
+        .short  -375, -80, 126, 409, 850, 1357, 1764, 2015, 2226, 2557, 3039, 3534, 3889, 4104, 4335, 4721
+        .short  5232, 5699, 5998, 6190, 6456, 6899, 7427, 7852, 8094, 8276, 8591, 9091, 9621, 9989, 10177, 10362
+        .short  10939, 11363, 11540, 11605, 11810, 12273, 12850, 13271, 13416, 13446, 13657, 14178, 14821, 15255, 15343, 15303
+        .short  15512, 16123, 16876, 17325, 17295, 17108, 17310, 18113, 19101, 19559, 19202, 18613, 18848, 20385, 22262, 22270
+        .short  18279, 9821, -1279, -11775, -18845, -21604, -21274, -20026, -19449, -19773, -20237, -20079, -19246, -18314, -17846, -17884
+        .short  -17981, -17696, -17005, -16277, -15876, -15814, -15774, -15446, -14826, -14196, -13825, -13709, -13597, -13246, -12668, -12094
+        .short  -11740, -11592, -11435, -11071, -10517, -9980, -9637, -9470, -9282, -8908, -8371, -7858, -7525, -7344, -7136, -6753
+        .short  -6227, -5732, -5407, -5217, -4994, -4603, -4083, -3601, -3284, -3090, -2855, -2457, -1940, -1467, -1158, -963
+        .short  -720, -314, 204, 669, 971, 1163, 1413, 1828, 2349, 2809, 3101, 3289, 3542, 3968, 4495, 4952
+        .short  5232, 5412, 5668, 6106, 6644, 7099, 7365, 7531, 7790, 8243, 8797, 9251, 9499, 9647, 9906, 10377
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
+        .short  10582, 10790, 11231, 11812, 12309, 12557, 12597, 12657, 12965, 13546, 14190, 14616, 14714, 14655, 14765, 15252
+        .short  16010, 16680, 16941, 16801, 16632, 16889, 17706, 18727, 19339, 19180, 18536, 18241, 19057, 20926, 22631, 22244
+        .short  18166, 10171, -249, -10481, -18049, -21760, -22115, -20764, -19445, -19072, -19498, -19963, -19824, -19023, -18022, -17367
+        .short  -17251, -17413, -17403, -16962, -16205, -15489, -15105, -15046, -15045, -14806, -14253, -13570, -13036, -12789, -12722, -12587
+        .short  -12206, -11613, -11016, -10616, -10442, -10333, -10082, -9608, -9018, -8513, -8215, -8070, -7897, -7545, -7016, -6461
+        .short  -6048, -5822, -5672, -5423, -4988, -4438, -3939, -3611, -3430, -3247, -2916, -2419, -1877, -1449, -1195, -1030
+        .short  -792, -382, 153, 660, 1010, 1207, 1384, 1693, 2174, 2721, 3170, 3441, 3603, 3820, 4210, 4746
+        .short  5276, 5649, 5847, 6001, 6283, 6758, 7328, 7811, 8094, 8232, 8409, 8779, 9337, 9915, 10320, 10497
 | <<< GENERATED TABLES
 
 | ---- the page clone's fields (poly.s po_pgdesc's {offset.w, length.w, source.l} list;

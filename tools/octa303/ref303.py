@@ -1,4 +1,4 @@
-"""OCTA303 v6.9 (dEVILish) golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
+"""OCTA303 v7.6 golden reference: the integer arithmetic of modules/octa303/octa303.s, in Python.
 
 One engine (TB-303).  Every helper is one assembly idiom.  sim/test_octa303.py runs the assembly
 source in cfsim and requires its output to be BIT-IDENTICAL to this model.
@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs'
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqth', 'ud', 'sql', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqi', 'ud', 'sqk', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2', 'sql')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -102,10 +102,24 @@ def kfb(i, kmul, ud):
     k -= chk(ud * T.KD[i], 'ud') >> 10
     return k if k > 0 else 0
 
+def clset(st, i):
+    """v7.3: the ladder clip's operating point at ladder index i (0 = the plain soft clip).  ACID only (SWP 2):
+    dEVILish's WHST / SELF oscillate on purpose and the clip sets their level, as in v7.1."""
+    j = i - T.CL_I0
+    if j > 0 and st.swp == 2: st.clg, st.cli, st.cll = T.CL_G[j], T.CL_INV[j], T.CL_LIM[j]
+    else: st.clg = 0
+
+def ladder_clip(st, u):
+    """v7.3: softclip(u * g) / g at the top of the table, softclip(u) below it."""
+    if not st.clg: return softclip(u)
+    u = clamp(u, -st.cll, st.cll)
+    return fm(softclip(fm(u, st.clg, 4, 8, 'clg')), st.cli, 4, 8, 'cli')
+
 def ctrl(st):
     st.pcur += mulq15((st.ptgt << 8) - st.pcur, st.slide)              # SLID
     st.inc = inc_of_p(st.pcur >> 8)
-    st.sqth = T.SQ_TH[st.pcur >> 16]                                   # v6.6: the square's duty by pitch
+    st.sqi = st.pcur >> 16                                             # v7.6: the square's cycle (Q8) by semitone
+    st.sqk = T.SQK[st.sqi]
     st.meg = mul30(st.meg, st.adec if st.accd else T.TB_MEG[st.dec])    # ADEC
     st.megs += mulq15(st.meg - st.megs, T.TB_MEG_ATT)
     d = st.veg - st.vsus                                               # VDEC (the final level may move
@@ -115,22 +129,29 @@ def ctrl(st):
         if st.vatt > T.ONE30 - 64: st.vatt = T.ONE30
     cut, res, env = st.cut, st.res, st.env
     vin = mul30(st.megs, st.accamt) if (st.accd and st.swp) else 0     # SWP 0: no sweep circuit
+    # v7.5: the accent stage is v7.3's again (the direct path plus the capacitor that builds over accents in a row,
+    # fitted on Din Sync and tinyloops); v7.4's network from the schematic alone could not make tinyloops' accents
+    # in a row (claude/OCTA303_v75_ibrido.md).  The rest of the voice stays v7.4's circuit.
     if st.spd == 2:                                                    # SPD NORM: the 303
         if vin > st.cap:
             st.cap += mulq15(vin - st.cap, T.TB_ACH[res])
         st.cap -= mulq15(st.cap, T.TB_DIS)
-        capterm = st.cap
-    elif st.spd == 3:                                                  # SLOW
+        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(st.cap, T.TB_SWCAP[res])
+        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    elif st.spd == 3:                                                  # SLOW (dEVILish): as v7.3
         if vin > st.cap:
             st.cap += mulq15(vin - st.cap, T.DF_ACH_SLOW[res])
         st.cap -= mulq15(st.cap, T.DF_DIS_SLOW)
-        capterm = st.cap * T.DF_SLOW_G
-    else:                                                              # FAST: the change, never below 0
+        if st.cap > 0x3FFFFFFF: st.cap = 0x3FFFFFFF                     # v7.5: cap * DF_SLOW_G must fit 32 bits (review)
+        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(chk(st.cap * T.DF_SLOW_G, 'slowcap'), T.TB_SWCAP[res])
+        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    else:                                                              # FAST (dEVILish): as v7.3
         if vin > st.cap:
             st.cap += mulq15(vin - st.cap, T.DF_ACH_FAST[res])
         st.cap -= mulq15(st.cap, T.TB_DIS)
         capterm = ((vin - st.cap) >> 4) * T.DF_FAST_G if vin > st.cap else 0
-    sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(capterm, T.TB_SWCAP[res])
+        sweep = mulq15(vin, T.TB_SWDIRECT[res]) + mulq15(capterm, T.TB_SWCAP[res])
+        swq8 = (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
     if st.envx:                                                        # ENVX: x3, from none
         S = (((T.TB_SLO[127] + (((T.TB_SHI[127] - T.TB_SLO[127]) * res * 258) >> 15)) * T.DF_ENVX_MUL) * env) // 127
     else:
@@ -141,7 +162,7 @@ def ctrl(st):
     st.cutb += mulq15((base << 8) - st.cutb, T.SMOOTH_K)               # v7.0: ~1 ms glides, no steps
     st.envs += mulq15((S << 8) - st.envs, T.SMOOTH_K)
     base, S = st.cutb >> 8, st.envs >> 8
-    s = base + ((((st.megs >> 15) - T.TB_OFF[cut]) * S) >> 15) + (((sweep >> 15) * T.TB_SWEEP_ST) >> 15)
+    s = base + ((((st.megs >> 15) - T.TB_OFF[cut]) * S) >> 15) + swq8
     s = clamp(s, 0, T.S_MAX - 1)
     if st.trkhz:
         s = trck(s, (st.pcur >> 8) - T.P_CENTER, st.trkhz)            # TRCK
@@ -151,11 +172,13 @@ def ctrl(st):
     i = s >> 6
     st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
     st.k = kfb(i, st.kmul, st.ud)
+    clset(st, i)                                                       # v7.3
     g0 = T.TB_GCOMP[0]
     st.gcomp = ((g0 + (((T.TB_GCOMP[res] - g0) * st.ocomp) >> 12)) * st.ogain) >> 12   # OVDR comp
     st.gcomp = (st.gcomp * T.LG[i]) >> 12                             # v6.7: LG, the level by frequency
-    st.accvca += mulq15(vin - st.accvca, T.TB_ACC_VCA)
+    st.w2 = (T.VP_W2[res] * st.ocomp) >> 12                            # v7.4: the VCA pair's RES path (OVDR swamps it)
     v = st.veg if st.vatt >= T.ONE30 else mul30(st.veg, st.vatt)        # SATK (none: v6.1 exactly)
+    st.accvca += mulq15(vin - st.accvca, T.TB_ACC_VCA)
     tgt = (v >> 16) + mulq15(st.accvca >> 16, st.accvg)                # Q14; v7.0: ACCV
     if st.gmode:                                                       # v6.5: the 303's gate
         st.glvl += mulq15((32767 if st.gate else 0) - st.glvl, T.GATE_K)
@@ -168,19 +191,23 @@ def sample(st):
         i = s >> 6
         st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
         st.k = kfb(i, st.kmul, st.ud)
+        clset(st, i)                                 # v7.3
     inc = st.inc
     ph = st.phase = (st.phase + inc) & M32
     if st.wave == 0:
         x = (ph >> 11) - (1 << 20)
         x -= blep(ph, inc) << 5
     else:
-        th = st.sqth                                 # v6.6: high while ph < th (duty by pitch)
-        x = (1 << 20) if ph < th else -(1 << 20)
-        x += blep(ph, inc) << 5
-        x -= blep((ph - th) & M32, inc) << 5
-        x = fm(x, T.TB_KSQ, 7, 8, 'sq')
-        st.sql += fm(x - st.sql, T.TB_SQLP, 4, 11, 'sqlp')   # v6.9: the 303's square has soft edges
-        x = st.sql
+        # v7.6: Q8's square (o3q8.py): the cycle's smooth part from a table (128 points, linear) plus its one hard
+        # edge, at the saw's reset, as sqk times the saw (with the saw's polyBLEP)
+        s_ = (ph >> 11) - (1 << 20)
+        s_ -= blep(ph, inc) << 5
+        row = T.SQC[st.sqi]; i = ph >> 25; fr = (ph >> 10) & 0x7FFF
+        c0 = row[i]; c1 = row[(i + 1) & 127]
+        x = ((c0 + (chk((c1 - c0) * fr, 'sqi') >> 15)) << 5) + fm(s_, st.sqk, 7, 8, 'sqk')
+        st.sql += fm(clamp(x - st.sql, -T.SQL_DLIM, T.SQL_DLIM), T.TB_SQLP, 4, 11, 'sqlp')   # softer edges than Q8's alone;
+                                                     # v7.6 review: the step clamped so the multiply fits 32 bits
+        x = st.sql                                           # (fitted, as v6.9; claude/OCTA303_v76_Q8_studio.md)
     st.hp += fm(x - st.hp, T.TB_PREHP, 4, 11, 'prehp')
     if st.ginq15:                                    # OVDR up to normal: v6.1's product, exactly
         x = fm(x - st.hp, st.gin, 7, 8, 'gin')
@@ -193,18 +220,27 @@ def sample(st):
     y4 = st.y4
     st.fb += fm(y4 - st.fb, T.TB_FBHP, 4, 11, 'fbhp')
     fb = clamp(y4 - st.fb, -(1 << 23), 1 << 23)
-    y0 = softclip(x - chk((fb >> 8) * st.k, 'kfb'))
+    y0 = ladder_clip(st, x - chk((fb >> 8) * st.k, 'kfb'))   # v7.3: eased at the top (#1011)
     st.y1 += fm(y0 - st.y1 + st.y2, st.c1, 7, 8, 'l1')
     st.y2 += fm(st.y1 - 2 * st.y2 + st.y3, st.b, 7, 8, 'l2')
     st.y3 += fm(st.y2 - 2 * st.y3 + y4, st.b, 7, 8, 'l3')
     st.y4 = y4 + fm(st.y3 - 2 * y4, st.b, 7, 8, 'l4')
-    o = fm(st.y4, st.gcomp, 6, 6, 'gc')
+    # v7.4: the output is the loop's high-pass (the circuit has one, C25/C27 into Q21, for both), then the VCA's
+    # input pair: R121/C21 (72 Hz) from it, R122/C22 (156 Hz) from the RES wiper (weight 2.2 x RES)
+    st.vp1 += fm(fb - st.vp1, T.VP_HP1, 4, 11, 'vp1')
+    st.vp2 += fm(fb - st.vp2, T.VP_HP2, 4, 11, 'vp2')
+    x = (fb - st.vp1) + ((((fb - st.vp2) >> 6) * st.w2) >> 6)
+    o = fm(x, st.gcomp, 6, 6, 'gc')
+    # v7.6: the VCA is an OTA (IC15 BA6110); its input sees ~3 % of the filter (220k || 100k into R124 2.2k), in the
+    # pair's tanh region: OTA_V * softclip(o / OTA_V), the engine's soft clip
+    o = clamp(o, -T.OTA_LIM, T.OTA_LIM)
+    o = fm(softclip(fm(o, T.OTA_IN, 4, 8, 'otai')), T.OTA_OUT, 4, 11, 'otao')
     o = clamp(o, -T.VCA_LIM, T.VCA_LIM)              # v6.9: the VCA multiply never wraps
     st.amp += st.ampstep
     if st.amp < 0: st.amp = 0
-    o = fm(o, st.amp, 6, 8, 'amp')
+    o = fm(o, st.amp >> 1, 7, 6, 'amp')              # v7.3: four times the room (#1011; v6.9-v7.1: amp, 6, 8)
     if st.muff:                                      # MUFF: the bass passes, the rest is clipped
-        st.mlo += fm(o - st.mlo, T.DF_MUFF_LP, 4, 11, 'mlo')
+        st.mlo += fm(clamp(o - st.mlo, -T.DF_MUFF_DLIM, T.DF_MUFF_DLIM), T.DF_MUFF_LP, 4, 11, 'mlo')   # v7.3: fits 32 bits
         h = o - st.mlo
         if st.muff == 1:
             h = clamp(h, -1048576, 1048576)                      # v6.7: no overflow (softclip saturates far below)
@@ -249,17 +285,21 @@ def set_setup(st, setup, df):
 
 def gate_frame(st, seq):
     """v6.5, once a frame (the frame's last call) on a 303 track: seq = (hold, step, tick, slides,
-    length) as the unit reads them -- the track's AMP HOLD from the live lane, the sequencer's step
+    length[, running]) as the unit reads them -- the track's AMP HOLD from the live lane, the sequencer's step
     word and tick byte, the OR of the track record's trigless-trig and trigless-lock masks (bit s =
     step s), the track's length.
     v6.5d: the gate is timed from the note's START, in ticks (gel), not from the step word: on the
     unit a START reaches the renderer about a tick after the step word moves (measured, 12 Oct 2026:
     the step-word gate closed ~1/3 of a step after the note).  Half a step = tps ticks counted
     twice (gend = tps, +2 tps a tie)."""
-    hold, s, k, mask, L = seq
+    hold, s, k, mask, L = seq[:5]
+    run = 1 if (seq[5] if len(seq) > 5 else 1) == 1 else 0   # v7.4: the transport word (0x800065b8): 1 = running;
+                                                       # 0 stopped and rewound, 2 stopped by the STOP key (STEM_REC.md)
     if not 1 <= L <= 64: L = 16
     s = s % L
     moved = s != st.lstep or k != st.ltick
+    restart = st.idle >= T.GATE_IDLE                   # standing still for GATE_IDLE frames (no transport seen)
+    if not run: st.stopd = 1                           # v7.4: a STOP seen; the next move while running is a PLAY
     if s != st.lstep:                                  # a new step: the last one's ticks
         if st.kmax >= 1: st.tps = st.kmax + 1
         st.kmax = 0; st.idle = 0
@@ -270,15 +310,21 @@ def gate_frame(st, seq):
     if st.tps == 0: st.tps = T.GATE_TPS0
     if moved and st.gel < 4096: st.gel += 1            # ticks since the START
     f = min(st.fcnt + 1, 4095)                         # v7.0: the frames a tick, measured
-    if moved:
-        if st.fseen: st.fpt = f
-        st.fseen = 1; f = 0
+    if moved and run:                                  # v7.4: a move while stopped (STOP resets the step word) is no tick
+        if st.stopd or restart or not st.fseen:        # PLAY (v7.5: also the first move a fresh state sees, the first
+                                                       # PLAY after boot): the position reset and the first tick come a frame apart
+            st.stopd = 0; st.fskip = T.GATE_FSKIP      # (measured under the port): neither interval is a tick, and
+            st.gel = 0; st.gelf = 0                    # the last note's clock restarts (no 1-frame snap before the START)
+        if st.fskip: st.fskip -= 1
+        elif st.fseen: st.fpt = f
+    if moved: st.fseen = 1; f = 0
     st.fcnt = f
     if st.gelf < 65535: st.gelf += 1                   # v7.0: the frames since the START
     if st.gnew:                                        # a 303 START: the note's step, the clock from 0
         st.gnew = 0; st.gate = 1; st.gel = 0; st.gelf = 0
         st.gend = (7 * st.tps + 3) // 6                # v7.0: 3.5 of the step's 6 clocks, doubled (Whittle)
-        st.gstep = (s + 1) % L if 2 * k >= st.tps else s
+        cur = (s - 1) % L                              # v7.4: the step word holds the NEXT step (measured under the
+        st.gstep = (cur + 1) % L if 2 * k >= st.tps else cur   # port: b2 = b4 + 1): the note's step is one less
     if not st.gsel:                                    # v7.0: SETUP's GATE OFF: the AMP decides
         st.gmode = 0; st.glvl = 32767; return
     st.gmode = 1

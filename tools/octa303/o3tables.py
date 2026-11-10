@@ -37,6 +37,14 @@ GATE_HOLD_INF = 127
 GATE_K = q15(onepole(0.003))            # the gate's edges, 3 ms (no click), at the control rate
 GATE_IDLE = 2048                        # frames (0.74 s) without a step/tick change = the sequencer stopped
 GATE_TPS0 = 6                           # ticks a step before one has been measured (1x)
+# v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent).  Measured under the port (1.40C, MKI,
+# 120 BPM, 3 Nov 2026): the STOP there wrote the transport word 0x800065b8 = 0 and the step word 0 (STEM_REC.md: 0 =
+# stopped and rewound, 2 = stopped by the STOP key with the position kept; the gate takes anything but 1 as stopped,
+# v7.5 also the first move a fresh state sees, the first PLAY after boot); PLAY writes the step word
+# and tick 0, transport 1, and the first tick (1) one frame later, on every PLAY.  The gate measured that frame as a
+# tick and shut the first note ~1.5 ms after it began.  Now a STOP is the transport word, a move while stopped is no
+# tick, and after a PLAY the first GATE_FSKIP intervals are skipped (the last tempo's frames a tick stand meanwhile).
+GATE_FSKIP = 2
 
 # ---------------------------------------------------------------- TB-303 engine
 # v6.4: every 303 constant below checked against the Roland service notes' main-board schematic
@@ -55,90 +63,101 @@ TB_SLIDE = q15(onepole(SLIDE_TAU))      # 303 slide: ~68 ms to 95 % (v6.3: 21 ms
 # -> -3.4/-3.1/-3.1 dB/ms (303: -3.4/-3.0/-3.1), its spectrum 6.1 -> 1.0 dB, bands 4.73 -> 4.68, peaks 2.30
 # -> 2.29 dB; tinyloops' knobs come out at CUT 52 RES 112 ENV 111 ACC 125 (the photo: RES 85-90 %).  Level:
 # v6.8's -2 dB at mid knobs (the accents are louder against the notes, as on Din Sync; ceiling -0.9 dBFS).
+# v7.5 (3 Nov 2026): refitted with the circuit's layout and v7.3's accent stage (modules/octa303/README.md, v7.5);
+# tinyloops' knobs come out at CUT 45 RES 106 ENV 116 (the edges of the photo's reading).  Keys no longer read:
+# acc_dec (the accent decays as DECAY at 0), gc0-gc3 / gall (TB_GCOMP is one gain with the VCA pair), shi0-shi4
+# (ENV MOD by ENV only); prehp 0 = no coupling high-pass (C17/R62's 0.72 Hz: a 3/32768 coefficient).
 CAL = {
-    'cut0':      190.904,
-    'cut1':      223.911,
-    'cut2':      417.993,
-    'cut3':      914.838,
-    'cut4':      1446.95,
-    'slo0':      0.642997,
-    'slo1':      0.764815,
-    'slo2':      1.20609,
-    'slo3':      3.05027,
-    'slo4':      4.07984,
+    'cut0':      180.76655,
+    'cut1':      193.113571,
+    'cut2':      361.810767,
+    'cut3':      934.495996,
+    'cut4':      1434.30551,
+    'slo0':      0.782576,
+    'slo1':      1.026058,
+    'slo2':      1.478667,
+    'slo3':      3.739739,
+    'slo4':      5.363241,
     'shi0':      0.838333,
     'shi1':      0.675048,
     'shi2':      1.5677,
     'shi3':      3.46185,
     'shi4':      4.88259,
-    'km0':       0.0722092,
-    'km1':       0.39515,
-    'km2':       0.412628,
-    'km3':       0.596876,
-    'km4':       0.817852,
-    'km5':       0.864409,
-    'ud0':       0.473728,
-    'ud1':       0.45,
-    'ud2':       0.26127,
-    'ud3':       0,
-    'ud4':       0.521166,
-    'ud5':       0.754574,
+    'km0':       0.156557,
+    'km1':       0.328305,
+    'km2':       0.451095,
+    'km3':       0.626595,
+    'km4':       0.793532,
+    'km5':       0.853925,
+    'ud0':       0.465638,
+    'ud1':       0.363693,
+    'ud2':       0.501183,
+    'ud3':       0.564881,
+    'ud4':       0.600483,
+    'ud5':       0.619066,
     'gc0':       0.853566,
     'gc1':       1.38368,
     'gc2':       1.72866,
     'gc3':       2.2254,
-    'dec0':      0.0843294,
-    'dec1':      0.180131,
-    'dec2':      0.618953,
-    'dec3':      1.76538,
-    'dec4':      2.34939,
-    'acc0':      0.104631,
-    'acc1':      0.309067,
-    'acc2':      1.0104,
-    'acc3':      1.46856,
-    'kr0':       0.975876,
-    'kr1':       0.8,
-    'kr2':       1.02538,
-    'kr3':       1.12766,
-    'kr4':       1.1469,
-    'lg0':       0.306474,
-    'lg1':       0.327793,
-    'lg2':       0.448971,
-    'lg3':       0.708251,
-    'lg4':       1.90264,
-    'swk0':      0.797365,
-    'swk1':      0.370416,
-    'swk2':      0.845848,
+    'dec0':      0.156576,
+    'dec1':      0.18973,
+    'dec2':      0.598289,
+    'dec3':      1.73498,
+    'dec4':      2.459161,
+    'acc0':      0.012298,
+    'acc1':      0.512746,
+    'acc2':      1.154899,
+    'acc3':      1.858586,
+    'kr0':       0.717345,
+    'kr1':       0.920449,
+    'kr2':       1.017055,
+    'kr3':       1.132693,
+    'kr4':       1.140055,
+    'lg0':       0.467025,
+    'lg1':       0.417879,
+    'lg2':       0.488168,
+    'lg3':       0.635857,
+    'lg4':       1.650117,
+    'swk0':      0.698501,
+    'swk1':      0.349962,
+    'swk2':      0.967627,
     'swk3':      1.0,
     'chk0':      1.0,
     'chk1':      1.0,
     'chk2':      1.03938,
     'chk3':      1.06649,
     'chk4':      1.0,
-    'off_a':     0.00461511,
-    'off_b':     0.304783,
+    'off_a':     0.004615,
+    'off_b':     0.357223,
     'acc_dec':   0.130431,
-    'meg_att':   0.0003,
-    'ach0':      0.059672,
-    'ach1':      0,
-    'dis':       0.126172,
-    'swd':       0.312903,
-    'swc':       0.620224,
-    'sweep_st':  76.085,
-    'accvca_gain': 0.789405,
-    'accvca_tau': 0.0012376,
-    'prehp':     148.7,
-    'fbhp':      45.2607,
+    'meg_att':   0.000586,
+    'ach0':      0.074035,
+    'ach1':      0.015727,
+    'dis':       0.155329,
+    'swd':       0.177708,
+    'swc':       0.531882,
+    'sweep_st':  72.98452,
+    'accvca_gain': 0.790284,
+    'accvca_tau': 0.00136,
+    'prehp':     0.0,
+    'fbhp':      115.0,
     'dchp':      8.84257,
     'c1r':       2.3481,
-    'ksq':       0.576456,
-    'sq_c2':     0.533233,
-    'veg_tau':   1.38888,
-    'satk':      0.00032028,
+    'ksq':       0.530941,
+    'sq_c2':     0.539828,
+    'veg_tau':   1.642356,
+    'satk':      0.000462,
     'smax':      12531.6,
-    'osat_db':   -0.889752,
-    'sqlp':      3115.48,
-    'gall':      3.7383}
+    'osat_db':   -0.798006,
+    'sqlp':      5995.791472,
+    'gall':      3.7383,
+    'vpair':     1,
+    'vgain':     2.636705,
+    'env_flat':  1,
+    'q8vlo':     4.393768,
+    'q8sw':      5.56205,
+    'q8beta':    329.033868,
+    'ota_v':     5.818058}
 KNOT_RAW = (0, 32, 64, 95, 127)                 # 0/25/50/75/100 percent of the pots
 def pchip(xs, ys, x):
     """Monotone piecewise-cubic Hermite (Fritsch-Carlson, scipy's PchipInterpolator rules)."""
@@ -165,7 +184,7 @@ TB_FBHP = q15(onepole_hz(CAL['fbhp']))     # highpass inside the resonance loop 
 TB_DCHP = q15(onepole_hz(CAL['dchp']))     # output coupling (v6.5f: 24 Hz)
 TB_MEG_ATT = q15(onepole(CAL['meg_att']))  # MEG attack (v6.5f: 3 ms)
 TB_ACC_VCA = q15(onepole(CAL['accvca_tau']))   # accent VCA path (v6.5f: 47k * 0.033uF = 1.55 ms)
-TB_MEG_ACC = q30(math.exp(-CS / (FS * CAL['acc_dec'] / math.log(10))))  # accent MEG decay (v6.5f: 0.2 s, Whittle)
+TB_MEG_ACC = q30(math.exp(-CS / (FS * CAL['acc_dec'] / math.log(10))))  # accent MEG decay (v6.5f: 0.2 s, Whittle; v7.4: replaced below)
 _DEC = [math.exp(v) for v in _curve([math.log(CAL['dec%d' % i]) for i in range(5)])]   # -20 dB time by DECAY raw
 DEC_T_MIN, DEC_T_MAX = _DEC[0], _DEC[127]
 TB_MEG = [q30(math.exp(-CS / (FS * t / math.log(10)))) for t in _DEC]
@@ -195,7 +214,7 @@ TB_UD = [int(round(min(60.0, max(0.0, v)) * 1024)) for v in _rcurve([0.0] + [CAL
 TB_GCOMP = [int(round(4096 * 1.3 * CAL['gall'] * math.exp(v))) for v in _curve([0.0] + [math.log(CAL['gc%d' % i]) for i in range(4)])]
 ACC_AMT = [int(round(max(0.0, v) * 127 * 8454660)) for v in _curve([0.0] + [CAL['acc%d' % i] for i in range(4)])]   # Q30
 TB_C1R = int(round(CAL['c1r'] * 4096))     # ladder: first stage = b * C1R (Q12); the schematic's smaller bottom cap
-TB_KSQ = int(round(CAL['ksq'] * 32768))    # square level (v6.6: 27853)
+TB_KSQ = int(round(CAL['ksq'] * 32768))    # square level (v6.6: 27853); v7.6: unused (O3_K's slot kept)
 TB_SQLP = q15(onepole_hz(CAL['sqlp']))   # v6.9: the square's soft edges (Din Sync: ~3-9 dB under the saw's harmonics above 1.4 kHz)
 TB_SATK = q30(1.0 - math.exp(-CS / (FS * CAL['satk'])))   # the 303's own attack on non-accented notes (DF_SATK[0])
 VEG_TAU = CAL['veg_tau']                   # the VCA decay (DF_VEG at VDEC 64; v6.6: 1.23 s, Open303)
@@ -252,7 +271,7 @@ def _ladder_cache():
     return d
 
 # the square's duty (high part) moves with the pitch (Whittle: 45 % high .. 71 % low): sq_c2 at C2, -3.5 % an octave
-SQ_TH = [int(round(min(0.71, max(0.45, CAL['sq_c2'] - 0.035 * (i - 52) / 12.0)) * 2 ** 32)) & 0xFFFFFFFF for i in range(128)]
+# v7.6: SQ_TH (the square's duty by pitch, sq_c2) and TB_KSQ's use are gone: Q8's circuit gives both (o3q8.py)
 # v6.8: the 303's output stage saturates softly: on Din Sync every accented note peaks at ~0.35-0.39 of full
 # scale whatever the knobs (A5, D1, E1, E5), the normal notes below.  Out = OSAT_OUT * softclip(OSAT_IN * y):
 # unity for small signals, a soft ceiling of osat_db dBFS (softclip's top, 988783 in S20, reached at sqrt2).
@@ -260,11 +279,81 @@ SOFTCLIP_TOP = 988783
 OSAT_OUT = int(round(10 ** (CAL['osat_db'] / 20.0) * 32767 * 64 * 512 / (SOFTCLIP_TOP >> 6)))   # fm(.., 6, 9)
 OSAT_IN = int(round(2 ** 25 / OSAT_OUT))                                                    # fm(.., 2, 8)
 OSAT_LIM = 4 * ((2 ** 31 - 1) // OSAT_IN) - 4                                               # (y >> 2) * IN fits 32 bits
-# v6.9: the VCA's multiply (o >> 6) * amp must fit 32 bits; the loudest amp is the full VCA envelope plus the
+# v6.9 (v7.3: see below for today's form): the VCA's multiply must fit 32 bits; the loudest amp is the full VCA envelope plus the
 # accent path at ACC 127.  The ladder's output is held under VCA_LIM before it (reached only by dEVILish's
 # self-oscillating modes or OVDR far up; the 303 alone peaks ~0.9 of it): a clip there, never a wrap.
-AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * TB_ACCVCA_GAIN) >> 15) + 64
-VCA_LIM = (((2 ** 31 - 1) // AMP_MAX) << 6) - 64
+# v7.3: with SETUP's ACCV (v7.0) the accent path's gain goes to (TB_ACCVCA_GAIN * 127) >> 6, twice the 303's:
+# v7.0-v7.1 sized AMP_MAX with the 303's gain only, so ACCV > 64 on an open accented note could wrap the VCA
+# multiply (found while checking #1011: CUT 80 RES 0 ENV 127 ACC 127 ACCV 127).
+# ---------------------------------------------------------------- v7.4: the 303's circuit (claude/TB303_circuito_fonti.md)
+# The Roland service notes' main board (= the x0xb0x netlist): the VCA input pair R121 220k / C21 10 nF (72 Hz) and
+# R122 100k / C22 10 nF (156 Hz) from the RES wiper; ENV MOD's depth by ENV only; the accent's decay as DECAY at 0.
+# v7.5: the accent stage is v7.3's (TB_ACH / TB_DIS / TB_SWDIRECT / TB_SWCAP / ACC_AMT / TB_ACC_VCA, fitted again
+# with the rest on Din Sync + tinyloops).  v7.4's network solved from the schematic (D24 / R46 / VR4b / C13 / R72)
+# fitted Din Sync but not tinyloops' accents in a row, and with tinyloops in its fit it lost the lines (fit G).
+# ---------------------------------------------------------------- v7.6: Q8, the square (claude/OCTA303_v76_Q8_studio.md)
+# The square shaper solved as its circuit (o3q8.py) at each semitone; the saw's swing (q8vlo .. q8vlo + q8sw volts)
+# and Q8's hFE fitted (Din Sync + tinyloops).  Cached: ~1 s a semitone in Python.
+def _q8_tables():
+    import json, os, hashlib, tempfile, o3q8
+    here = os.path.dirname(os.path.abspath(globals().get('__file__', 'o3tables.py')))
+    src = hashlib.sha256(open(os.path.join(here, 'o3q8.py'), 'rb').read()).hexdigest()   # the generator itself
+    key = [F_LOW, CAL['q8vlo'], CAL['q8vlo'] + CAL['q8sw'], CAL['q8beta'], o3q8.NPT, Q8_LO, Q8_HI, src]
+    p = os.path.join(here, 'q8_cache.json')
+    try:
+        d = json.load(open(p))
+        if d.get('key') == key: return d['SQC'], d['SQK']
+    except (OSError, ValueError):
+        pass                                                        # missing or half-written: rebuild (~70 s)
+    SQC, SQK = o3q8.tables(F_LOW, key[1], key[2], key[3], Q8_LO, Q8_HI)
+    fd, tmp = tempfile.mkstemp(dir=here, suffix='.tmp')
+    with os.fdopen(fd, 'w') as f: json.dump({'key': key, 'SQC': SQC, 'SQK': SQK}, f)
+    os.replace(tmp, p)                                              # atomic: parallel builds never read half a file
+    return SQC, SQK
+Q8_LO, Q8_HI = P_LO >> 8, P_HI >> 8                                 # every semitone the pitch can reach
+SQC, SQK = _q8_tables()                                             # SQC[semitone][128] Q15, SQK[semitone] Q15
+SQC_FLAT = [v for row in SQC for v in row]
+# v7.6: the VCA's OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V), OTA_V = 10^ota_v in the ladder's units
+OTA_V = 10 ** CAL['ota_v']
+OTA_IN = int(round(2 ** 32 / OTA_V))                                # u = (o >> 4) * OTA_IN >> 8 = o * 2^20 / OTA_V
+OTA_OUT = int(round(OTA_V / 2 ** 20 * 32768))                       # back: (y >> 4) * OTA_OUT >> 11
+OTA_LIM = int(1.4142 * OTA_V)                                       # softclip's clamp, so the product fits 32 bits
+SQL_DLIM = 1800000                                                  # the square's edge lowpass step: (d >> 4) * TB_SQLP < 2^31
+VCA_PAIR = int(CAL.get('vpair', 1))
+VP_HP1 = q15(onepole_hz(1 / (2 * math.pi * 222.2e3 * 0.01e-6))) if VCA_PAIR else 0
+VP_HP2 = q15(onepole_hz(1 / (2 * math.pi * 102.2e3 * 0.01e-6))) if VCA_PAIR else 0
+VP_W2 = [int(round(2.2 * r / 127.0 * 4096)) if VCA_PAIR else 0 for r in range(128)]
+TB_MEG_ACC = TB_MEG[0]                                              # v7.4: an accent decays as DECAY at 0 (IC12 shorts the pot)
+AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * ((TB_ACCVCA_GAIN * 127) >> 6)) >> 15) + 64
+if VCA_PAIR:                                                        # the level by RES comes from the pair: one gain
+    TB_GCOMP = [int(round(4096 * CAL.get('vgain', 0.21)))] * 128
+if CAL.get('env_flat', 0):                                          # v7.4: ENV MOD's depth does not depend on RES (VR4b
+    TB_SHI = list(TB_SLO)                                           # goes only to the accent sweep)
+# v7.3 (Zac Kyoti, sambanks/octabam#1011): the plain 303 did reach the old limit (RES near 0 with the filter open
+# or accented: +3.4 dB over it, hard-clipped).  The VCA multiply is now (o >> 7) * (amp >> 1) >> 6: one bit off
+# the ladder's output and one off the VCA level (Q14, ~-96 dB steps), four times the room; with AMP_MAX now
+# counting ACCV, the 303 alone peaks ~-4 dB under it at any ACCV.
+# v7.3: MUFF's lowpass input (o - mlo) is held under DF_MUFF_DLIM so ((o - mlo) >> 4) * DF_MUFF_LP fits 32 bits
+# at the wider VCA (the review of #1011's fix: not reached in the model, ~54 % at most, but no longer guaranteed).
+VCA_LIM = (((2 ** 31 - 1) // ((AMP_MAX >> 1) + 1)) << 7) - 128
+# ---------------------------------------------------------------- v7.3: the ladder's soft clip at the top
+# Zac Kyoti, sambanks/octabam#1011: with CUT, RES and ENV high the resonance sweeps up through ~11 kHz, the
+# cubic soft clip's 3rd harmonic (3 fs/4) folds back onto fs/4 exactly and the loop locks to a period-4
+# cycle -- a fixed 11.025 kHz whistle for the first 25-45 ms of every note (measured in ref303: -2.7 dB of
+# the note at CUT 127 RES 127 ENV 120).  The clip now works at a lower operating point near the top of the
+# table: y0 = softclip(u * g) / g, g = 1 up to ladder index CL_I0 (~5 kHz; the clip is v7.1's below it)
+# falling linearly to CL_GMIN at CL_I1 (~10 kHz) and above.  Small signals are unchanged (the clip's slope
+# is 1 at 0, so the resonance law, KO/KD, is the same); only the loop's saturation eases where it folds.
+# ACID mode only: dEVILish's WHST / SELF oscillate on purpose, the clip sets their level, and easing it there
+# made them up to +4.6 dB louder at the top without curing their own fs/4 lock (left as it was, see the README).
+CL_I0, CL_I1, CL_GMIN = 383, 431, 0.5
+def _clg(i):
+    if i <= CL_I0: return 4096
+    if i >= CL_I1: return int(round(CL_GMIN * 4096))
+    return int(round(4096 * (1.0 + (CL_GMIN - 1.0) * (i - CL_I0) / (CL_I1 - CL_I0))))
+CL_G = [_clg(i) for i in range(CL_I0, S_MAX // 64 + 1)]            # Q12, by ladder index - CL_I0
+CL_INV = [(4096 * 4096 + g // 2) // g for g in CL_G]               # Q12, 1/g
+CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's clamp (+-sqrt2) before the * g
 # <<< CAL v6.7
 
 
@@ -394,6 +483,7 @@ DF_ACH_FAST = [min(a * DF_FAST_CH, 32767) for a in TB_ACH]
 # no effect at low level                                                                  [p. 6, 19]
 # INTERPRETED: split at ~150 Hz; above it, mode 1 soft-clips and mode 2 hard-clips at DF_MUFF_T
 DF_MUFF_LP = q15(onepole(1.0 / (2 * math.pi * 150.0), 1))
+DF_MUFF_DLIM = 16 * ((2 ** 31 - 1) // DF_MUFF_LP) - 16      # v7.3: (o - mlo) >> 4 * DF_MUFF_LP fits 32 bits
 DF_MUFF_T = int(0.30 * (1 << 20))      # S20: the 303's normal peak at RES 0 is ~0.3 FS here
 # CUTX: the cut-off pot's range, higher and lower, to ~5 kHz (an octave above the 303)      [p. 6]
 DF_CUTX = [int(round(s_of_hz(157.0 * (4788.0 / 157.0) ** (r / 127)))) for r in range(128)]

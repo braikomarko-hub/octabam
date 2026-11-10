@@ -1,7 +1,8 @@
 A circuit-modelled Roland TB-303 voice, one per track, as a
 machine of its own: **OCTA-303**. It needs no sample, gives up no stock
-effect, and its model is fitted to recordings of a real TB-303 (Din Sync's
-x0xb0x reference set).
+effect, and its model follows the TB-303's circuit (Roland's service notes)
+fitted to recordings of two real TB-303s (Din Sync's x0xb0x reference set,
+tinyloops' accents, rolandclan's one-shots).
 
 ## Limit
 
@@ -29,7 +30,7 @@ OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 | SRC | CUT | cutoff, the 303's CUTOFF FREQ law |
 | SRC | RES | resonance |
 | SRC | ENV | env mod |
-| SRC | DEC | decay, ~0.13–2.4 s |
+| SRC | DEC | decay, ~0.16–2.5 s |
 | SRC | ACC | the ACCENT knob, applied on the steps with an ACC lock |
 | SETUP | WAVE | SAW, SQR, SAW+D, SQR+D (+D: a distortion pedal after the VCA) |
 | SETUP | GATE | OFF: the AMP page shapes the note; 303: the 303's own gate, 3.5 of 6 clocks, tied into a slide |
