@@ -18,6 +18,15 @@ The full text before this rewrite: `git show 666b6154:CHANGELOG.md`.
 
 ## Unreleased
 
+- **OCTA303 v7.3 → v8.2** (`modules/octa303`, MaMarko; code by Claude; the history in the module's README). Zac Kyoti's
+  #1011: no fs/4 whistle at the top of the cutoff, the VCA no longer hits `VCA_LIM`, no crack with ACCV over 64 (v7.3);
+  GATE 303's first note after PLAY sounds again (v7.4, reported on Discord); the circuit's high-pass layout, VCA input
+  pair and DECAY range (v7.5); Q8's square and the BA6110 OTA (v7.6); DRIV as the 303's VOLUME into the output mixer
+  (v7.7); the MEG and the accent from the circuit, refitted on Din Sync's 400 notes (v7.8); WAVE's R (Roland's factory
+  trim), dEVILish ADEC on the MEG circuit, and the TB303* sample way in removed: a FLEX track on a sample named TB303*
+  plays its sample now (v7.9); less ColdFire work with the same output bit for bit (v8.2). `test_octa303` 125/125;
+  `tools/octa303/v82/play_gate.py` under the port. Projects saved with DRIV > 0 sound different from v7.6. On MaMarko's
+  MKI: v7.9 inside his aCiDtRacK remix (ACIDV85); v8.2 @@HW@@.
 - **Demand loader: one copy a load, a shorter copy loop, a simpler pump** (`modules/dlcopy`, `modules/dlpump`;
   `docs/contributing/DEMAND_LOADER.md`). DLPUMP still sends every load three times. DLCOPY now consumes a repeat
   of the block an entry already holds (BOUND set, the same first word) without copying it again. A load costs one
