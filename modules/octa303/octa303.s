@@ -212,6 +212,13 @@
         .set    S_KW1,500                       | k D w1, Q25 (k folded into the loop's weights at the control step)
         .set    S_KW0H,504                      | k D w0 / 2, Q25
         .set    S_KWM,508                       | k D wm, Q25
+| v8.1 P11: the VCA closed -> the chain after it at its fixed point is not recomputed.  The five slots reuse
+| offsets that v8.0 defines (S_CLG, S_CLI, S_CLL, S_NLBP, S_NLWP) and never reads or writes.
+        .set    S_P11,368                       | 0 = unknown, -1 = the sample before tried, 1 = the fixed point holds
+        .set    S_P11OUT,372                    | the output word the fixed point gives (both channels)
+        .set    S_P11A,376                      | S_DC before the try
+        .set    S_P11B,428                      | S_MLO before it
+        .set    S_P11C,432                      | S_TONE before it
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -573,6 +580,7 @@ sy_render:
         beq     .Ldone
         lea     16(%a2),%a1
         lea     O3_K,%a5
+        clr.l   S_P11(%a3)              | v8.1 P11: the knobs may have moved since the last frame
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -581,6 +589,7 @@ sy_render:
         moveq   #CS,%d0
         move.l  %d0,S_CS(%a3)
         bsr     o3_ctrl
+        clr.l   S_P11(%a3)              | v8.1 P11: the control step may move the level's step
 .Lnoctl:
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
@@ -696,7 +705,280 @@ sy_render:
         moveq   #64,%d1
         sub.l   %d1,%d6                 | +64 or -64
 .Lnz9:
-        bsr     o3_nl_step              | v8.0: the new ladder (the twin (a)); d6 = x in, the filter's output out
+| ---- v8.1 P1: the ladder step in line (was o3_nl_step, its only call; claude/OCTA_MK1_manuale_08_piano_risparmi.md);
+|      .Lns_qx (beyond the tanh table, rare) sits after the loop.  What o3_nl_step's header said:
+| ---- o3_nl_step: one sample (o3ladder.Ladder.step; step 4e: the sums that feed no integrator are not rounded).  d6 = x (the engine's ladder input) in; d6 = the filter's
+|      output out, (F + 128) >> 8 clamped to +-2^23 (ref303.sample's fb).  Clobbers d0-d6, a0, a2, a4, a6.
+|      State: S_Y1..S_Y4, S_Y4P, S_LZ0.., S_FZ0.. (8 guard bits); scratch S_T0..S_T3.  Written for cycles
+|      (claude/OCTA_MK1_emac_cicli.md): Sg and the rows of A on four accumulators, each read three instructions or
+|      more after its last MAC, coefficients loaded by the MAC itself (into data registers), Q12's sign without a
+|      branch, G and F side by side.  Every sum is the same set of floored products as o3ladder.py: bit for bit.
+        move.l  %d7,-(%sp)              | the loop's count, kept: d7 = a2 = 0x8000, the +128 that rounds a read-out
+        move.l  #0x8000,%d7             | (Dn x An: the stock image never multiplies two An, emac_an)
+        movea.l %d7,%a2
+        lsl.l   #2,%d6                  | X: the input side's 2 guard bits (the states carry 8)
+        movea.l %d6,%a4                 | X kept in a4 until e
+        move.l  S_LZ0+12(%a3),%d0       | Sg = E[-lz3 init, sum lz_j SGC_j] in acc0 (the chain G as out = D in + Sg;
+        neg.l   %d0                     | c3 = -1 - 6e-6 is split: -lz3 exactly, plus (c3 + 1) in Q31), not rounded
+        move.l  %d0,%acc0
+        lea     O3_NL_K+4,%a6
+        move.l  (%a6)+,%d1
+        move.l  S_LZ0(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+4(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+8(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+12(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+16(%a3),%d0
+        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
+        move.l  S_LZ0+20(%a3),%d0
+        mac.l   %d0,%d1,%acc0
+        movea.l S_NLAP(%a3),%a0         | ay = A y: row 0 in acc1, 1 in acc2, 2 in acc3, 3 in acc1 again
+        move.l  S_Y1(%a3),%d1
+        move.l  S_Y2(%a3),%d2
+        move.l  S_Y3(%a3),%d3
+        move.l  S_Y4(%a3),%d4           | y4o, kept to the end
+        move.l  (%a0)+,%d0
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc1
+        movclr.l %acc0,%d5              | Sg
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc2
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc2
+        movclr.l %acc1,%d6
+        move.l  %d6,S_T0(%a3)           | ay0
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc3
+        mac.l   %d0,%d4,(%a0)+,%d0,%acc3
+        movclr.l %acc2,%d6
+        move.l  %d6,S_T0+4(%a3)         | ay1
+        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
+        mac.l   %d0,%d4,%acc1           | (a0 now at B0)
+        movclr.l %acc3,%d6
+        move.l  %d6,S_T0+8(%a3)         | ay2
+        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc2, the input side's units
+        move.l  S_KW0H(%a3),%d1
+        mac.l   %d4,%d1,%acc2
+        mac.l   %d4,%d1,%acc2
+        move.l  S_KWM(%a3),%d1
+        mac.l   %d3,%d1,%acc2
+        move.l  S_K(%a3),%d1
+        mac.l   %d5,%d1,%acc2
+        movclr.l %acc1,%d2              | ay3
+        move.l  %d2,S_T0+12(%a3)
+        move.l  12(%a0),%d1             | d = B3
+        move.l  %a4,%d6
+        movclr.l %acc2,%d0
+        sub.l   %d0,%d6                 | e = X - S
+        mac.l   %d6,%d1,%acc0           | num = ay3 + (E[e d] << 7)
+        move.l  S_NLR(%a3),%d1
+        move.l  S_KW1(%a3),%d5
+        lea     O3_NL_TH,%a6
+        movclr.l %acc0,%d0
+        lsl.l   #7,%d0
+        add.l   %d2,%d0
+        mac.l   %d0,%d1,%acc1           | y4n = E[num R] << 1
+        moveq   #31,%d2
+        lea     O3_NL_K,%a4
+        movea.l S_NLAP(%a3),%a0
+        movclr.l %acc1,%d0
+        add.l   %d0,%d0
+        mac.l   %d0,%d5,%acc2           | u = e - E[y4n k D w1]
+        move.l  S_T0(%a3),%d3
+        move.l  %d3,%acc0               | (the y updates' inits, ahead)
+        move.l  S_T0+4(%a3),%d3
+        movclr.l %acc2,%d0
+        sub.l   %d0,%d6                 | u
+        move.l  %d6,%d1                 | Q12: K tanh(u / K) on |u| (O3_NL_TH, a step of 2^13 input units), sign back
+        asr.l   %d2,%d1                 | s = u >> 31: 0 or -1 (no branch)
+        eor.l   %d1,%d6
+        sub.l   %d1,%d6                 | |u|
+        move.l  %d3,%acc1
+        move.l  S_T0+8(%a3),%d3
+        move.l  %d3,%acc2
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d7,%a2,%acc1
+        mac.l   %d7,%a2,%acc2
+        move.l  84(%a0),%d2             | w0/2
+        move.l  80(%a0),%d5             | w1
+        move.l  S_T0+12(%a3),%d3        | ay3
+        move.l  %d6,%d0
+        lsr.l   #8,%d0
+        lsr.l   #5,%d0                  | i
+        cmp.l   #NL_TH_N,%d0
+        bcc     .Lns_qx
+        and.l   #0x1FFF,%d6
+        lsl.l   #8,%d6
+        lsl.l   #8,%d6
+        lsl.l   #2,%d6                  | the fraction << 18
+        lea     (%a6,%d0.l*4),%a6
+        move.l  (%a6)+,%d0              | TH[i]
+        move.l  %d0,%acc3
+        mac.l   %d7,%a2,%acc3
+        neg.l   %d0
+        add.l   (%a6),%d0               | TH[i+1] - TH[i]
+        mac.l   %d6,%d0,%acc3
+        move.l  64(%a0),%d6             | B0, B1 ahead
+        movea.l 68(%a0),%a6
+        move.l  %d1,%d1
+        movclr.l %acc3,%d0
+.Lns_qr:
+        eor.l   %d1,%d0
+        sub.l   %d1,%d0
+        add.l   %d0,%d0                 | 2u (B is Q30)
+        move.l  %d3,%acc3               | y = ay + B (2u): four accumulators
+        mac.l   %d7,%a2,%acc3
+        mac.l   %d0,%d6,%acc0
+        mac.l   %d0,%a6,%acc1
+        move.l  72(%a0),%d6
+        mac.l   %d0,%d6,%acc2
+        move.l  76(%a0),%d6
+        mac.l   %d0,%d6,%acc3
+        move.l  S_Y4P(%a3),%d3          | y4p (the old one)
+        movclr.l %acc0,%d0
+        move.l  %d0,S_Y1(%a3)
+        movclr.l %acc1,%d0
+        move.l  %d0,S_Y2(%a3)
+        movclr.l %acc2,%d0
+        move.l  %d0,S_Y3(%a3)
+        movclr.l %acc3,%d6
+        move.l  %d6,S_Y4(%a3)
+        mac.l   %d7,%a2,%acc0           | ym = E[w1 y4 + w0 y4o + wm y4p], with the true y4; y4p <- y4o
+        mac.l   %d6,%d5,%acc0
+        mac.l   %d4,%d2,%acc0
+        mac.l   %d4,%d2,%acc0
+        move.l  88(%a0),%d1
+        mac.l   %d3,%d1,%acc0
+        move.l  %d4,S_Y4P(%a3)
+        lea     O3_NL_K+28,%a6          | G's coefficients in their order of use (the MAC loads the next one)
+        move.l  (%a6)+,%d3
+        movclr.l %acc0,%d0              | ym: G's input (F's is y4o, in d4)
+        lea     O3_NL_K+60,%a0          | F's
+        move.l  (%a0)+,%d6
+        move.l  S_LZ0(%a3),%d1           | G and F high-pass 0 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0(%a3)
+        move.l  S_LZ0+4(%a3),%d1           | G and F high-pass 1 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0+4(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+4(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+4(%a3)
+        move.l  S_LZ0+8(%a3),%d1           | G and F high-pass 2 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
+        move.l  S_FZ0+8(%a3),%d5
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+8(%a3)
+        movclr.l %acc2,%d2
+        sub.l   %d2,%d4
+        add.l   %d2,%d2
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+8(%a3)
+        move.l  S_LZ0+12(%a3),%d1       | G's fourth high-pass, alone
+        sub.l   %d1,%d0
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        move.l  S_FZ0+12(%a3),%d5       | (F's first shelf, ahead: its state, and x as its init)
+        move.l  %d4,%acc3
+        mac.l   %d7,%a2,%acc3
+        movclr.l %acc0,%d2
+        sub.l   %d2,%d0
+        add.l   %d2,%d2
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+12(%a3)
+        move.l  S_LZ0+16(%a3),%d1           | G and F shelf 0: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
+        move.l  %d0,%acc1
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        mac.l   %d7,%a2,%acc1
+        movclr.l %acc0,%d2
+        add.l   %d2,%d1
+        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+16(%a3)
+        movclr.l %acc2,%d2
+        add.l   %d2,%d5
+        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+12(%a3)
+        movclr.l %acc1,%d0
+        movclr.l %acc3,%d4
+        move.l  S_FZ0+16(%a3),%d5
+        move.l  %d4,%acc3
+        mac.l   %d7,%a2,%acc3
+        move.l  S_LZ0+20(%a3),%d1           | G and F shelf 1: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
+        move.l  %d0,%acc1
+        sub.l   %d1,%d0
+        sub.l   %d5,%d4
+        mac.l   %d7,%a2,%acc0
+        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
+        mac.l   %d7,%a2,%acc2
+        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
+        mac.l   %d7,%a2,%acc1
+        movclr.l %acc0,%d2
+        add.l   %d2,%d1
+        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
+        add.l   %d2,%d1
+        move.l  %d1,S_LZ0+20(%a3)
+        movclr.l %acc2,%d2
+        add.l   %d2,%d5
+        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
+        add.l   %d2,%d5
+        move.l  %d5,S_FZ0+16(%a3)
+        movclr.l %acc1,%d0
+        movclr.l %acc3,%d4
+        add.l   #128,%d4                | the filter's output: F, back to the engine's units
+        asr.l   #8,%d4
+        CLAMP   %d4,-0x800000,0x800000
+        move.l  %d4,%d6
+        move.l  (%sp)+,%d7
         move.l  %d6,S_FBO(%a3)          | v7.4: the output is the loop's high-pass (one, shared), then the
         move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper
         sub.l   S_VP1(%a3),%d0
@@ -715,6 +997,42 @@ sy_render:
         muls.l  S_W2(%a3),%d6
         asr.l   #6,%d6
         add.l   %d1,%d6
+        move.l  S_AMP(%a3),%d3          | v8.1 P11: the VCA's level first (was after the OTA, same value;
+        add.l   S_AMPSTEP(%a3),%d3      | d3 is free from here to the sample's end)
+        bgt     .Lamp                   | open: the whole chain
+        moveq   #0,%d3
+        move.l  %d3,S_AMP(%a3)          | closed this sample: max(0, amp + step) = 0
+        move.l  S_P11(%a3),%d0
+        bgt     .Lp11                   | 1: the chain after the VCA sits at its fixed point: its word again
+        beq     .Lp11t                  | 0: try
+        move.l  S_DC(%a3),%d0           | -1: the sample before was the try (closed, same frame, no control
+        cmp.l   S_P11A(%a3),%d0         | step since): did it leave the chain's three states where they were?
+        bne     .Lp11t
+        move.l  S_MLO(%a3),%d0
+        cmp.l   S_P11B(%a3),%d0
+        bne     .Lp11t
+        move.l  S_TONE(%a3),%d0
+        cmp.l   S_P11C(%a3),%d0
+        bne     .Lp11t
+        moveq   #1,%d0                  | yes: the fixed point, and its word is the one just written
+        move.l  %d0,S_P11(%a3)
+        move.l  -4(%a1),%d0
+        move.l  %d0,S_P11OUT(%a3)
+        bra     .Lp11
+.Lp11t:
+        moveq   #-1,%d0                 | try: this sample runs the chain at level 0; keep its states
+        move.l  %d0,S_P11(%a3)
+        move.l  S_DC(%a3),%d0
+        move.l  %d0,S_P11A(%a3)
+        move.l  S_MLO(%a3),%d0
+        move.l  %d0,S_P11B(%a3)
+        move.l  S_TONE(%a3),%d0
+        move.l  %d0,S_P11C(%a3)
+        bra     .Lamp0
+.Lamp:
+        move.l  %d3,S_AMP(%a3)
+        clr.l   S_P11(%a3)
+.Lamp0:
         FM66    %d6,S_GCOMP(%a3)        | level compensation, VCA (ramped per sample)
         CLAMP   %d6,-OTA_LIM,OTA_LIM    | v7.6: the VCA is an OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V)
         asr.l   #4,%d6
@@ -728,12 +1046,7 @@ sy_render:
         asr.l   #8,%d6
         asr.l   #3,%d6
         CLAMP   %d6,-VCA_LIM,VCA_LIM    | v6.9: the VCA multiply never wraps
-        move.l  S_AMP(%a3),%d1
-        add.l   S_AMPSTEP(%a3),%d1
-        bpl     .Lamp
-        moveq   #0,%d1
-.Lamp:
-        move.l  %d1,S_AMP(%a3)
+        move.l  %d3,%d1                 | v8.1 P11: the level, from above
         asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
         asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
         muls.l  %d1,%d6
@@ -857,11 +1170,24 @@ sy_render:
         move.l  %d6,(%a1)+
         subq.l  #1,%d7
         bne     .Lloop
+        bra     .Ldone
+.Lp11:                                  | v8.1 P11: closed, fixed point: the same word, S_OVCA unchanged
+        move.l  S_P11OUT(%a3),%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        subq.l  #1,%d7
+        bne     .Lloop
 .Ldone:
         move.l  44(%sp),%d0
         movem.l (%sp),%d2-%d7/%a2-%a6
         lea     48(%sp),%sp
         rts
+.Lns_qx:                                | v8.1 P1: the ladder's Q12 beyond the table (rare), out of the loop's line
+        move.l  #NL_TH_N,%d0            | beyond the table: K tanh(4) as the table ends (rare)
+        move.l  (%a6,%d0.l*4),%d0
+        move.l  64(%a0),%d6
+        movea.l 68(%a0),%a6
+        bra     .Lns_qr
 
 | ---- o3_voice: a0 := track d2's voice struct + V_POS.  Clobbers d0.
 o3_voice:
@@ -3051,287 +3377,6 @@ o3_nlctrl:
         movem.l (%sp),%d2-%d4/%d7/%a2/%a6
         lea     24(%sp),%sp
         rts
-
-| ---- o3_nl_step: one sample (o3ladder.Ladder.step; step 4e: the sums that feed no integrator are not rounded).  d6 = x (the engine's ladder input) in; d6 = the filter's
-|      output out, (F + 128) >> 8 clamped to +-2^23 (ref303.sample's fb).  Clobbers d0-d6, a0, a2, a4, a6.
-|      State: S_Y1..S_Y4, S_Y4P, S_LZ0.., S_FZ0.. (8 guard bits); scratch S_T0..S_T3.  Written for cycles
-|      (claude/OCTA_MK1_emac_cicli.md): Sg and the rows of A on four accumulators, each read three instructions or
-|      more after its last MAC, coefficients loaded by the MAC itself (into data registers), Q12's sign without a
-|      branch, G and F side by side.  Every sum is the same set of floored products as o3ladder.py: bit for bit.
-o3_nl_step:
-        move.l  %d7,-(%sp)              | the loop's count, kept: d7 = a2 = 0x8000, the +128 that rounds a read-out
-        move.l  #0x8000,%d7             | (Dn x An: the stock image never multiplies two An, emac_an)
-        movea.l %d7,%a2
-        lsl.l   #2,%d6                  | X: the input side's 2 guard bits (the states carry 8)
-        movea.l %d6,%a4                 | X kept in a4 until e
-        move.l  S_LZ0+12(%a3),%d0       | Sg = E[-lz3 init, sum lz_j SGC_j] in acc0 (the chain G as out = D in + Sg;
-        neg.l   %d0                     | c3 = -1 - 6e-6 is split: -lz3 exactly, plus (c3 + 1) in Q31), not rounded
-        move.l  %d0,%acc0
-        lea     O3_NL_K+4,%a6
-        move.l  (%a6)+,%d1
-        move.l  S_LZ0(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+4(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+8(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+12(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+16(%a3),%d0
-        mac.l   %d0,%d1,(%a6)+,%d1,%acc0
-        move.l  S_LZ0+20(%a3),%d0
-        mac.l   %d0,%d1,%acc0
-        movea.l S_NLAP(%a3),%a0         | ay = A y: row 0 in acc1, 1 in acc2, 2 in acc3, 3 in acc1 again
-        move.l  S_Y1(%a3),%d1
-        move.l  S_Y2(%a3),%d2
-        move.l  S_Y3(%a3),%d3
-        move.l  S_Y4(%a3),%d4           | y4o, kept to the end
-        move.l  (%a0)+,%d0
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d4,(%a0)+,%d0,%acc1
-        movclr.l %acc0,%d5              | Sg
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc2
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc2
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc2
-        mac.l   %d0,%d4,(%a0)+,%d0,%acc2
-        movclr.l %acc1,%d6
-        move.l  %d6,S_T0(%a3)           | ay0
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc3
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc3
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc3
-        mac.l   %d0,%d4,(%a0)+,%d0,%acc3
-        movclr.l %acc2,%d6
-        move.l  %d6,S_T0+4(%a3)         | ay1
-        mac.l   %d0,%d1,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d2,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d3,(%a0)+,%d0,%acc1
-        mac.l   %d0,%d4,%acc1           | (a0 now at B0)
-        movclr.l %acc3,%d6
-        move.l  %d6,S_T0+8(%a3)         | ay2
-        move.l  S_Y4P(%a3),%d3          | S = E[k D (w0 y4o + wm y4p) + k Sg] in acc2, the input side's units
-        move.l  S_KW0H(%a3),%d1
-        mac.l   %d4,%d1,%acc2
-        mac.l   %d4,%d1,%acc2
-        move.l  S_KWM(%a3),%d1
-        mac.l   %d3,%d1,%acc2
-        move.l  S_K(%a3),%d1
-        mac.l   %d5,%d1,%acc2
-        movclr.l %acc1,%d2              | ay3
-        move.l  %d2,S_T0+12(%a3)
-        move.l  12(%a0),%d1             | d = B3
-        move.l  %a4,%d6
-        movclr.l %acc2,%d0
-        sub.l   %d0,%d6                 | e = X - S
-        mac.l   %d6,%d1,%acc0           | num = ay3 + (E[e d] << 7)
-        move.l  S_NLR(%a3),%d1
-        move.l  S_KW1(%a3),%d5
-        lea     O3_NL_TH,%a6
-        movclr.l %acc0,%d0
-        lsl.l   #7,%d0
-        add.l   %d2,%d0
-        mac.l   %d0,%d1,%acc1           | y4n = E[num R] << 1
-        moveq   #31,%d2
-        lea     O3_NL_K,%a4
-        movea.l S_NLAP(%a3),%a0
-        movclr.l %acc1,%d0
-        add.l   %d0,%d0
-        mac.l   %d0,%d5,%acc2           | u = e - E[y4n k D w1]
-        move.l  S_T0(%a3),%d3
-        move.l  %d3,%acc0               | (the y updates' inits, ahead)
-        move.l  S_T0+4(%a3),%d3
-        movclr.l %acc2,%d0
-        sub.l   %d0,%d6                 | u
-        move.l  %d6,%d1                 | Q12: K tanh(u / K) on |u| (O3_NL_TH, a step of 2^13 input units), sign back
-        asr.l   %d2,%d1                 | s = u >> 31: 0 or -1 (no branch)
-        eor.l   %d1,%d6
-        sub.l   %d1,%d6                 | |u|
-        move.l  %d3,%acc1
-        move.l  S_T0+8(%a3),%d3
-        move.l  %d3,%acc2
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d7,%a2,%acc1
-        mac.l   %d7,%a2,%acc2
-        move.l  84(%a0),%d2             | w0/2
-        move.l  80(%a0),%d5             | w1
-        move.l  S_T0+12(%a3),%d3        | ay3
-        move.l  %d6,%d0
-        lsr.l   #8,%d0
-        lsr.l   #5,%d0                  | i
-        cmp.l   #NL_TH_N,%d0
-        bcc     .Lns_qx
-        and.l   #0x1FFF,%d6
-        lsl.l   #8,%d6
-        lsl.l   #8,%d6
-        lsl.l   #2,%d6                  | the fraction << 18
-        lea     (%a6,%d0.l*4),%a6
-        move.l  (%a6)+,%d0              | TH[i]
-        move.l  %d0,%acc3
-        mac.l   %d7,%a2,%acc3
-        neg.l   %d0
-        add.l   (%a6),%d0               | TH[i+1] - TH[i]
-        mac.l   %d6,%d0,%acc3
-        move.l  64(%a0),%d6             | B0, B1 ahead
-        movea.l 68(%a0),%a6
-        move.l  %d1,%d1
-        movclr.l %acc3,%d0
-.Lns_qr:
-        eor.l   %d1,%d0
-        sub.l   %d1,%d0
-        add.l   %d0,%d0                 | 2u (B is Q30)
-        move.l  %d3,%acc3               | y = ay + B (2u): four accumulators
-        mac.l   %d7,%a2,%acc3
-        mac.l   %d0,%d6,%acc0
-        mac.l   %d0,%a6,%acc1
-        move.l  72(%a0),%d6
-        mac.l   %d0,%d6,%acc2
-        move.l  76(%a0),%d6
-        mac.l   %d0,%d6,%acc3
-        move.l  S_Y4P(%a3),%d3          | y4p (the old one)
-        movclr.l %acc0,%d0
-        move.l  %d0,S_Y1(%a3)
-        movclr.l %acc1,%d0
-        move.l  %d0,S_Y2(%a3)
-        movclr.l %acc2,%d0
-        move.l  %d0,S_Y3(%a3)
-        movclr.l %acc3,%d6
-        move.l  %d6,S_Y4(%a3)
-        mac.l   %d7,%a2,%acc0           | ym = E[w1 y4 + w0 y4o + wm y4p], with the true y4; y4p <- y4o
-        mac.l   %d6,%d5,%acc0
-        mac.l   %d4,%d2,%acc0
-        mac.l   %d4,%d2,%acc0
-        move.l  88(%a0),%d1
-        mac.l   %d3,%d1,%acc0
-        move.l  %d4,S_Y4P(%a3)
-        lea     O3_NL_K+28,%a6          | G's coefficients in their order of use (the MAC loads the next one)
-        move.l  (%a6)+,%d3
-        movclr.l %acc0,%d0              | ym: G's input (F's is y4o, in d4)
-        lea     O3_NL_K+60,%a0          | F's
-        move.l  (%a0)+,%d6
-        move.l  S_LZ0(%a3),%d1           | G and F high-pass 0 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0(%a3)
-        move.l  S_LZ0+4(%a3),%d1           | G and F high-pass 1 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0+4(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+4(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+4(%a3)
-        move.l  S_LZ0+8(%a3),%d1           | G and F high-pass 2 side by side: w = E[(x - s) a]; x <- (x - s) - w; s <- s + 2 w
-        move.l  S_FZ0+8(%a3),%d5
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+8(%a3)
-        movclr.l %acc2,%d2
-        sub.l   %d2,%d4
-        add.l   %d2,%d2
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+8(%a3)
-        move.l  S_LZ0+12(%a3),%d1       | G's fourth high-pass, alone
-        sub.l   %d1,%d0
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        move.l  S_FZ0+12(%a3),%d5       | (F's first shelf, ahead: its state, and x as its init)
-        move.l  %d4,%acc3
-        mac.l   %d7,%a2,%acc3
-        movclr.l %acc0,%d2
-        sub.l   %d2,%d0
-        add.l   %d2,%d2
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+12(%a3)
-        move.l  S_LZ0+16(%a3),%d1           | G and F shelf 0: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
-        move.l  %d0,%acc1
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        mac.l   %d7,%a2,%acc1
-        movclr.l %acc0,%d2
-        add.l   %d2,%d1
-        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+16(%a3)
-        movclr.l %acc2,%d2
-        add.l   %d2,%d5
-        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+12(%a3)
-        movclr.l %acc1,%d0
-        movclr.l %acc3,%d4
-        move.l  S_FZ0+16(%a3),%d5
-        move.l  %d4,%acc3
-        mac.l   %d7,%a2,%acc3
-        move.l  S_LZ0+20(%a3),%d1           | G and F shelf 1: w as above; lp = s + w; x <- E[lp g_, init x]; s <- s + 2 w
-        move.l  %d0,%acc1
-        sub.l   %d1,%d0
-        sub.l   %d5,%d4
-        mac.l   %d7,%a2,%acc0
-        mac.l   %d0,%d3,(%a6)+,%d3,%acc0
-        mac.l   %d7,%a2,%acc2
-        mac.l   %d4,%d6,(%a0)+,%d6,%acc2
-        mac.l   %d7,%a2,%acc1
-        movclr.l %acc0,%d2
-        add.l   %d2,%d1
-        mac.l   %d1,%d3,(%a6)+,%d3,%acc1
-        add.l   %d2,%d1
-        move.l  %d1,S_LZ0+20(%a3)
-        movclr.l %acc2,%d2
-        add.l   %d2,%d5
-        mac.l   %d5,%d6,(%a0)+,%d6,%acc3
-        add.l   %d2,%d5
-        move.l  %d5,S_FZ0+16(%a3)
-        movclr.l %acc1,%d0
-        movclr.l %acc3,%d4
-        add.l   #128,%d4                | the filter's output: F, back to the engine's units
-        asr.l   #8,%d4
-        CLAMP   %d4,-0x800000,0x800000
-        move.l  %d4,%d6
-        move.l  (%sp)+,%d7
-        rts
-.Lns_qx:
-        move.l  #NL_TH_N,%d0            | beyond the table: K tanh(4) as the table ends (rare)
-        move.l  (%a6,%d0.l*4),%d0
-        move.l  64(%a0),%d6
-        movea.l 68(%a0),%a6
-        bra     .Lns_qr
 
 o3_ctrl:
         move.l  S_PTGT(%a3),%d0         | SLID: RC slide on the pitch CV

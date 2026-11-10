@@ -1,0 +1,6 @@
+MUFF SOFT, DRIV 100, FM 64, saw                frames  700  bit-exact YES  P11 skips   6625 (59.2%)
+MUFF HARD, DRIV 127, FM 127, saw+D             frames  700  bit-exact YES  P11 skips      0 (0.0%)
+split [0,n)+[n,16), MUFF SOFT, DRIV 90, FM 64  frames  700  bit-exact YES  P11 skips   2221 (19.8%)
+moving per frame: CUT, DRIV, MUFF, FM, OVDR    frames  700  bit-exact YES  P11 skips      0 (0.0%)
+ALL BIT-EXACT
+exit 0
