@@ -147,6 +147,27 @@ for k in range(8):
     sc += [(W(k, 90, 100, 80, 30, 127 * (k & 1)), 0, fn, True)] + [(W(k + 3, 90, 100, 80, 30, 0), None, fn, True)] * 30
 A, B, mm = run(sc); check('bit_exact_carrier_switch', mm is None)
 
+# v7.3 (#1011): the ladder clip eased at the top of the table (ACID only), with and without dEVILish's
+# per-sample FM; WHST keeps the plain clip; ACCV 127 on open accented notes through the wider VCA.
+_top = []; _seen = {'clg': 0}
+_DFM = (25, 90, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0)                  # FM up, ACID
+_DWH = (25, 0, 0, 64, 0, 50, 0, 1, 1, 0, 1, 1)                   # WHST, CUTX, ENVX
+for df, su, v in ((None, (0, 0, 64, 0, 0, 64), (127, 127, 120, 64, 0)), (None, (0, 0, 64, 0, 0, 64), (127, 127, 104, 64, 127)),
+                  (_DFM, None, (112, 120, 127, 64, 90)), (_DWH, None, (127, 127, 127, 64, 127)),
+                  (None, (0, 0, 64, 0, 0, 127), (80, 0, 127, 64, 127)), (None, (1, 0, 64, 0, 127, 127), (127, 0, 127, 64, 127))):
+    n = 90 if FULL else 45
+    fn = 'KICK.WAV' if su else 'TB303.WAV'                       # the machine (SETUP), or a TB303 sample + dEVILish
+    fr = lambda tune, at: (W(tune, *v), at, fn, True, df, 1, None, df, su)        # rdf: the 303 hears dEVILish too
+    sc = [fr(0, 0)] + [fr(0, None)] * n + [fr(-12, 3)] + [fr(-12, None)] * n
+    _orig = R.clset
+    def _spy(st, i, _o=_orig):
+        _o(st, i); _seen['clg'] += st.clg > 0
+    R.clset = _spy
+    A, B, mm = run(sc); _top.append(mm is None)
+    R.clset = _orig
+check('bit_exact_v73_top_clip_accv', all(_top) and _seen['clg'] > 0,
+      '%d/%d, clip eased in %d control steps' % (sum(_top), len(_top), _seen['clg']))
+
 # ---------------------------------------------------------------- integration
 rig = Rig(); feed = sample_feed(1)
 rig.path(2, '/AUDIO/KICK.WAV'); rig.voice(1, True, 2); rig.seen.clear()
@@ -385,10 +406,10 @@ check('no_devilish_in_remix_is_neutral', ok)
 
 # ---------------------------------------------------------------- v6.5 / v7.0: the 303's gate (SETUP's GATE)
 GF = ('gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend',
-      'gsel', 'fcnt', 'fpt', 'fseen', 'gelf')
+      'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'fskip', 'stopd')
 GOFF = {'gmode': 248, 'gate': 252, 'glvl': 256, 'gstep': 260, 'lstep': 264, 'ltick': 268, 'idle': 272,
         'kmax': 276, 'tps': 280, 'gnew': 284, 'gel': 288, 'gend': 292,
-        'gsel': 344, 'fcnt': 348, 'fpt': 352, 'fseen': 356, 'gelf': 360}
+        'gsel': 344, 'fcnt': 348, 'fpt': 352, 'fseen': 356, 'gelf': 360, 'fskip': 380, 'stopd': 384}
 check('gate_state_offsets_are_the_sources', all(Rig().cpu.consts['S_' + f.upper()] == GOFF[f] for f in GF))
 def gate_fuzz(n, seed):
     """o3_gate run on random states and inputs == ref303.gate_frame, every field"""
@@ -405,9 +426,10 @@ def gate_fuzz(n, seed):
         st.gsel = rnd.choice([0, 1, 1]); st.fseen = rnd.randint(0, 1)
         st.fcnt = rnd.choice([0, 1, 2, 3, 4094, 4095]); st.fpt = rnd.choice([0, 0, 1, 2, 3, 7, 40])
         st.gelf = rnd.choice([0, 1, 5, 6, 7, 13, 14, 15, 65534, 65535])
+        st.fskip = rnd.choice([0, 0, 1, 2]); st.stopd = rnd.randint(0, 1)
         step = rnd.choice([st.lstep, (st.lstep + 1) % LL, st.gstep, (st.gstep + 1) % LL, rnd.randrange(300)])
         tick = rnd.choice([st.ltick, rnd.randrange(12)])
-        seq = (rnd.choice([127, 0, 64]), step, tick, rnd.getrandbits(64), L)
+        seq = (rnd.choice([127, 0, 64]), step, tick, rnd.getrandbits(64), L, rnd.choice([1, 1, 0]))
         a3 = base + t * 512
         for f in GF: m.w(a3 + GOFF[f], 'l', getattr(st, f) & M32)
         rig.seq(t, seq)
@@ -422,6 +444,47 @@ def gate_fuzz(n, seed):
     return None
 bad = gate_fuzz(3000 if FULL else 800, 5)
 check('gate_state_machine_bit_exact', bad is None, bad or 'random states and inputs, every field')
+
+# v7.4 (Discord, 2 Nov 2026): GATE 303's first note after PLAY.  A stopped sequencer, then PLAY in the orders the
+# position reset and the first tick could reach the gate (a pair one or two frames apart, the START with either):
+# the first note stays open 3.5 ticks, as every other (before: ~1.5 ms in the paired orders: silent).
+def _first_open(stop_frames, stop_at_tick=5, fpt=57, play_tick1_after=1, start_at=1):
+    """the gate through the order measured under the port (3 Nov 2026, 1.40C MKI): a run, STOP (transport 0, step
+    word 0, the tick kept), PLAY (step word 1, tick 0, transport 1; tick 1 the next frame), the START a frame after
+    PLAY; returns the frames the first note's gate stays open (3.5 ticks: ~200)"""
+    st = R.Track(); st.latched = 1; st.gsel = 1
+    for s_ in range(1, 4):                                     # running: the step word is the NEXT step
+        for k_ in range(6):
+            for _ in range(fpt): R.gate_frame(st, (127, s_, k_, 0, 16, 1))
+    for _ in range(fpt * stop_at_tick // 6): R.gate_frame(st, (127, 4, 0, 0, 16, 1))
+    for _ in range(stop_frames): R.gate_frame(st, (127, 0, 0, 0, 16, 0))   # STOP early in a tick (Q1's regression)
+    seqs = [(127, 1, 0, 0, 16, 1)] * play_tick1_after + [(127, 1, 1, 0, 16, 1)] * fpt
+    for t_ in range(2, 6): seqs += [(127, 1, t_, 0, 16, 1)] * fpt
+    for fr, sq in enumerate(seqs):
+        if fr == start_at: st.gnew = 1
+        R.gate_frame(st, sq)
+        if fr > start_at and not st.gate: return fr - start_at
+    return None
+_fo = [_first_open(3000), _first_open(200), _first_open(3000, stop_at_tick=1), _first_open(30, stop_at_tick=1),
+       _first_open(3000, start_at=0)]
+check('gate_first_note_after_play', all(f is not None and 195 <= f <= 205 for f in _fo), 'open frames %s (3.5 ticks = 199)' % _fo)
+def _slide_open(mark):
+    """a note on step 1 (the START a frame after the step word reads 1), a slide marker on step `mark` (0-based):
+    the frames the gate stays open; legato only for a marker on the next step"""
+    st = R.Track(); st.latched = 1; st.gsel = 1; fpt = 57; sl = 1 << mark
+    for k_ in range(6):
+        for _ in range(fpt): R.gate_frame(st, (127, 0, k_, sl, 16, 1))
+    seqs = []
+    for s_ in (1, 2, 3, 4):
+        for k_ in range(6): seqs += [(127, s_ % 16, k_, sl, 16, 1)] * fpt
+    for fr, sq in enumerate(seqs[1:]):
+        if fr == 0: st.gnew = 1
+        R.gate_frame(st, sq)
+        if fr > 0 and not st.gate: return fr
+    return None
+_so = [_slide_open(1), _slide_open(2), _slide_open(5)]
+check('gate_slide_on_the_next_step', 540 <= _so[0] <= 560 and all(195 <= x <= 205 for x in _so[1:]),
+      'marker on step 2: %s frames (legato), step 3: %s, step 6: %s (3.5 ticks)' % tuple(_so))
 
 PATG = [(0, 1, 0), (12, 0, 1), (7, 0, 0), (None, 0, 0), (0, 0, 1), (3, 1, 1), (5, 0, 0), (0, 0, 0)] * 2
 SLIDES = sum(1 << ((i + 1) % 16) for i, p in enumerate(PATG) if p[2])

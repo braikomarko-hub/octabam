@@ -37,6 +37,12 @@ GATE_HOLD_INF = 127
 GATE_K = q15(onepole(0.003))            # the gate's edges, 3 ms (no click), at the control rate
 GATE_IDLE = 2048                        # frames (0.74 s) without a step/tick change = the sequencer stopped
 GATE_TPS0 = 6                           # ticks a step before one has been measured (1x)
+# v7.4 (Discord, 2 Nov 2026: with GATE 303 the first trig after PLAY is silent).  Measured under the port (1.40C, MKI,
+# 120 BPM, 3 Nov 2026): STOP writes the transport word 0x800065b8 = 0 and the step word 0; PLAY writes the step word
+# and tick 0, transport 1, and the first tick (1) one frame later, on every PLAY.  The gate measured that frame as a
+# tick and shut the first note ~1.5 ms after it began.  Now a STOP is the transport word, a move while stopped is no
+# tick, and after a PLAY the first GATE_FSKIP intervals are skipped (the last tempo's frames a tick stand meanwhile).
+GATE_FSKIP = 2
 
 # ---------------------------------------------------------------- TB-303 engine
 # v6.4: every 303 constant below checked against the Roland service notes' main-board schematic
@@ -260,11 +266,38 @@ SOFTCLIP_TOP = 988783
 OSAT_OUT = int(round(10 ** (CAL['osat_db'] / 20.0) * 32767 * 64 * 512 / (SOFTCLIP_TOP >> 6)))   # fm(.., 6, 9)
 OSAT_IN = int(round(2 ** 25 / OSAT_OUT))                                                    # fm(.., 2, 8)
 OSAT_LIM = 4 * ((2 ** 31 - 1) // OSAT_IN) - 4                                               # (y >> 2) * IN fits 32 bits
-# v6.9: the VCA's multiply (o >> 6) * amp must fit 32 bits; the loudest amp is the full VCA envelope plus the
+# v6.9 (v7.3: see below for today's form): the VCA's multiply must fit 32 bits; the loudest amp is the full VCA envelope plus the
 # accent path at ACC 127.  The ladder's output is held under VCA_LIM before it (reached only by dEVILish's
 # self-oscillating modes or OVDR far up; the 303 alone peaks ~0.9 of it): a clip there, never a wrap.
-AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * TB_ACCVCA_GAIN) >> 15) + 64
-VCA_LIM = (((2 ** 31 - 1) // AMP_MAX) << 6) - 64
+# v7.3: with SETUP's ACCV (v7.0) the accent path's gain goes to (TB_ACCVCA_GAIN * 127) >> 6, twice the 303's:
+# v7.0-v7.1 sized AMP_MAX with the 303's gain only, so ACCV > 64 on an open accented note could wrap the VCA
+# multiply (found while checking #1011: CUT 80 RES 0 ENV 127 ACC 127 ACCV 127).
+AMP_MAX = (ONE30 >> 16) + (((ACC_AMT[127] >> 16) * ((TB_ACCVCA_GAIN * 127) >> 6)) >> 15) + 64
+# v7.3 (Zac Kyoti, sambanks/octabam#1011): the plain 303 did reach the old limit (RES near 0 with the filter open
+# or accented: +3.4 dB over it, hard-clipped).  The VCA multiply is now (o >> 7) * (amp >> 1) >> 6: one bit off
+# the ladder's output and one off the VCA level (Q14, ~-96 dB steps), four times the room; with AMP_MAX now
+# counting ACCV, the 303 alone peaks ~-4 dB under it at any ACCV.
+# v7.3: MUFF's lowpass input (o - mlo) is held under DF_MUFF_DLIM so ((o - mlo) >> 4) * DF_MUFF_LP fits 32 bits
+# at the wider VCA (the review of #1011's fix: not reached in the model, ~54 % at most, but no longer guaranteed).
+VCA_LIM = (((2 ** 31 - 1) // ((AMP_MAX >> 1) + 1)) << 7) - 128
+# ---------------------------------------------------------------- v7.3: the ladder's soft clip at the top
+# Zac Kyoti, sambanks/octabam#1011: with CUT, RES and ENV high the resonance sweeps up through ~11 kHz, the
+# cubic soft clip's 3rd harmonic (3 fs/4) folds back onto fs/4 exactly and the loop locks to a period-4
+# cycle -- a fixed 11.025 kHz whistle for the first 25-45 ms of every note (measured in ref303: -2.7 dB of
+# the note at CUT 127 RES 127 ENV 120).  The clip now works at a lower operating point near the top of the
+# table: y0 = softclip(u * g) / g, g = 1 up to ladder index CL_I0 (~5 kHz; the clip is v7.1's below it)
+# falling linearly to CL_GMIN at CL_I1 (~10 kHz) and above.  Small signals are unchanged (the clip's slope
+# is 1 at 0, so the resonance law, KO/KD, is the same); only the loop's saturation eases where it folds.
+# ACID mode only: dEVILish's WHST / SELF oscillate on purpose, the clip sets their level, and easing it there
+# made them up to +4.6 dB louder at the top without curing their own fs/4 lock (left as it was, see the README).
+CL_I0, CL_I1, CL_GMIN = 383, 431, 0.5
+def _clg(i):
+    if i <= CL_I0: return 4096
+    if i >= CL_I1: return int(round(CL_GMIN * 4096))
+    return int(round(4096 * (1.0 + (CL_GMIN - 1.0) * (i - CL_I0) / (CL_I1 - CL_I0))))
+CL_G = [_clg(i) for i in range(CL_I0, S_MAX // 64 + 1)]            # Q12, by ladder index - CL_I0
+CL_INV = [(4096 * 4096 + g // 2) // g for g in CL_G]               # Q12, 1/g
+CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's clamp (+-sqrt2) before the * g
 # <<< CAL v6.7
 
 
@@ -394,6 +427,7 @@ DF_ACH_FAST = [min(a * DF_FAST_CH, 32767) for a in TB_ACH]
 # no effect at low level                                                                  [p. 6, 19]
 # INTERPRETED: split at ~150 Hz; above it, mode 1 soft-clips and mode 2 hard-clips at DF_MUFF_T
 DF_MUFF_LP = q15(onepole(1.0 / (2 * math.pi * 150.0), 1))
+DF_MUFF_DLIM = 16 * ((2 ** 31 - 1) // DF_MUFF_LP) - 16      # v7.3: (o - mlo) >> 4 * DF_MUFF_LP fits 32 bits
 DF_MUFF_T = int(0.30 * (1 << 20))      # S20: the 303's normal peak at RES 0 is ~0.3 FS here
 # CUTX: the cut-off pot's range, higher and lower, to ~5 kHz (an octave above the 303)      [p. 6]
 DF_CUTX = [int(round(s_of_hz(157.0 * (4788.0 / 157.0) ** (r / 127)))) for r in range(128)]

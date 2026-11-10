@@ -105,7 +105,8 @@ class Rig:
         """v6.5: the gate's inputs, seq = (hold, step, tick, slides, length) -- slides split between the
         trigless-trig mask (+8) and the trigless-lock mask (+16); a trig mask (+0) the gate must ignore."""
         m = self.cpu.mem
-        hold, step, tick, slides, L = seq
+        hold, step, tick, slides, L = seq[:5]
+        m.w(0x800065b8, 'l', seq[5] if len(seq) > 5 else 1)     # v7.4: the transport word
         m.w(CURVALS + CVSTR * track + 13, 'b', hold)
         m.w(STEPW, 'w', step); m.w(TICKB, 'b', tick)
         m.w(BANKP, 'l', BANK); m.w(PATB, 'b', PATNO)

@@ -77,6 +77,7 @@
         .set    MACH_OFF,       0x8eda2         | Part + 0x8eda2 + track: the machine (1 = FLEX)
         .set    STEPW,          0x800065b2      | v6.5: the sequencer's step word (u16; Euclacid's LIVE, poly.s po_clock)
         .set    TICKB,          0x800065b6      | its tick byte (0..5 a step at 1x)
+        .set    TRANSPORT,      0x800065b8      | v7.4: 1 = the sequencer running (STEM_REC.md; measured under the port)
         .set    PAT_IDX,        0x100b14d0      | the current pattern in the bank (poly.s, hardware-proven)
         .set    PAT_STRIDE,     0x8ed8          | bank blob + pattern * 0x8ed8 (STEP_LOCKS.md 1)
         .set    TRK_STRIDE,     0x91a           | + track * 0x91a: the track record (masks at +0, +8, +16; length +0x50)
@@ -191,6 +192,11 @@
         .set    S_FSEEN,356                     | v7.0: a move seen (FCNT is a whole interval)
         .set    S_GELF,360                      | v7.0: frames since the START
         .set    S_MACH,364                      | v7.0: the track is the TB-303 machine (signed FLEX)
+        .set    S_CLG,368                       | v7.3: the ladder clip's gain g (Q12), 0 = the plain soft clip
+        .set    S_CLI,372                       | v7.3: 1/g (Q12)
+        .set    S_CLL,376                       | v7.3: the clamp before * g (+-sqrt2 / g)
+        .set    S_FSKIP,380                     | v7.4: gate: tick intervals still to skip after a stop
+        .set    S_STOPD,384                     | v7.4: gate: a STOP seen (transport word 0)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -216,6 +222,7 @@
         .set    GATE_HOLD_INF,   127
         .set    GATE_IDLE,       2048
         .set    GATE_TPS0,       6
+        .set    GATE_FSKIP,      2
         .set    ONE30,           1073741823
         .set    S_MAX,           28480
         .set    DIST_GAIN,       5
@@ -237,9 +244,11 @@
         .set    OSAT_IN,         535
         .set    OSAT_OUT,        62733
         .set    OSAT_LIM,        16055948
-        .set    VCA_LIM,         3878080
+        .set    VCA_LIM,         10154880
         .set    SMOOTH_K,        9971
         .set    FINE_Q8,         2
+        .set    CL_I0,           383
+        .set    DF_MUFF_DLIM,    49581136
         .set    NHZ,             446
 | <<< GENERATED CONSTANTS
 
@@ -333,6 +342,29 @@
         muls.l  K_C6(%a5),%d1
         asr.l   #8,%d1
         sub.l   %d1,\reg
+        .endm
+| ---- v7.3: the ladder clip's operating point at the ladder index in d0 (clobbered); d1, a0 scratch.
+|      ACID (SWP 2) only.
+        .macro  CLSET
+        moveq   #2,%d1                  | ACID only (SWP 2): WHST / SELF keep the plain clip
+        cmp.l   S_SWP(%a3),%d1
+        bne     .Lcs0\@
+        sub.l   #CL_I0,%d0
+        bgt     .Lcs1\@
+.Lcs0\@:
+        clr.l   S_CLG(%a3)              | at or below CL_I0: the plain soft clip
+        bra     .Lcs9\@
+.Lcs1\@:
+        lea     O3_CL_G,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLG(%a3)
+        lea     O3_CL_INV,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLI(%a3)
+        lea     O3_CL_LIM,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,S_CLL(%a3)
+.Lcs9\@:
         .endm
         .macro  KB off, areg            | d0 = the knob byte at off(areg), clamped 0..127
         moveq   #0,%d0
@@ -541,6 +573,7 @@ sy_render:
         moveq   #0,%d1
 .Lfm_k:
         move.l  %d1,S_K(%a3)
+        CLSET                 | v7.3
 .Lnofm:
         move.l  S_INC(%a3),%d5          | VCO
         move.l  S_PHASE(%a3),%d4
@@ -635,7 +668,29 @@ sy_render:
         asr.l   #8,%d1
         muls.l  S_K(%a3),%d1
         sub.l   %d1,%d6
+        tst.l   S_CLG(%a3)              | v7.3 (#1011): at the top of the table softclip(u * g) / g,
+        beq     .Llcp                   | so its 3rd harmonic cannot lock the loop at fs/4
+        move.l  S_CLL(%a3),%d2
+        cmp.l   %d2,%d6
+        ble     .Llc1
+        move.l  %d2,%d6
+.Llc1:
+        neg.l   %d2
+        cmp.l   %d2,%d6
+        bge     .Llc2
+        move.l  %d2,%d6
+.Llc2:
+        asr.l   #4,%d6
+        muls.l  S_CLG(%a3),%d6
+        asr.l   #8,%d6
         SOFTCLIP %d6
+        asr.l   #4,%d6
+        muls.l  S_CLI(%a3),%d6
+        asr.l   #8,%d6
+        bra     .Llc9
+.Llcp:
+        SOFTCLIP %d6
+.Llc9:
         move.l  S_Y1(%a3),%d1           | diode ladder
         move.l  S_Y2(%a3),%d2
         move.l  S_Y3(%a3),%d3
@@ -675,11 +730,15 @@ sy_render:
         moveq   #0,%d1
 .Lamp:
         move.l  %d1,S_AMP(%a3)
-        FM68    %d6,%d1
+        asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
+        asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
+        muls.l  %d1,%d6
+        asr.l   #6,%d6
         move.l  S_MUFF(%a3),%d0         | MUFF: the bass passes, the rest is clipped
         beq     .Lmu9
         move.l  %d6,%d1
         sub.l   S_MLO(%a3),%d1
+        CLAMP   %d1,-DF_MUFF_DLIM,DF_MUFF_DLIM  | v7.3: the product fits 32 bits at the wider VCA
         move.l  #DF_MUFF_LP,%d2
         FM411   %d1,%d2
         add.l   S_MLO(%a3),%d1
@@ -1095,13 +1154,26 @@ o3_gate:
         mulu.l  %d6,%d0
         sub.l   %d0,%d3
         mvz.b   TICKB,%d4               | k
-        moveq   #0,%d5                  | d5 = the sequencer moved (a tick) since the last frame
+        moveq   #0,%d5                  | d5 bit 0 = the sequencer moved (a tick) since the last frame,
+        move.l  S_IDLE(%a3),%d0         | bit 1 = it stood still GATE_IDLE frames (a restart),
+        cmp.l   #GATE_IDLE,%d0          | bit 2 = v7.4: the transport word reads running (1)
+        blt     .Lg_rs
+        moveq   #2,%d5
+.Lg_rs:
+        moveq   #1,%d0
+        cmp.l   TRANSPORT,%d0
+        bne     .Lg_stp
+        addq.l  #4,%d5
+        bra     .Lg_rn
+.Lg_stp:
+        move.l  %d0,S_STOPD(%a3)        | v7.4: a STOP seen: the next move while running is a PLAY
+.Lg_rn:
         cmp.l   S_LSTEP(%a3),%d3
         bne     .Lg_mv
         cmp.l   S_LTICK(%a3),%d4
         beq     .Lg_nmv
 .Lg_mv:
-        moveq   #1,%d5
+        addq.l  #1,%d5
 .Lg_nmv:
         cmp.l   S_LSTEP(%a3),%d3
         beq     .Lg_same
@@ -1136,7 +1208,7 @@ o3_gate:
         moveq   #GATE_TPS0,%d0
         move.l  %d0,S_TPS(%a3)
 .Lg_tps:
-        tst.l   %d5                     | v6.5d: the ticks since the START
+        btst    #0,%d5                  | v6.5d: the ticks since the START
         beq     .Lg_ne
         move.l  S_GEL(%a3),%d0
         cmp.l   #4096,%d0
@@ -1149,8 +1221,27 @@ o3_gate:
         bge     .Lg_f1
         addq.l  #1,%d0
 .Lg_f1:
-        tst.l   %d5
+        btst    #0,%d5
         beq     .Lg_f3
+        btst    #2,%d5                  | v7.4: a move while stopped (STOP resets the step word) is no tick
+        beq     .Lg_f2
+        tst.l   S_STOPD(%a3)            | PLAY after a stop (or GATE_IDLE still): the position reset and
+        bne     .Lg_rst                 | the first tick come a frame apart (measured under the port):
+        btst    #1,%d5                  | skip GATE_FSKIP intervals, and restart the last note's clock
+        beq     .Lg_sk                  | (no 1-frame snap before the START)
+.Lg_rst:
+        clr.l   S_STOPD(%a3)
+        moveq   #GATE_FSKIP,%d1
+        move.l  %d1,S_FSKIP(%a3)
+        clr.l   S_GEL(%a3)
+        clr.l   S_GELF(%a3)
+.Lg_sk:
+        move.l  S_FSKIP(%a3),%d1
+        beq     .Lg_sk0
+        subq.l  #1,%d1
+        move.l  %d1,S_FSKIP(%a3)
+        bra     .Lg_f2
+.Lg_sk0:
         tst.l   S_FSEEN(%a3)
         beq     .Lg_f2
         move.l  %d0,S_FPT(%a3)
@@ -1180,18 +1271,24 @@ o3_gate:
         moveq   #6,%d1
         divs.l  %d1,%d0
         move.l  %d0,S_GEND(%a3)
+        move.l  %d3,%d1                 | v7.4: the step word holds the NEXT step (measured under the
+        subq.l  #1,%d1                  | port): the note's step cur = (s - 1) mod L
+        bpl     .Lg_cur
+        move.l  %d6,%d1
+        subq.l  #1,%d1
+.Lg_cur:
         move.l  %d4,%d0                 | the note's step: past half a step, the next one's
         add.l   %d0,%d0
         cmp.l   S_TPS(%a3),%d0
         blt     .Lg_gs0
-        move.l  %d3,%d0
+        move.l  %d1,%d0
         addq.l  #1,%d0
         cmp.l   %d6,%d0
         blt     .Lg_gs
         moveq   #0,%d0
         bra     .Lg_gs
 .Lg_gs0:
-        move.l  %d3,%d0
+        move.l  %d1,%d0
 .Lg_gs:
         move.l  %d0,S_GSTEP(%a3)
 .Lg_nn:
@@ -3015,6 +3112,8 @@ o3_ctrl:
         moveq   #0,%d0
 .Lc_kp:
         move.l  %d0,S_K(%a3)
+        move.l  %d3,%d0                 | v7.3: the ladder clip's operating point
+        CLSET
         lea     O3_TB_GCOMP,%a0         | level comp: the RES-0 base + the resonance part * OVDR's
         move.l  (%a0),%d1               | factor (overdrive swamps the resonance)
         move.l  (%a0,%d5.l*4),%d0
@@ -4074,6 +4173,33 @@ O3_DRV_LIM:
         .long   2941752, 2894176, 2847172, 2801668, 2755828, 2711464, 2667676, 2624476
         .long   2581880, 2539892, 2499248, 2458476, 2419012, 2379476, 2341212, 2302924
         .long   2265868, 2229408, 2192984, 2157728, 2122536, 2088476, 2054512, 2021156
+O3_CL_G:
+        .long   4096, 4053, 4011, 3968, 3925, 3883, 3840, 3797
+        .long   3755, 3712, 3669, 3627, 3584, 3541, 3499, 3456
+        .long   3413, 3371, 3328, 3285, 3243, 3200, 3157, 3115
+        .long   3072, 3029, 2987, 2944, 2901, 2859, 2816, 2773
+        .long   2731, 2688, 2645, 2603, 2560, 2517, 2475, 2432
+        .long   2389, 2347, 2304, 2261, 2219, 2176, 2133, 2091
+        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048
+        .long   2048, 2048, 2048, 2048, 2048, 2048, 2048
+O3_CL_INV:
+        .long   4096, 4139, 4183, 4228, 4274, 4321, 4369, 4419
+        .long   4468, 4520, 4573, 4626, 4681, 4738, 4795, 4855
+        .long   4916, 4977, 5041, 5107, 5173, 5243, 5314, 5386
+        .long   5461, 5539, 5617, 5699, 5783, 5868, 5958, 6050
+        .long   6143, 6242, 6343, 6445, 6554, 6666, 6779, 6899
+        .long   7023, 7148, 7282, 7420, 7561, 7710, 7866, 8024
+        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192
+        .long   8192, 8192, 8192, 8192, 8192, 8192, 8192
+O3_CL_LIM:
+        .long   1482910, 1498642, 1514335, 1530745, 1547515, 1564254, 1581770, 1599683
+        .long   1617576, 1636314, 1655491, 1674662, 1694754, 1715334, 1735924, 1757522
+        .long   1779665, 1801839, 1825120, 1849010, 1872956, 1898124, 1923978, 1949919
+        .long   1977213, 2005282, 2033478, 2063179, 2093760, 2124518, 2156960, 2190407
+        .long   2224093, 2259672, 2296408, 2333461, 2372656, 2413190, 2454141, 2497532
+        .long   2542486, 2587984, 2636284, 2686421, 2737268, 2791360, 2847632, 2904829
+        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
+        .long   2965820, 2965820, 2965820, 2965820, 2965820, 2965820, 2965820
 | <<< GENERATED TABLES
 
 | ---- the page clone's fields (poly.s po_pgdesc's {offset.w, length.w, source.l} list;
