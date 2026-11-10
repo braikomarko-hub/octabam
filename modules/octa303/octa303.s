@@ -950,6 +950,31 @@ sy_render:
         move.l  %d0,(%a1)+
         subq.l  #1,%d7
         bne     .Lloop
+        move.l  64(%sp),%d0             | PROBE (dspprobe only): on the frame's last call, the DSP stage's words
+        moveq   #16,%d1                 | in the track's slot, longs 80-81 (words 160-163: the FLEX layout never
+        cmp.l   %d1,%d0                 | reaches them): the signature, then a coefficient that moves each frame
+        bne     .Lprb_x
+        move.l  56(%sp),%d0             | ping
+        moveq   #1,%d1
+        and.l   %d1,%d0
+        move.l  #0xa80,%d1
+        muls.l  %d1,%d0
+        lea     0x80001c90,%a0          | the packer's fixed slots (ANALOG BD's control.c)
+        add.l   %d0,%a0
+        move.l  52(%sp),%d0             | track
+        move.l  #336,%d1
+        muls.l  %d1,%d0
+        add.l   %d0,%a0
+        move.l  #0x3303a303,%d0
+        move.l  %d0,320(%a0)
+        move.l  S_PRB(%a3),%d0          | c = 0x0400 + (count & 0x1ff) * 32, Q15 in the high half
+        and.l   #0x1ff,%d0
+        lsl.l   #5,%d0
+        add.l   #0x400,%d0
+        swap    %d0
+        clr.w   %d0
+        move.l  %d0,324(%a0)
+.Lprb_x:
 .Ldone:
         move.l  44(%sp),%d0
         movem.l (%sp),%d2-%d7/%a2-%a6

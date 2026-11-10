@@ -4252,6 +4252,33 @@ hostquit:
         _wf.write_text(json.dumps({k: [a, list(w)] for k, (a, w) in window_records.items()}))
     else:
         _wf.unlink(missing_ok=True)
+    if os.environ.get("O3_DSPPROBE") == "1":
+        # OCTA303 DSP PROBE (branch dspprobe only, never a release): tools/octa303/dspprobe/o3stage.asm over the
+        # unused end of SPRING REV's region on payload A (region 2 run 2, P:0x015a9..0x01679, "used 0"), and the
+        # stock `move x:>$20a,r7` at P:0x426 (both source paths meet there) made a jsr to it.
+        import ab_records
+        sys.path.insert(0, "modules/analog-bassdrum")
+        import dsp909
+        _src = pathlib.Path("tools/octa303/dspprobe/o3stage.asm").read_text()
+        _bin = pathlib.Path("out/octa303/dspprobe/o3stage.bin"); _bin.parent.mkdir(parents=True, exist_ok=True)
+        _syms, _ = dsp909.assemble(0x015a9, None, _bin, _src)
+        _b = _bin.read_bytes(); _words = [_b[i] | _b[i + 1] << 8 | _b[i + 2] << 16 for i in range(0, len(_b), 3)]
+        if 0x015a9 + len(_words) > 0x01679:
+            sys.exit(f"o3 dsp probe: {len(_words)} words outgrow P:0x015a9..0x01679")
+        _recs, _ = ab_records.records(img, *ab_records.PAYLOAD_A)
+        _srecs, _ = ab_records.records(IMG.read_bytes(), *ab_records.PAYLOAD_A)
+        _stock = IMG.read_bytes()
+        for _i, _w in enumerate(_words):
+            _off = ab_records.word_at(_recs, 0, 0x015a9 + _i)
+            if ab_records.rd(img, _off) != ab_records.rd(_stock, ab_records.word_at(_srecs, 0, 0x015a9 + _i)):
+                sys.exit(f"o3 dsp probe: P:{0x015a9 + _i:05x} is not stock: something else was placed there")
+            ab_records.wr(img, _off, _w)
+        _plog = []
+        ab_records.patch(img, _recs, 0, 0x426, (0x67f000, 0x00020a), (0x0bf080, _syms["oqz01"]),
+                         "A post-source seam -> jsr the OCTA303 probe stage", _plog)
+        print(f"\n=== OCTA303 DSP PROBE: {len(_words)} words at P:0x015a9 on payload A ===")
+        for _l in _plog:
+            print(_l)
     _pres, _pwho = [], None
     if tail_records or window_records:
         # THE TAIL's upload (schema.DspSection.tail): a copy of the payload
