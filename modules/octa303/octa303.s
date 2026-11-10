@@ -203,6 +203,7 @@
         .set    S_FBO,400                       | v7.4: this sample's high-passed ladder output
         .set    S_SQL,404                       | v7.6: the square's edge lowpass state (as v6.9)
         .set    S_FAB,408                       | v7.6R: WAVE's R (TM3 as Roland trims it), 0/1
+        .set    S_PRB,416                       | PROBE: the sample count
         .set    S_DRG,412                       | v7.6R: DRIV's gain, Q12 (DRV_G0 = DRIV 0 = v7.6)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
@@ -941,7 +942,12 @@ sy_render:
         lsl.l   #8,%d6
         lsl.l   #8,%d6
         move.l  %d6,(%a1)+
-        move.l  %d6,(%a1)+
+        move.l  S_PRB(%a3),%d0          | PROBE (dspprobe branch only): a per-track sample count in R's low half
+        addq.l  #1,%d0
+        move.l  %d0,S_PRB(%a3)
+        and.l   #0xFFFF,%d0
+        or.l    %d6,%d0
+        move.l  %d0,(%a1)+
         subq.l  #1,%d7
         bne     .Lloop
 .Ldone:

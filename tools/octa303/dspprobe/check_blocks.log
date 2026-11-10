@@ -1,0 +1,4 @@
+T5: 1500 frames 1..1500, frame gaps [1]; counter starts at sample 16, 23984 samples, 0 breaks []; L==R hi True; L lo non-zero 0; audio samples non-zero 23968
+   first header words ['0000', '0000', '0000', '0000', '0400', '0000', '0000', '0000']  a sample [(1096, 0, 1096, 81), (2252, 0, 2252, 82), (60666, 0, 60666, 83)]
+T6: 1500 frames 1..1500, frame gaps [1]; counter starts at sample 16, 23984 samples, 0 breaks []; L==R hi True; L lo non-zero 0; audio samples non-zero 23968
+   first header words ['0000', '0000', '0000', '0000', '0400', '0000', '0000', '0000']  a sample [(1096, 0, 1096, 81), (2252, 0, 2252, 82), (60666, 0, 60666, 83)]
