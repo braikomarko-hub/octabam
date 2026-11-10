@@ -42,6 +42,15 @@ TABLES += [('O3_NL_K', [TB.D] + TB.SGC31 + TB.lhp + [TB.lsa[0], TB.lsg[0], TB.ls
            ('O3_NL_R', [v for i in range(len(TB.A)) for v in _rec(i)]),
            ('O3_NL_IMAP', NL.IMAP), ('O3_NL_KL4', NL.KL4Q), ('O3_NL_KLR4', NL.KLR4Q),
            ('O3_NL_TH', TB.TH), ('O3_NL_RT', TB.RT)]
+SC = NL.SC                                        # v8.1 move 3: G / F's slow sections by blocks (slow_cache.json)
+def _m3_rows(tb):                                 # a block end, row by row: Gk[r] (3), then PhiN[r] (m)
+    return [v for r in range(tb['m']) for v in tb['Gk'][r]['q'] + tb['PhiN'][r]['q']]
+def _m3_e(tb):                                    # the block polynomial's coefficients, per state: E0, E1, E2
+    return [v for j in range(tb['m']) for v in (tb['E0']['q'][j], tb['E1']['q'][j], tb['E2']['q'][j])]
+TABLES += [('O3_M3', [SC['C0Q']] + SC['KHq'] + [SC['F']['dq']] + SC['F']['H']['q']),           # C0, KH0..2, F's d, F's H0..2
+           ('O3_M3N', [v for n in range(NL.NB) for v in (NL.N1[n], NL.N2[n])]),                  # (n << 23, n^2 << 15), n = 0..15
+           ('O3_M3G', _m3_rows(SC['G'])), ('O3_M3G_E', _m3_e(SC['G'])),
+           ('O3_M3F', _m3_rows(SC['F'])), ('O3_M3F_E', _m3_e(SC['F']))]
 SHORTS = [('O3_SQC', T.SQC_FLAT)]                 # v7.6: Q8's square cycles, 128 semitones x 128 points (Q15)
 
 def consts_block():
@@ -53,6 +62,13 @@ def consts_block():
     assert T.TB_PREHP == 0, 'v8.0: octa303.s dropped the VCO->VCF high-pass (its coefficient is 0)'
     assert NL.GB == 8 and NL.GBI == 2 and TB.TH_SH == 19 and TB.RT_SH == 19 and len(TB.RT) == 2049, 'v8.0: octa303.s hardcodes these (o3_nl_*)'
     L.append('        .set    %-16s %d' % ('NL_TH_N,', TB.TH_N))
+    assert SC is not None and NL.NB == 16 and NL.P_SH == 6 and NL.ORDM == 2 and SC['G']['m'] == 5 and SC['F']['m'] == 4, \
+        'v8.1 move 3: octa303.s hardcodes these (blocks of 16, (v + 32) >> 6, three moments, G 5 + F 4 slow states)'
+    assert SC['A0G'] == TB.lhp[0] and SC['A0F'] == TB.fhp[0], 'v8.1 move 3: the first high-pass keeps O3_NL_K\'s coefficient'
+    for tb in (SC['G'], SC['F']):
+        assert all(c['t'] == 0 for c in tb['PhiN'] + tb['Gk']) and tb['E0']['t'] == 1 and tb['E1']['t'] == 0 and tb['E2']['t'] == 0, \
+            'v8.1 move 3: octa303.s hardcodes the coefficients\' scales (E0 << 1, the rest unshifted)'
+    assert SC['F']['H']['t'] == 0
     L.append('        .set    %-16s %d' % ('NL_LGQ,', NL.LGQ))
     return '\n'.join(L)
 
