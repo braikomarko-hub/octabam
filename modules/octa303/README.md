@@ -71,11 +71,11 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 
 | slot | name | values | default | what it does |
 |---|---|---|---|---|
-| 6 | WAVE | SAW, SQR, SAW+D, SQR+D | SAW | waveform; `+D` adds a distortion pedal stage after the VCA |
+| 6 | WAVE | SAW, SQR, SAW+D, SQR+D, RSAW, RSQR, RSAWD, RSQRD | SAW | waveform; `+D` adds a distortion pedal stage after the VCA; `R` = the 303 as Roland's factory trim sets its filter (v7.6R) |
 | 7 | GATE | OFF, 303 | OFF | OFF: the AMP page shapes the note. 303: the 303's own gate, 3.5 of the step's 6 clocks (Whittle), tied into a slide |
 | 8 | FINE | −64..+63 | 0 | fine tune, ±½ semitone |
 | 9 | SLID | 0..127 | 0 | slide time (0 = the 303's RC; `devilish`'s SLID wins when it is on the track) |
-| 10 | DRIV | 0..127 | 0 | drive into the output stage's soft ceiling, up to +18 dB |
+| 10 | DRIV | 0..127 | 0 | the 303's VOLUME turned past Din Sync's position into the output mixer's saturation, 0..+10 dB, asymmetric (v7.6R) |
 | 11 | ACCV | 0..127 | 64 | accent loudness (64 = the calibrated 303) |
 
 ## How it works
@@ -268,6 +268,30 @@ of Circus Bells' pattern 1 last 62–79 ms to −20 dB on the 303, 72–78 ms on
 
 The cost: the pair adds ~25 instructions a sample, 3,592 instructions a 16-sample frame (saw; 3,937
 square), v7.3 3,198 / 3,543 (simulator counts).
+
+### v7.6R (10 Nov 2026): v7.6 with v7.9's WAVE R and v7.7's DRIV
+
+Asked by MaMarko after the unit's LOAD page showed v7.9 and v8.2 overloading the ColdFire with two accented voices:
+v7.6's engine, plus two things from the later versions, ported by hand (no ladder or MEG changes):
+
+- **WAVE R** (v7.9's): bit 2 of WAVE adds TM3 as Roland's factory trim sets it, `TM3_FAB` on the cutoff before the
+  clamp and TRCK (the same octaves at every CUT). The amount is Roland's VCF procedure (service notes p. 7: saw, key C,
+  CUT 64, RES 127, ENV/DEC/ACC 0, the ring's first interval 2.0 ms) applied to v7.6's model: SAW rings at 3.02–3.04 ms,
+  so `TM3_FAB` = 1845 (+0.601 octave; v7.9's model needed 1766); RSAW rings at 1.97–2.00 ms (✅ simulator,
+  `fab_roland_ring_2ms`).
+- **DRIV** (v7.7's): VR8 past Din Sync's position into the output mixer Q33/Q34: x = 0..+10 dB × y, then per side
+  K + (L − K) tanh((|x| − K)/(L − K)) beyond K = 0.95 L, L+ > L−. v7.6 has no pin-6 stage, so it sits after v7.6's
+  own output ceiling C (which stays): L+ = 1.09 C, just under the output's hard clamp; L− = 0.80 C (L+ = 1.36 L−;
+  v7.7 had 1.8). With L− = L+/1.8 the negative knee sat under the loudest negative peak v7.6 makes at DRIV 0 (SAW+D,
+  dEVILish 127, accent, CUT/RES/ENV 127: 0.64 C), so DRIV 1 already cut it 0.45 dB (found in review, 10 Nov 2026,
+  `ref303`); at 0.80 C DRIV fades in from 0. DRIV 0 skips the block, so DRIV 0 is v7.6 bit for bit
+  (`driv_0_skips_the_block`). Projects saved with DRIV > 0 on v7.6 sound different (v7.6's DRIV pushed into the soft
+  ceiling, up to +18 dB). (🔶 inferred: L− and L+ against a real 303's mixer were not measured on this model.)
+
+Cost (inferred from the code, not measured on the unit): WAVE R adds one test a control step; DRIV 0 one compare a
+sample; DRIV > 0 about 9 instructions on every sample, plus about 20 on the samples past a knee. Under the port, the
+play gate's project (two voices on every step, CUT/RES/ENV/ACC 127, DRIV 0) runs 12,275 OCTA303 instructions a frame
+(v7.3 + gate fixes 9,688; v8.2 13,077; same gate).
 
 ### v7.6 (4 Nov 2026): Q8's square and the VCA's OTA, fitted on two real 303s
 

@@ -56,7 +56,7 @@ def softclip(y):                                    # clamp to +-sqrt2, y - y^3/
     y = clamp(y, -1482910, 1482910)
     xs = y >> 8; x2 = (xs * xs) >> 12; x3 = (x2 * xs) >> 12
     return y - ((x3 * 10923) >> 8)
-FIELDS = ('latched', 'wave', 'dist', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs', 'veg',
+FIELDS = ('latched', 'wave', 'dist', 'fab', 'drg', 'phase', 'inc', 'pcur', 'cs', 'meg', 'megs', 'veg',
           'accd', 'accamt', 'accvca', 'cap', 'amp', 'ampstep', 'hp', 'y1', 'y2', 'y3', 'y4', 'fb',
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
@@ -67,9 +67,10 @@ class Track:
         for k in FIELDS: setattr(self, k, 0)
         self.cs = 1
         self.accvg, self.osin, self.oslim = T.TB_ACCVCA_GAIN, T.OSAT_IN, T.OSAT_LIM
+        self.drg = T.DRV_G0                              # v7.6R: DRIV's gain (Q12); osin/oslim stay v7.6's DRIV 0
 
 def note_on(st, code, w):
-    st.wave, st.dist = code & 1, code >> 1
+    st.wave, st.dist, st.fab = code & 1, (code >> 1) & 1, (code >> 2) & 1   # v7.6R: bit 2 = R, the factory preset
     acc = raw(w[5])
     st.pcur = clamp(p_of_word(w[0]) + st.fine, T.P_LO, T.P_HI) << 8   # v7.0: FINE
     st.cs = 1
@@ -163,6 +164,7 @@ def ctrl(st):
     st.envs += mulq15((S << 8) - st.envs, T.SMOOTH_K)
     base, S = st.cutb >> 8, st.envs >> 8
     s = base + ((((st.megs >> 15) - T.TB_OFF[cut]) * S) >> 15) + swq8
+    if st.fab: s += T.TM3_FAB                                          # v7.6R: R, TM3 as Roland trims it
     s = clamp(s, 0, T.S_MAX - 1)
     if st.trkhz:
         s = trck(s, (st.pcur >> 8) - T.P_CENTER, st.trkhz)            # TRCK
@@ -255,8 +257,27 @@ def sample(st):
         o = st.tone
     st.dc += fm(o - st.dc, T.TB_DCHP, 4, 11, 'dc')
     y = clamp(o - st.dc, -st.oslim, st.oslim)                     # v6.8: the output stage's soft ceiling
-    y = softclip(fm(y, st.osin, 2, 8, 'osi'))                     # v7.0: DRIV pushes into it
-    return fm(y, T.OSAT_OUT, 6, 9, 'oso')
+    y = softclip(fm(y, st.osin, 2, 8, 'osi'))
+    y = fm(y, T.OSAT_OUT, 6, 9, 'oso')
+    if st.drg == T.DRV_G0:                            # v7.6R: DRIV 0 = v7.6, bit for bit
+        return y
+    return drive(st, y)
+
+def drive(st, y):
+    """v7.6R (v7.7's): DRIV = VR8 past Din Sync's position into the output mixer Q33/Q34 (o3tables DRV_*): gain,
+    then the soft asymmetric limit, K + (L - K) tanh((|x| - K)/(L - K)) beyond K, from a Q14 tanh table."""
+    y = clamp(y, -T.DRV_YLIM, T.DRV_YLIM)
+    x = ((y >> 6) * st.drg) >> 6                     # x = y * G, G Q12
+    if x < 0: a, L, K, Rr = -x, T.DRV_LN, T.DRV_KN, T.DRV_RN
+    else: a, L, K, Rr = x, T.DRV_LP, T.DRV_KP, T.DRV_RP
+    if a > K:
+        d = min(a - K, 4 * (L - K))
+        t = (d * Rr) >> 6                            # 64 u in Q16
+        i = t >> 16
+        if i >= 256: v = T.DRV_TH[256]
+        else: v = T.DRV_TH[i] + (((T.DRV_TH[i + 1] - T.DRV_TH[i]) * ((t & 0xFFFF) >> 1)) >> 15)
+        a = K + (((L - K) * v) >> 14)
+    return -a if x < 0 else a
 
 def set_df(st, df):
     """dEVILish's twelve knobs (locks applied), or None: DF_NEUTRAL, the 303 of v6.1.1."""
@@ -278,7 +299,7 @@ def set_setup(st, setup, df):
     k = [min(v, 127) for v in (setup or T.SETUP_NEUTRAL)]
     st.accvg = (T.TB_ACCVCA_GAIN * k[5]) >> 6
     st.fine = (k[2] - 64) * T.FINE_Q8
-    st.osin, st.oslim = T.DRV_IN[k[4]], T.DRV_LIM[k[4]]
+    st.drg = T.DRV_G[k[4]]                           # v7.6R: DRIV = VR8 past Din Sync's position (o3tables DRV_*)
     st.gsel = 1 if k[1] >= 1 else 0                  # GATE: OFF / 303
     if df is None:
         st.slide = T.DF_SLIDE[k[3]]

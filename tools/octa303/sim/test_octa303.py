@@ -49,7 +49,7 @@ def run(script, track=0, rig=None):
             L, Rr = rig.call(track, w, a, b, start_at is not None, SILENCE, df, fxslot, sq)
             if L != Rr: return A, B, 'L != R'
             code = T.name_code(fname) if (last and start_at is not None) else None
-            if su is not None and code is not None: code = min(su[0], 3)         # the machine: SETUP's WAVE
+            if su is not None and code is not None: code = min(su[0], 7)         # the machine: SETUP's WAVE (v7.6R: 8 values)
             ref = R.render_call(st, w, last and start_at is not None, -1 if code is None else code, b - a,
                                alive or su is not None, rdf if fxslot in (1, 2) else None, last=last, seq=sq,
                                setup=su)
@@ -544,9 +544,9 @@ def gate_script(fname, steps=32, tf=2, setup=None, alive=True):
         sc.append((w, 0 if trig else None, fname, alive, None, 1, sq, None, setup))
     return sc
 okg = True
-for wv in (0, 1, 2, 3):
+for wv in (0, 1, 2, 3, 4, 5, 6, 7):
     A, B, mm = run(gate_script('KICK.WAV', setup=(wv, 1, 64, 0, 0, 64))); okg &= mm is None
-check('bit_exact_machine_gate_303', okg, 'WAVE SAW SQR SAW+D SQR+D, GATE 303, slides, rests, 32 steps')
+check('bit_exact_machine_gate_303', okg, 'WAVE SAW SQR SAW+D SQR+D RSAW RSQR RSAWD RSQRD (v7.6R), GATE 303, slides, rests, 32 steps')
 A0, _, mm0 = run(gate_script('KICK.WAV', setup=(1, 0, 90, 60, 100, 20), alive=False))
 check('bit_exact_machine_gate_off_dead_voice', mm0 is None, 'GATE OFF, FINE/SLID/DRIV/ACCV moved, no sample voice')
 st_a = R.Track(); st_b = R.Track(); same = True
@@ -580,7 +580,7 @@ def mscen(seed, frames):
                   rnd.randint(0, 127), rnd.choice([0, 0, 64, 127]))
         if rnd.random() < 0.05:                                            # SETUP moved or locked
             i = rnd.randrange(6); su = list(su)
-            su[i] = rnd.choice([0, 1, 2, 3, 4, 63, 64, 65, 127, 200, rnd.randint(0, 127)])
+            su[i] = rnd.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 63, 64, 65, 127, 200, rnd.randint(0, 127)])
         if rnd.random() < 0.03:
             df = None if rnd.random() < 0.4 else tuple(rnd.randint(0, 127) for _ in range(12)); slot = rnd.choice([1, 2])
         k = f // 2; sq = (127, k // 6, k % 6, rnd.getrandbits(16), 16)
@@ -600,6 +600,99 @@ _n = _setup_effect(0, 0)
 _eff = {nm: _setup_effect(i, v) for i, v, nm in ((0, 1, 'WAVE'), (2, 100, 'FINE'), (3, 100, 'SLID'), (4, 127, 'DRIV'), (5, 0, 'ACCV'))}
 check('machine_setup_knobs_act', _n is not None and all(a is not None and a != _n for nm, a in _eff.items() if nm != 'SLID'),
       'WAVE FINE DRIV ACCV change the sound (SLID: the next slide)')
+# ---------------------------------------------------------------- v7.6R (v7.9's): WAVE's R, the factory preset (TM3 as Roland trims it)
+def _fab_render(code, cut=64, res=127, env=0, dec=0, frames=3600):
+    st = R.Track(); y = []
+    for f in range(frames):
+        r = R.render_call(st, W(-12, cut, res, env, dec, 0), f == 0, code if f == 0 else -1, 16)   # key C = C2, 65.4 Hz
+        y += [R.s32(x) >> 16 for x in r]
+    return y, st
+def _ring_ms(y, a, b, fs=44100.0):
+    """service notes p. 7: the first interval between the ring's peaks after the saw's edge: the VCO's cycles averaged
+    in sync, the harmonics under 150 Hz removed (the cycle is periodic: an FFT high-pass; numpy only)"""
+    import numpy as np
+    x = np.asarray(y[int(a * fs):int(b * fs)], float)
+    f0 = R.T.F_LOW * 2 ** (52 / 12.0); P = fs / f0; n = int(len(x) / P) - 1
+    cyc = np.mean([np.interp(np.arange(int(P)), np.arange(len(x)) - k * P, x) for k in range(n)], axis=0)
+    X = np.fft.rfft(cyc); X[:int(150.0 / (fs / len(cyc))) + 1] = 0; h = np.fft.irfft(X, len(cyc))
+    e = int(np.argmax(np.abs(np.diff(np.tile(cyc, 2)))[:len(cyc)])); h = np.roll(h, -e - 2)
+    w = h[:int(0.006 * fs)]; sg = np.sign(w[np.argmax(np.abs(w[:int(0.002 * fs)]))])
+    pk = [i for i in range(1, len(w) - 1) if (w[i] - w[i - 1]) * (w[i + 1] - w[i]) < 0 and np.sign(w[i]) == sg]
+    return (pk[1] - pk[0]) / fs * 1e3 if len(pk) > 1 else float('nan')
+try:
+    import numpy as _np_fab                                 # the emu extra brings numpy; without it the ring check skips
+except ImportError:
+    _np_fab = None
+_yr, _ = _fab_render(4); _y0, _ = _fab_render(0)
+if _np_fab is None:
+    _rr = _r0 = [2.0] * 4; print('[SKIP] fab_roland_ring_2ms: no numpy')
+else:
+    _rr = [_ring_ms(_yr, a, a + 0.1) for a in (0.5, 0.7, 0.9, 1.1)]; _r0 = [_ring_ms(_y0, a, a + 0.1) for a in (0.5, 0.7, 0.9, 1.1)]
+check('fab_roland_ring_2ms', all(abs(v - 2.0) <= 0.1 for v in _rr),
+      "RSAW at Roland's VCF procedure (key C, CUT 64, RES 127, ENV/DEC/ACC 0): the ring's first interval %s ms, 500-1200 ms "
+      "(2.0 +- 0.1; SAW, Din Sync's 303: %s ms)" % ('/'.join('%.2f' % v for v in _rr), '/'.join('%.2f' % v for v in _r0)))
+_sh = []
+for _c in (0, 32, 64, 95, 127):
+    _, _sa = _fab_render(0, _c, 127, 0, 0, 300); _, _sb = _fab_render(4, _c, 127, 0, 0, 300)
+    _sh.append(_sb.sctrl - _sa.sctrl)
+check('fab_same_octaves_every_cut', all(v == T.TM3_FAB or (v < T.TM3_FAB and _c == 127) for v, _c in zip(_sh, (0, 32, 64, 95, 127))),
+      'the cutoff moves by %d (%.3f octave) at CUT 0/32/64/95/127: %s (the ladder\'s top clamps)' % (T.TM3_FAB, T.TM3_FAB / 3072.0, _sh))
+# ---------------------------------------------------------------- v7.6R (v7.7's): DRIV = VR8 past Din Sync's position, into Q33/Q34
+import types as _ty
+def _drv_ops(y, g):
+    """every product of octa303.s's .Losn / DRVSAT path (= ref303.drive), for the overflow sweep"""
+    y = max(-T.DRV_YLIM, min(T.DRV_YLIM, y)); m = [(y >> 6) * g]; x = m[0] >> 6
+    K, Rr, Wd, D4 = (T.DRV_KN, T.DRV_RN, T.DRV_WN, T.DRV_DN4) if x < 0 else (T.DRV_KP, T.DRV_RP, T.DRV_WP, T.DRV_DP4)
+    d = abs(x) - K
+    if d > 0:
+        d = min(d, D4); m.append(d * Rr); t = m[-1] >> 6; i = t >> 16
+        if i >= 256: v = T.DRV_TH[256]
+        else: m.append((T.DRV_TH[i + 1] - T.DRV_TH[i]) * ((t & 0xFFFF) >> 1)); v = T.DRV_TH[i] + (m[-1] >> 15)
+        m.append(Wd * v)
+    return m
+_ovf = _n = 0; _hi = _lo = 0
+_ys = list(range(-(1 << 25), (1 << 25) + 1, 8191)) + [s * (T.DRV_YLIM + e) for s in (-1, 1) for e in (-1, 0, 1)] + [s * (1 << 25) for s in (-1, 1)]
+for g in T.DRV_G[1:]:
+    st_ = _ty.SimpleNamespace(drg=g)
+    for y in _ys:
+        for v in _drv_ops(y, g):
+            _n += 1; _ovf += not (-2 ** 31 <= v < 2 ** 31)
+        o = R.drive(st_, y); _hi = max(_hi, o); _lo = min(_lo, o)
+check('driv_no_overflow', _ovf == 0, '%d products, DRIV 1..127, y over +-2^25: every one in 32 bits' % _n)
+check('driv_ceiling_per_side', 0 < _hi <= T.DRV_LP and -T.DRV_LN <= _lo < 0,
+      'max %+d <= L+ %d, min %+d >= -L- %d' % (_hi, T.DRV_LP, _lo, T.DRV_LN))
+def _drv_scen(drv, wave, df):
+    su = (wave, 1, 64, 0, drv, 64); sc = []
+    for f in range(144 if FULL else 48):
+        k = f // 2; sq = (127, k // 6, k % 6, 0, 16); acc = 127 if (f // 12) % 2 == 0 else 0
+        sc.append((W(12 if acc else -12, 127, 127, 127, 64, acc), 0 if f % 12 == 0 else None, 'KICK.WAV', True, df, 1, sq, df, su))
+    return sc
+def _drv_never(st, y): raise AssertionError('drive() called at DRIV 0')
+_drv_keep = R.drive; R.drive = _drv_never
+try:
+    _ok0 = True
+    for wv in (0, 2):
+        for df in (None, (127,) * 12):
+            _, _, _mm0 = run(_drv_scen(0, wv, df)); _ok0 &= _mm0 is None
+except AssertionError:
+    _ok0 = False
+finally:
+    R.drive = _drv_keep
+check('driv_0_skips_the_block', _ok0 and T.DRV_G[0] == T.DRV_G0 == 4096 and T.DRV_G[1] != 4096,
+      'DRIV 0, loud accents, SAW and SAW+D, dEVILish on/off: the reference never enters drive() and the asm equals it')
+_bad = None; _pk = {}
+for drv in (1, 64, 127):
+    for wave in ((0, 1, 2, 3) if drv == 127 else (0, 2)):              # 2, 3 = the pedal voices: the positive side's knee and cap
+        for df in (None, (127,) * 12):
+            A, B, mm = run(_drv_scen(drv, wave, df))
+            if mm is not None and _bad is None: _bad = (drv, wave, df is not None, mm)
+            s = [((v & 0xFFFFFFFF) >> 16) - (65536 if v & 0x80000000 else 0) for v in A]
+            _pk[(drv, wave, df is not None)] = (max(s), min(s))
+check('bit_exact_driv_loud', _bad is None, 'DRIV 1/64 (SAW, SAW+D) and 127 (all four waves), dEVILish all 127 on/off, accents 127 at CUT/RES/ENV 127'
+      if _bad is None else 'DRIV %d wave %d dEVILish %s mismatch @%s' % _bad)
+_neg = min(v[1] for k, v in _pk.items() if k[0] == 127); _pos = max(v[0] for k, v in _pk.items() if k[0] == 127)
+check('driv_127_reaches_both_knees', _neg <= -(T.DRV_KN >> 6) and _pos >= (T.DRV_KP >> 6),
+      'DRIV 127: peaks %+d / %+d, knees -%d / +%d (the bit-exact run covers both sides)' % (_pos, _neg, T.DRV_KN >> 6, T.DRV_KP >> 6))
 _sm = run([(W(0, 40, 100, 80, 60, 0), 0, 'TB303.WAV', True, None, 1, None, None, T.SETUP_NEUTRAL)] +
           [(W(0, 40, 100, 80, 60, 0), None, 'TB303.WAV', True, None, 1, None, None, T.SETUP_NEUTRAL)] * 30)
 _ss = run([(W(0, 40, 100, 80, 60, 0), 0, 'TB303.WAV', True)] + [(W(0, 40, 100, 80, 60, 0), None, 'TB303.WAV', True)] * 30)
@@ -848,12 +941,15 @@ def fmt(name, v):
         if not x: break
         b += bytes([x])
     return (b.decode(), c.d[0]), ok
-_fw = [fmt('o3_fmt_wave', v) for v in (0, 1, 2, 3, 9, -1)]
+_fw = [fmt('o3_fmt_wave', v) for v in (0, 1, 2, 3, 4, 5, 6, 7, 9, -1)]
 _fg = [fmt('o3_fmt_gate', v) for v in (0, 1, 5)]
-check('fmt_wave_gate_labels', [x[0][0] for x in _fw] == ['SAW', 'SQR', 'SAW+D', 'SQR+D', 'SQR+D', 'SAW']
+check('fmt_wave_gate_labels', [x[0][0] for x in _fw] == list(T.WAVE_LABELS) + ['RSQRD', 'SAW']
       and all(x[1] and x[0][1] == len(x[0][0]) for x in _fw + _fg) and [x[0][0] for x in _fg] == ['OFF', '303', '303'])
 _ff = [fmt('o3_fmt_fine', v) for v in (0, 64, 127)]
 c0 = Rig().cpu
+_lw = bytes(c0.mem.r(c0.consts['o3_lwave'] + i, 'b') for i in range(6 * len(T.WAVE_LABELS)))
+check('wave_labels_fit_their_field', all(_lw[6 * i:6 * i + 6] == l.encode().ljust(6, b'\0') for i, l in enumerate(T.WAVE_LABELS))
+      and all(len(l) <= 5 for l in T.WAVE_LABELS), 'v7.6R: 8 labels, each in its 6-byte field with its NUL (trap-name-nul)')
 check('fmt_fine_signed', [x[0] for x in _ff] == [(0x81000000, 0x400b465d, -64), (0x81000000, 0x400b465d, 0), (0x81000000, c0.consts['o3_f_plus'], 63)]
       and all(x[1] for x in _ff))
 

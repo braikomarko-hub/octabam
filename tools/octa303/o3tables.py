@@ -358,21 +358,47 @@ CL_LIM = [(1482910 * 4096) // g for g in CL_G]                     # softclip's 
 
 
 # ---------------------------------------------------------------- v7.0: the TB-303 machine's SETUP page
-# Six slots: WAVE (SAW SQR SAW+D SQR+D: the carrier names' four voices), GATE (OFF: the AMP decides, as v6.9;
+# Six slots: WAVE (SAW SQR SAW+D SQR+D: the carrier names' four voices; v7.6R: + RSAW RSQR RSAWD RSQRD, bit 2 = R), GATE (OFF: the AMP decides, as v6.9;
 # 303: the 303's own gate, 3.5 of the step's 6 clocks -- Whittle's slide page -- and held through a slide),
 # FINE (+-50 cents, 64 = 0), SLID (the slide RC as dEVILish's SLID, 0 = the 303), DRIV (the output stage
-# driven, 0 = the 303 .. +18 dB into its soft ceiling), ACCV (the accent's share on the VCA, 64 = the 303).
+# driven; v7.6R: 0 = the 303 .. +10 dB past Din Sync's VR8 into the output mixer, DRV_*), ACCV (the accent's share on the VCA, 64 = the 303).
 # A track without the machine (a TB303* sample) plays SETUP_NEUTRAL: v6.9 sample for sample.
 SETUP_NAMES = ('WAVE', 'GATE', 'FINE', 'SLID', 'DRIV', 'ACCV')
 SETUP_NEUTRAL = (0, 0, 64, 0, 0, 64)
-SETUP_COUNT = (4, 2, 128, 128, 128, 128)
-WAVE_LABELS = ('SAW', 'SQR', 'SAW+D', 'SQR+D')
+SETUP_COUNT = (8, 2, 128, 128, 128, 128)
+# v7.6R (10 Nov 2026, Marko: v7.6 with v7.9's WAVE R and v7.7's DRIV): WAVE's bit 2 = R, the factory preset (TM3 as
+# Roland trims it, claude/OCTA303_v79_tarature.md sec. 4); labels of at most 5 characters (a 6-byte field with its NUL)
+WAVE_LABELS = ('SAW', 'SQR', 'SAW+D', 'SQR+D', 'RSAW', 'RSQR', 'RSAWD', 'RSQRD')
+assert len(WAVE_LABELS) == SETUP_COUNT[0] and all(len(l) <= 5 and l.isascii() and l.isupper() for l in WAVE_LABELS)
+# R adds the same octaves at every CUT (TM3 into N134 through R73).  The amount is Roland's VCF procedure (service notes
+# p. 7: saw, key C, CUT 64, RES 127, ENV/DEC/ACC 0, the ring's first interval 2.0 ms) applied to THIS model (v7.6):
+# log2(ring without R / 2.0) octaves, measured by test_octa303's fab_roland_ring_2ms (the v7.9 value on V8A was 1766).
+TM3_FAB = 1845
 GATE_LABELS = ('OFF', '303')
 FINE_Q8 = 2                                   # Q8 semitones a FINE step: +-64 steps = +-0.5 semitone
-DRV_DB = 18.0
-DRV_IN = [int(round(OSAT_IN * 10 ** (DRV_DB * r / 127.0 / 20.0))) for r in range(128)]
-DRV_LIM = [4 * ((2 ** 31 - 1) // v) - 4 for v in DRV_IN]           # (y >> 2) * DRV_IN fits 32 bits
-assert DRV_IN[0] == OSAT_IN and DRV_LIM[0] == OSAT_LIM
+# v7.6R: DRIV is v7.7's: the 303's own VOLUME (VR8) turned past Din Sync's position, driving the output mixer Q33/Q34
+# into saturation (claude/OCTA303_componenti_303.md sec. 8).  v7.7 put it after pin 6's ceiling; v7.6 has no pin-6 stage,
+# so it goes after v7.6's own output ceiling (OSAT, which stays as it is): C = that ceiling's top in the output's units.
+# x = 10^(10 DRIV/127/20) y (0 .. +10 dB), then per side K + (L - K) tanh((|x| - K)/(L - K)) beyond K = 0.95 L, with
+# L+ > L- as v7.7 (v7.7: L+ = 1.8 L-, L- = pin 6's ceiling).  Here L+ = 1.09 C, so the + side stays under the output's
+# hard clamp (32767 << 6 = 1.096 C), and L- = 0.80 C (L+ = 1.36 L-): the - knee (0.76 C) sits above the loudest
+# negative peak v7.6 makes at DRIV 0 (SAW+D, dEVILish 127, accent, CUT/RES/ENV 127: 0.64 C), so DRIV fades in from 0
+# (with L- = L+/1.8 = 0.61 C, DRIV 1 cut that peak 0.45 dB: the review of 10 Nov).  DRIV 0 skips the block: v7.6 bit for bit.
+DRV_DB = 10.0
+DRV_G = [int(round(4096 * 10 ** (DRV_DB * r / 127.0 / 20.0))) for r in range(128)]   # Q12
+DRV_C = (((SOFTCLIP_TOP >> 6) * OSAT_OUT) >> 8) >> 1                 # v7.6's ceiling as octa303.s computes it
+DRV_LP = int(round(1.09 * DRV_C)); DRV_KP = int(round(0.95 * DRV_LP))
+DRV_LN = int(round(0.80 * DRV_C)); DRV_KN = int(round(0.95 * DRV_LN))
+DRV_RN = int(round(2 ** 28 / (DRV_LN - DRV_KN)))                     # t = ((|x| - K) * R) >> 6 = 64 u in Q16
+DRV_RP = int(round(2 ** 28 / (DRV_LP - DRV_KP)))
+DRV_TH = [int(round(math.tanh(j / 64.0) * 2 ** 14)) for j in range(258)]   # tanh(u), u = j/64, Q14
+DRV_YLIM = 1 << 22                                                   # y clamped here: (y >> 6) * DRV_G fits 32 bits
+DRV_G0 = DRV_G[0]
+DRV_WN, DRV_WP = DRV_LN - DRV_KN, DRV_LP - DRV_KP
+DRV_DN4, DRV_DP4 = 4 * DRV_WN, 4 * DRV_WP
+assert DRV_G[0] == 4096 and (DRV_YLIM >> 6) * DRV_G[127] < 2 ** 31 and DRV_C < DRV_YLIM and DRV_LP < 32767 << 6
+assert 4 * (DRV_LN - DRV_KN) * DRV_RN < 2 ** 31 and 4 * (DRV_LP - DRV_KP) * DRV_RP < 2 ** 31
+assert (DRV_LP - DRV_KP) * 2 ** 14 < 2 ** 31
 # v7.0: CUT and ENV MOD glide to a new value (a p-lock, an LFO jump) in ~1 ms instead of stepping: the
 # knobs' cutoff base and env depth, smoothed at the control rate (Q16 of the Q8-semitone domain)
 SMOOTH_K = q15(onepole(0.001))

@@ -202,6 +202,8 @@
         .set    S_W2,396                        | v7.4: the RES path's weight (Q12), OVDR applied
         .set    S_FBO,400                       | v7.4: this sample's high-passed ladder output
         .set    S_SQL,404                       | v7.6: the square's edge lowpass state (as v6.9)
+        .set    S_FAB,408                       | v7.6R: WAVE's R (TM3 as Roland trims it), 0/1
+        .set    S_DRG,412                       | v7.6R: DRIV's gain, Q12 (DRV_G0 = DRIV 0 = v7.6)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -255,6 +257,17 @@
         .set    OSAT_IN,         529
         .set    OSAT_OUT,        63400
         .set    OSAT_LIM,        16238056
+        .set    DRV_G0,          4096
+        .set    DRV_YLIM,        4194304
+        .set    DRV_KN,          1453895
+        .set    DRV_KP,          1980932
+        .set    DRV_RN,          3508
+        .set    DRV_RP,          2575
+        .set    DRV_WN,          76521
+        .set    DRV_WP,          104260
+        .set    DRV_DN4,         306084
+        .set    DRV_DP4,         417040
+        .set    TM3_FAB,         1845
         .set    VCA_LIM,         8562688
         .set    SMOOTH_K,        9971
         .set    FINE_Q8,         2
@@ -392,6 +405,43 @@
         move.l  %d1,%d0
 .Lm2\@:
         .endm
+        .macro  DRVSAT k, r, w, d4      | v7.6R (v7.7's) DRIV: d0 = a >= 0 -> K + (L-K) tanh((a-K)/(L-K)) above K; d1, d2, a0
+        sub.l   #\k,%d0
+        ble     .Ldv\@z                | a <= K: unchanged
+        cmp.l   #\d4,%d0
+        ble     .Ldv\@a
+        move.l  #\d4,%d0               | a - K <= 4 (L - K): tanh 4 = 0.9993
+.Ldv\@a:
+        move.l  #\r,%d1
+        muls.l  %d1,%d0
+        asr.l   #6,%d0                  | t = 64 (a - K) / (L - K), Q16
+        lea     O3_DRV_TH,%a0
+        move.l  %d0,%d1
+        swap    %d1
+        and.l   #0xFFFF,%d1             | i = t >> 16
+        cmp.l   #256,%d1
+        blt     .Ldv\@b
+        move.l  1024(%a0),%d1           | i = 256: the table's end
+        bra     .Ldv\@c
+.Ldv\@b:
+        lea     (%a0,%d1.l*4),%a0
+        and.l   #0xFFFF,%d0
+        lsr.l   #1,%d0                  | the fraction, Q15
+        move.l  (%a0)+,%d2              | TH[i]
+        move.l  (%a0),%d1
+        sub.l   %d2,%d1                 | TH[i+1] - TH[i], >= 0 and < 2^15
+        muls.l  %d0,%d1
+        moveq   #15,%d0
+        asr.l   %d0,%d1
+        add.l   %d2,%d1
+.Ldv\@c:
+        move.l  #\w,%d0
+        muls.l  %d1,%d0                 | (L - K) tanh, Q14
+        moveq   #14,%d1
+        asr.l   %d1,%d0
+.Ldv\@z:
+        add.l   #\k,%d0
+        .endm
         .macro  TAB tab, dst            | dst = tab[d0] (a long), via a1
         lea     \tab,%a1
         move.l  (%a1,%d0.l*4),%d1
@@ -453,7 +503,7 @@ sy_render:
         beq     .Lsmp
         bsr     o3_setupptr             | yes: SETUP's WAVE is the carrier, whatever the slot holds
         KB      0,%a0
-        moveq   #3,%d1
+        moveq   #7,%d1                  | v7.6R: 8 WAVE values (bit 2 = R)
         cmp.l   %d1,%d0
         bls     .Lours
         move.l  %d1,%d0
@@ -858,7 +908,7 @@ sy_render:
         bge     .Los2
         move.l  %d2,%d6
 .Los2:
-        asr.l   #2,%d6                  | OSAT_OUT * softclip(OSAT_IN * y), v7.0: S_OSIN = DRIV's gain
+        asr.l   #2,%d6                  | OSAT_OUT * softclip(OSAT_IN * y) (v7.6R: S_OSIN fixed, DRIV below)
         move.l  S_OSIN(%a3),%d2
         muls.l  %d2,%d6
         asr.l   #8,%d6
@@ -868,6 +918,24 @@ sy_render:
         muls.l  %d2,%d6
         asr.l   #8,%d6
         asr.l   #1,%d6
+        move.l  S_DRG(%a3),%d2          | v7.6R: DRIV 0 = v7.6, bit for bit
+        cmp.l   #DRV_G0,%d2
+        beq     .Losx
+        CLAMP   %d6,-DRV_YLIM,DRV_YLIM  | v7.6R (v7.7's): DRIV = VR8 past Din Sync's position, into Q33/Q34
+        asr.l   #6,%d6
+        muls.l  %d2,%d6
+        asr.l   #6,%d6                  | x = G y, G = 0..+10 dB (Q12)
+        move.l  %d6,%d0
+        bmi     .Losn
+        DRVSAT  DRV_KP,DRV_RP,DRV_WP,DRV_DP4    | + side: L+ = 1.09 C (under the output clamp)
+        move.l  %d0,%d6
+        bra     .Losx
+.Losn:
+        neg.l   %d0
+        DRVSAT  DRV_KN,DRV_RN,DRV_WN,DRV_DN4    | - side: L- = 0.80 C
+        neg.l   %d0
+        move.l  %d0,%d6
+.Losx:
         asr.l   #SHIFT_OUT,%d6
         CLAMP   %d6,-32767,32767
         lsl.l   #8,%d6
@@ -1591,7 +1659,7 @@ o3_setupptr:
 .Lsp_x:
         rts
 
-| ---- o3_setup (v7.0): the SETUP page into the state: S_ACCVG (ACCV), S_FINE, S_OSIN / S_OSLIM (DRIV).
+| ---- o3_setup (v7.0): the SETUP page into the state: S_ACCVG (ACCV), S_FINE, S_DRG (DRIV; v7.6R: S_OSIN / S_OSLIM fixed).
 |      SLID is o3_params' last step (dEVILish's SLID wins).  Clobbers d0, d1, a0, a1.
 o3_setup:
         bsr     o3_setupptr
@@ -1605,9 +1673,12 @@ o3_setup:
         moveq   #FINE_Q8,%d1
         muls.l  %d1,%d0
         move.l  %d0,S_FINE(%a3)
-        KB      4,%a0                   | DRIV
-        TAB     O3_DRV_IN,S_OSIN
-        TAB     O3_DRV_LIM,S_OSLIM
+        KB      4,%a0                   | DRIV (v7.6R: v7.7's, after the output ceiling, which stays v7.6's)
+        TAB     O3_DRV_G,S_DRG
+        move.l  #OSAT_IN,%d1
+        move.l  %d1,S_OSIN(%a3)
+        move.l  #OSAT_LIM,%d1
+        move.l  %d1,S_OSLIM(%a3)
         KB      1,%a0                   | GATE: 0 OFF, >= 1 303
         tst.l   %d0
         beq     .Lsu_g
@@ -2587,7 +2658,7 @@ o3_stock_validate:
 | ---- the SETUP page's formatters (fmt(buf, value) -> length)
 o3_fmt_wave:
         lea     o3_lwave,%a1
-        moveq   #3,%d1
+        moveq   #7,%d1
         bra     o3_fmt_lbl
 o3_fmt_gate:
         lea     o3_lgate,%a1
@@ -2846,14 +2917,19 @@ o3_params:
         move.l  (%sp)+,%a2
         rts
 
-| ---- o3_note_on: d5 = (dist<<1)|wave.  Clobbers d0-d1, d4.
+| ---- o3_note_on: d5 = (fab<<2)|(dist<<1)|wave (v7.6R: fab = WAVE's R).  Clobbers d0-d1, d4.
 o3_note_on:
         moveq   #1,%d0
         and.l   %d5,%d0
         move.l  %d0,S_WAVE(%a3)
         move.l  %d5,%d0
         lsr.l   #1,%d0
+        moveq   #1,%d4
+        and.l   %d4,%d0
         move.l  %d0,S_DIST(%a3)
+        move.l  %d5,%d0
+        lsr.l   #2,%d0                  | v7.6R: bit 2 = R, the factory preset
+        move.l  %d0,S_FAB(%a3)
         moveq   #0,%d4                  | ACC of the trig, raw 0..127
         move.w  10(%a4),%d4
         lsr.l   #8,%d4
@@ -3141,6 +3217,10 @@ o3_ctrl:
         asr.l   #7,%d0
         add.l   %d0,%d3
         add.l   %d6,%d3                 | the accent sweep (Q8 semitones)
+        tst.l   S_FAB(%a3)              | v7.6R: R, TM3 as Roland trims it: the same octaves at every CUT
+        beq     .Lc_nf
+        add.l   #TM3_FAB,%d3
+.Lc_nf:
         CLAMP   %d3,0,S_MAX-1
         move.l  S_TRKHZ(%a3),%d0        | TRCK, linear in Hz
         beq     .Lc_nt
@@ -4204,40 +4284,57 @@ O3_KD:
         .long   286, 288, 290, 292, 295, 297, 299, 302
         .long   304, 307, 309, 312, 315, 317, 320, 323
         .long   326, 329, 331, 334, 337, 340
-O3_DRV_IN:
-        .long   529, 538, 547, 556, 565, 574, 583, 593
-        .long   603, 613, 623, 633, 643, 654, 665, 676
-        .long   687, 698, 710, 721, 733, 745, 757, 770
-        .long   783, 795, 809, 822, 835, 849, 863, 877
-        .long   892, 906, 921, 936, 952, 968, 983, 1000
-        .long   1016, 1033, 1050, 1067, 1085, 1102, 1121, 1139
-        .long   1158, 1177, 1196, 1216, 1236, 1256, 1277, 1298
-        .long   1319, 1341, 1363, 1385, 1408, 1431, 1455, 1479
-        .long   1503, 1528, 1553, 1579, 1605, 1631, 1658, 1685
-        .long   1713, 1741, 1770, 1799, 1828, 1858, 1889, 1920
-        .long   1952, 1984, 2016, 2049, 2083, 2117, 2152, 2188
-        .long   2224, 2260, 2297, 2335, 2374, 2413, 2452, 2493
-        .long   2534, 2575, 2618, 2661, 2705, 2749, 2794, 2840
-        .long   2887, 2935, 2983, 3032, 3082, 3133, 3184, 3236
-        .long   3290, 3344, 3399, 3455, 3512, 3569, 3628, 3688
-        .long   3748, 3810, 3873, 3936, 4001, 4067, 4134, 4202
-O3_DRV_LIM:
-        .long   16238056, 15966416, 15703712, 15449516, 15203420, 14965036, 14734016, 14485548
-        .long   14245324, 14012936, 13788012, 13570192, 13359144, 13134452, 12917188, 12706996
-        .long   12503536, 12306492, 12098492, 11913912, 11718868, 11530108, 11347332, 11155752
-        .long   10970536, 10804944, 10617960, 10450036, 10287340, 10117704, 9953568, 9794676
-        .long   9629964, 9481160, 9326740, 9177276, 9023036, 8873892, 8738484, 8589928
-        .long   8454656, 8315516, 8180884, 8050540, 7916984, 7794852, 7662736, 7541640
-        .long   7417900, 7298156, 7182212, 7064084, 6949780, 6839112, 6726644, 6617816
-        .long   6512452, 6405612, 6302220, 6202112, 6100800, 6002744, 5903728, 5807928
-        .long   5715188, 5621680, 5531180, 5440104, 5351980, 5266660, 5180896, 5097880
-        .long   5014552, 4933904, 4853064, 4774832, 4699084, 4623208, 4547340, 4473920
-        .long   4400576, 4329600, 4260876, 4192252, 4123824, 4057592, 3991600, 3925924
-        .long   3862376, 3800852, 3739624, 3678768, 3618332, 3559852, 3503228, 3445616
-        .long   3389864, 3335892, 3281100, 3228080, 3175572, 3124744, 3074416, 3024620
-        .long   2975380, 2926716, 2879624, 2833084, 2787124, 2741756, 2697836, 2654484
-        .long   2610916, 2568756, 2527188, 2486228, 2445876, 2406812, 2367672, 2329152
-        .long   2291864, 2254572, 2217896, 2182396, 2146940, 2112100, 2077868, 2044244
+O3_DRV_G:
+        .long   4096, 4133, 4171, 4209, 4247, 4286, 4325, 4364
+        .long   4404, 4444, 4485, 4526, 4567, 4608, 4650, 4693
+        .long   4735, 4778, 4822, 4866, 4910, 4955, 5000, 5046
+        .long   5092, 5138, 5185, 5232, 5280, 5328, 5376, 5425
+        .long   5474, 5524, 5575, 5625, 5677, 5728, 5781, 5833
+        .long   5886, 5940, 5994, 6049, 6104, 6159, 6215, 6272
+        .long   6329, 6387, 6445, 6504, 6563, 6622, 6683, 6744
+        .long   6805, 6867, 6930, 6993, 7056, 7121, 7185, 7251
+        .long   7317, 7384, 7451, 7519, 7587, 7656, 7726, 7796
+        .long   7867, 7939, 8011, 8084, 8158, 8232, 8307, 8383
+        .long   8459, 8536, 8614, 8692, 8771, 8851, 8932, 9013
+        .long   9095, 9178, 9262, 9346, 9431, 9517, 9604, 9691
+        .long   9779, 9868, 9958, 10049, 10141, 10233, 10326, 10420
+        .long   10515, 10611, 10707, 10805, 10903, 11003, 11103, 11204
+        .long   11306, 11409, 11513, 11618, 11723, 11830, 11938, 12047
+        .long   12156, 12267, 12379, 12491, 12605, 12720, 12836, 12953
+O3_DRV_TH:
+        .long   0, 256, 512, 767, 1023, 1277, 1532, 1785
+        .long   2037, 2289, 2539, 2789, 3036, 3283, 3528, 3771
+        .long   4013, 4252, 4490, 4726, 4960, 5191, 5420, 5647
+        .long   5871, 6093, 6312, 6529, 6743, 6954, 7163, 7369
+        .long   7571, 7771, 7968, 8162, 8353, 8541, 8726, 8908
+        .long   9087, 9262, 9435, 9604, 9771, 9934, 10095, 10252
+        .long   10406, 10557, 10706, 10851, 10993, 11132, 11269, 11402
+        .long   11533, 11661, 11785, 11908, 12027, 12144, 12258, 12369
+        .long   12478, 12584, 12688, 12789, 12888, 12984, 13078, 13170
+        .long   13260, 13347, 13432, 13515, 13595, 13674, 13751, 13826
+        .long   13898, 13969, 14038, 14105, 14171, 14234, 14296, 14356
+        .long   14415, 14472, 14528, 14582, 14634, 14685, 14735, 14783
+        .long   14830, 14876, 14920, 14963, 15005, 15046, 15085, 15124
+        .long   15161, 15197, 15232, 15267, 15300, 15332, 15363, 15394
+        .long   15423, 15452, 15480, 15507, 15533, 15559, 15584, 15608
+        .long   15631, 15654, 15676, 15697, 15718, 15738, 15757, 15776
+        .long   15795, 15812, 15830, 15847, 15863, 15879, 15894, 15909
+        .long   15923, 15937, 15951, 15964, 15977, 15989, 16001, 16013
+        .long   16024, 16035, 16046, 16056, 16066, 16076, 16085, 16094
+        .long   16103, 16112, 16120, 16128, 16136, 16143, 16151, 16158
+        .long   16165, 16171, 16178, 16184, 16190, 16196, 16202, 16208
+        .long   16213, 16218, 16223, 16228, 16233, 16238, 16242, 16246
+        .long   16251, 16255, 16259, 16263, 16266, 16270, 16273, 16277
+        .long   16280, 16283, 16286, 16289, 16292, 16295, 16298, 16300
+        .long   16303, 16305, 16308, 16310, 16312, 16315, 16317, 16319
+        .long   16321, 16323, 16325, 16327, 16328, 16330, 16332, 16333
+        .long   16335, 16336, 16338, 16339, 16341, 16342, 16343, 16344
+        .long   16346, 16347, 16348, 16349, 16350, 16351, 16352, 16353
+        .long   16354, 16355, 16356, 16357, 16358, 16358, 16359, 16360
+        .long   16361, 16361, 16362, 16363, 16363, 16364, 16365, 16365
+        .long   16366, 16366, 16367, 16368, 16368, 16369, 16369, 16369
+        .long   16370, 16370, 16371, 16371, 16372, 16372, 16372, 16373
+        .long   16373, 16373
 O3_CL_G:
         .long   4096, 4053, 4011, 3968, 3925, 3883, 3840, 3797
         .long   3755, 3712, 3669, 3627, 3584, 3541, 3499, 3456
@@ -5420,7 +5517,7 @@ o3_mover:
 o3_zero6:
         .long   0, 0, 0, 0, 0, 0
 o3_mcnt:                                | o3tables.SETUP_COUNT
-        .long   4, 2, 128, 128, 128, 128
+        .long   8, 2, 128, 128, 128, 128
 o3_mfmts:
         .long   o3_fmt_wave, o3_fmt_gate, o3_fmt_fine, FMT_PLAIN, FMT_PLAIN, FMT_PLAIN
 o3_mflags:
@@ -5448,6 +5545,12 @@ o3_lwave:                               | o3tables.WAVE_LABELS
         .byte   0, 0
         .asciz  "SAW+D"
         .asciz  "SQR+D"
+        .asciz  "RSAW"                  | v7.6R: R, the factory preset
+        .byte   0
+        .asciz  "RSQR"
+        .byte   0
+        .asciz  "RSAWD"
+        .asciz  "RSQRD"
 o3_lgate:                               | o3tables.GATE_LABELS
         .asciz  "OFF"
         .byte   0, 0
