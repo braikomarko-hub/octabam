@@ -190,7 +190,10 @@ defects; the three that are calibration choices stay as fitted until they can be
   0.5, **0 at 0.3**. Not 0.25 (also 0 locks): the clip's output grows as 1/g into the ladder's first
   multiply, and a random search with dEVILish OVDR / FM / MUFF up reached 0.72 of 2^31 there at 0.25,
   0.62 at 0.3, 0.37 at 0.5 (measured; no closed-form bound). Side effect: notes at CUT and RES near 127 are
-  louder in their first ~50 ms (+0.3 to +1.8 dB measured at 0.25; 0.3 not yet measured). Not yet heard on the unit.
+  louder in their first ~50 ms. Measured at 0.3 against 0.5 on the same grid (192 runs, 2,304 notes): first 50 ms of
+  each note within ±1 dB for 2,145 notes, +1 to +2.3 dB for 156, and −6 to −10 dB for the 3 that locked (the
+  whistle gone); whole-run level median +0.05 dB (−2.2..+1.1); 174/192 runs within 1 dB in every band
+  (50–200–800–3k2–8k–22k Hz). Not yet heard on the unit.
 - ✅ **The VCA's room** (simulator). The multiply is now `(o >> 7) · (amp >> 1) >> 6` (was `(o >> 6) · amp >> 8`),
   and `AMP_MAX` counts SETUP's ACCV: before, ACCV above 64 on an open accented note **wrapped the 32-bit
   multiply** (found while checking #1011; CUT 80 RES 0 ENV 127 ACC 127 ACCV 127: full-scale jumps, a
