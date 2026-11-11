@@ -8,7 +8,8 @@ Boots out/mainos_bus.bin with both DSP cores and the frame interrupt
 the three blocks twice, a second of port time apart. Checks:
 
   blocks     wValue 0, 1, 2 read whole through wIndex offsets (20, 48 and 256 bytes); no reply is a
-             multiple of 64 bytes; an offset at the end and wValue 4 STALL; wValue 3 is DLPUMP's counters when the remix has it, else STALLs
+             multiple of 64 bytes; an offset at the end STALLs; wValue 3 is DLPUMP's counters when the remix has it, else STALLs;
+             wValue 4 is OCTA303's stopwatch when the remix has OCTA303 (then wValue 5 STALLs), else STALLs
   match      lm_stats read over USB equals the same words peeked from DRAM at
              the symbol's address (runtime.elf), so the request points at the
              meter's cells and not at a neighbour
@@ -147,11 +148,17 @@ def main():
             check("an offset at the block's end STALLs", False, "a reply came back")
         except Exception as e:  # noqa: BLE001
             check("an offset at the block's end STALLs", True, type(e).__name__)
+        if "OCTA303" in mods:              # block 4 is OCTA303's stopwatch (O3_PROF, 256 bytes); 5 is past the last
+            check("wValue 4 returns OCTA303's stopwatch (255 bytes for a 256-byte request)",
+                  len(serve(lambda: b.ctrl_in(0xc0, 0x57, 4, 0, 256))) == 255)
+            last = 5
+        else:
+            last = 4
         try:
-            serve(lambda: b.ctrl_in(0xc0, 0x57, 4, 0, 4))
-            check("wValue 4 STALLs", False, "a reply came back")
+            serve(lambda: b.ctrl_in(0xc0, 0x57, last, 0, 4))
+            check(f"wValue {last} STALLs", False, "a reply came back")
         except Exception as e:  # noqa: BLE001
-            check("wValue 4 STALLs", True, type(e).__name__)
+            check(f"wValue {last} STALLs", True, type(e).__name__)
         if "DLPUMP" in mods:               # block 3 is DLPUMP's counters: 16 longs, sent a byte short of 64
             check("wValue 3 returns DLPUMP's counters (63 bytes for a 64-byte request)",
                   len(serve(lambda: b.ctrl_in(0xc0, 0x57, 3, 0, 64))) == 63)
