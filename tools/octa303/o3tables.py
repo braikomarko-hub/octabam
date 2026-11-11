@@ -487,7 +487,7 @@ assert all(P6_FP[j + 1] >= P6_FP[j] and P6_FP[j + 1] - P6_FP[j] < 1 << 15 for j 
 # is 1 at 0, so the resonance law, KO/KD, is the same); only the loop's saturation eases where it folds.
 # ACID mode only: dEVILish's WHST / SELF oscillate on purpose, the clip sets their level, and easing it there
 # made them up to +4.6 dB louder at the top without curing their own fs/4 lock (left as it was, see the README).
-CL_I0, CL_I1, CL_GMIN = 383, 431, 0.5
+CL_I0, CL_I1, CL_GMIN = 383, 431, 0.25
 def _clg(i):
     if i <= CL_I0: return 4096
     if i >= CL_I1: return int(round(CL_GMIN * 4096))
