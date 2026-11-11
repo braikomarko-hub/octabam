@@ -2294,6 +2294,7 @@ o3e_render:
         move.l  %d0,E_MACSR(%a3)
         moveq   #0x20,%d0
         move.l  %d0,%macsr              | fractional, signed, truncating: (a b) >> 31
+        movclr.l %acc0,%d0              | and an empty accumulator, whatever the caller left in it
         move.l  E_G1(%a3),%a2           | the four coefficients live in registers for the call
         move.l  E_G2(%a3),%a4
         move.l  E_G3(%a3),%a5

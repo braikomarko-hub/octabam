@@ -10,6 +10,8 @@ Executes the TEXT of a .s file (not a binary) and LINTS it against ColdFire enco
   * movem only to/from (An) or d16(An)
 It is a correctness model, not a timing model, and it is NOT an assembler: `make check` is.
 Supports .macro/.endm (\\arg, \\@), .set/.equ, .long/.short/.byte/.space/.zero/.align/.balign, .text/.bss/.data.
+EMAC: MACSR, ACC0..3, `mac.l`/`msac.l Ry,Rx,%accN`, `movclr.l`, move to/from MACSR/ACC (fractional 0x20 and integer 0x00
+only, as the port models them: see EMAC in the class); MAC-with-load, scale and word forms are refused.
 """
 import re
 
@@ -39,8 +41,10 @@ class CPU:
     def __init__(self, src, mem=None, hooks=None, defsyms=None):
         self.mem = mem or Mem(); self.hooks = hooks or {}
         self.d = [0] * 8; self.a = [0] * 8; self.N = self.Z = self.V = self.C = 0
+        self.macsr = 0; self.acc = [0] * 4                 # the EMAC (see EMAC below)
         self.consts = dict(defsyms or {}); self.labels = {}; self.prog = []; self.icount = 0; self.prof = None
         self.lines = self._expand(src.splitlines())
+        self._eac = {}; self._kc = {}
         self._load()
         self._lint()
 
@@ -165,8 +169,13 @@ class CPU:
 
     # ---------------------------------------------------------------- lint
     def _kind(self, op):
+        c = self._kc.get(op)
+        if c is None: c = self._kc[op] = self._kind0(op)
+        return c
+    def _kind0(self, op):
         op = op.strip()
         if op.startswith('#'): return 'imm'
+        if re.fullmatch(r'%(macsr|acc\d|mask|accext01|accext23)', op): return 'emac'
         if re.fullmatch(r'%d\d', op): return 'd'
         if re.fullmatch(r'%(a\d|sp)', op): return 'a'
         if re.fullmatch(r'\(%(a\d|sp)\)', op): return 'ind'
@@ -214,6 +223,32 @@ class CPU:
             if b in ('addi', 'subi', 'andi', 'ori', 'eori', 'cmpi') and k[1] != 'd': bad('immediate form only into Dn')
             if b in ('btst', 'bset', 'bclr', 'bchg') and k[0] == 'imm' and k[1] not in ('d', 'ind', 'post', 'pre', 'd16'):
                 bad('bit op with #imm: Dn,(An),(An)+,-(An),d16(An) only (m68k-elf-as: operands mismatch)')
+            # ---- the EMAC: only the forms cfsim executes (see EMAC below); everything else is refused
+            if 'emac' in k:
+                if b not in ('move', 'movclr', 'mac', 'msac'): bad('EMAC register in a %s (cfsim: not modelled)' % b)
+                for o in ops:
+                    if self._kind(o) == 'emac' and not re.fullmatch(r'%(macsr|acc[0-3])', o.strip()):
+                        bad('cfsim models MACSR and ACC0..3 only, not %s' % o.strip())
+            if b in ('mac', 'msac'):
+                if any(o.strip() in ('<<', '>>') for o in ops):
+                    bad('EMAC scale factor (<< / >>) refused: not modelled; the port refuses it too (v4e.cpp emac)')
+                if any('&' in o for o in ops):
+                    bad("EMAC '&' (MASK) form refused: not modelled")
+                if len(ops) != 3:
+                    bad('MAC-with-load / other EMAC forms refused: the port\'s emulator has known defects on '
+                        'MAC-with-load (docs/contributing/TRAPS.md#trap-unicorn-macload); cfsim models '
+                        '`%s.l Ry,Rx,%%accN` only' % b)
+                if sz != 'l': bad('%s.%s refused: cfsim models the .l form only (no word halves)' % (b, sz))
+                if k[0] not in ('d', 'a') or k[1] not in ('d', 'a') or not re.fullmatch(r'%acc[0-3]', ops[2].strip()):
+                    bad('%s.l operands must be Rn,Rn,%%accN' % b)
+            if b == 'movclr':
+                if sz != 'l' or len(ops) != 2 or not re.fullmatch(r'%acc[0-3]', ops[0].strip()) or k[1] not in ('d', 'a'):
+                    bad('movclr.l %accN,Rn only')
+            if b == 'move' and 'emac' in k:
+                if sz != 'l': bad('EMAC register moves are .l')
+                if k[0] == 'emac' and k[1] not in ('d', 'a'): bad('move from an EMAC register: to Dn/An only (cfsim, the port)')
+                if k[1] == 'emac' and k[0] not in ('d', 'a', 'imm'): bad('move to an EMAC register: from Dn/An/#imm only')
+                if k[0] == 'emac' and k[1] == 'emac': bad('EMAC register to EMAC register: not modelled')
 
     # ---------------------------------------------------------------- operands
     def reg(self, t):
@@ -221,6 +256,11 @@ class CPU:
         if t == 'sp': return ('a', 7)
         return (t[0], int(t[1]))
     def ea(self, op):
+        c = self._eac.get(op)                             # the operand's decode is static once loaded: memo
+        if c is None: c = self._eac[op] = self._ea(op)
+        return c
+    _eac = None
+    def _ea(self, op):
         op = op.strip(); k = self._kind(op)
         if k == 'imm': return ('imm', self.ev(op[1:]))
         if k in ('d', 'a'): r = self.reg(op); return (r[0], r[1])
@@ -312,8 +352,70 @@ class CPU:
             if self.prof is not None: self.prof[pc - 1] = self.prof.get(pc - 1, 0) + 1
             self.exec1(b, sz, ops, line)
 
+    # ---------------------------------------------------------------- EMAC
+    # The minimum the OCTA303 engine uses, mirroring the port's EMAC (tools/emu/ot_emu/v4e.cpp, `Emac`,
+    # `accRead`, `accWrite`, `emac()`), which is what the repo pins against the firmware:
+    #  * MACSR bits (v4e.cpp, citing CFPRM Rev. 3 Table 1-5): bit 7 OMC, bit 6 S/U, bit 5 F/I, bit 4 R/T;
+    #    S/U is bit 6 (docs/contributing/TRAPS.md#trap-macsr).  Bits 3..0 are flags: cfsim, like the port,
+    #    does NOT update them on a MAC (v4e.cpp: "it also sets V and the per-accumulator PAV bit, which
+    #    nothing here reads"); MACSR reads back what was written.
+    #  * ACCn is kept as the port keeps it: 48 bits, sign-extended.  Fractional mode holds the product at
+    #    >> 24 of its 2.62 form, i.e. 8 bits finer than what a read returns (v4e.cpp, the `Emac` comment:
+    #    the M6c gate; TRAPS.md#trap-unicorn-frac: "a SIGNED product >> 31 (the 2.62 product shifted left
+    #    one bit, upper 40 bits accumulated)").
+    #  * fractional MAC (F/I=1, S/U=0, OMC=0, R/T=0 -- MACSR 0x20, the firmware's and poly.s's mode):
+    #    addend = (x * y) >> 23 (arithmetic, so the dropped low bits of a negative product floor),
+    #    ACC +-= addend, sign-extended from 48 bits (v4e.cpp `addend = product >> 23`, `macsatf` OMC clear).
+    #    MOVCLR / MOVE from ACC: ACC[39:8] (v4e.cpp accRead, last line: R/T=0, OMC=0: no rounding, no
+    #    saturation, so a result of +1.0 wraps to 0x80000000).  Hence one MAC from 0 then MOVCLR =
+    #    floor(x * y / 2^31) mod 2^32.  NOT measured on a chip for a negative product with non-zero low
+    #    bits: emac_selftest's negative case (-0xc00 * 0x200000) is exact; test_emac.cpp's -16-not-15 case
+    #    was pinned against route A (QEMU + patch), not hardware.
+    #  * integer MAC (F/I=0, S/U=0 signed, OMC=0): ACC +-= x * y (signed), 48 bits; a read is ACC[31:0]
+    #    (v4e.cpp accRead: signed integer, OMC clear).  Only the low 32 bits are claimed: the port's
+    #    multiply takes a 40-bit UNSIGNED product here and treats S/U=1 as "signed" in its multiply and in
+    #    accWrite, while its accRead (and its MACSR comment) treat S/U=0 as signed -- the low 32 bits agree
+    #    either way; ACC[47:32] in integer mode is not modelled faithfully by either.
+    #  * MOVE to ACC: fractional s32(v) << 8, integer s32(v) (v4e.cpp accWrite; see the S/U note above).
+    #  * every other mode (OMC=1, S/U=1, R/T=1) raises NotImplementedError when a MAC or an ACC access
+    #    executes in it; MACSR itself may hold any value.
+    def _emac_mode(self, what):
+        m = self.macsr & 0xF0
+        if m == 0x20: return 'f'
+        if m == 0x00: return 'i'
+        raise NotImplementedError('cfsim EMAC: %s with MACSR=%#x (only 0x20 fractional and 0x00 integer, '
+                                  'OMC=S/U=R/T=0, are modelled)' % (what, self.macsr))
+    @staticmethod
+    def _sx48(v):
+        v &= (1 << 48) - 1
+        return v - (1 << 48) if v >> 47 else v
+    def acc_read(self, n):
+        if self._emac_mode('ACC read') == 'f': return (self.acc[n] >> 8) & M32
+        return self.acc[n] & M32
+    def acc_write(self, n, v):
+        self.acc[n] = (s32(v) << 8) if self._emac_mode('ACC write') == 'f' else s32(v)
+    def emac_mac(self, x, y, n, sub):
+        p = s32(x) * s32(y)
+        add = (p >> 23) if self._emac_mode('mac/msac') == 'f' else p
+        self.acc[n] = self._sx48(self.acc[n] - add if sub else self.acc[n] + add)
+
     def exec1(self, b, sz, ops, line):
         g, p = self.get, self.put
+        if b in ('mac', 'msac'):
+            n = int(ops[2].strip()[-1])
+            self.emac_mac(g(ops[0], 'l'), g(ops[1], 'l'), n, b == 'msac'); return
+        if b == 'movclr':
+            n = int(ops[0].strip()[-1]); v = self.acc_read(n); self.acc[n] = 0
+            r = self.reg(ops[1]); (self.d if r[0] == 'd' else self.a)[r[1]] = v; return
+        if b == 'move' and (self._kind(ops[0]) == 'emac' or self._kind(ops[1]) == 'emac'):
+            if self._kind(ops[1]) == 'emac':                 # into the EMAC (CCR untouched)
+                v = g(ops[0], 'l'); t = ops[1].strip()
+                if t == '%macsr': self.macsr = v & M32
+                else: self.acc_write(int(t[-1]), v)
+            else:
+                t = ops[0].strip(); v = self.macsr if t == '%macsr' else self.acc_read(int(t[-1]))
+                r = self.reg(ops[1]); (self.d if r[0] == 'd' else self.a)[r[1]] = v & M32
+            return
         if b in ('move', 'movea'):
             v = g(ops[0], sz)
             if self.ea(ops[1])[0] != 'a': self.nz(v, sz); self.V = self.C = 0

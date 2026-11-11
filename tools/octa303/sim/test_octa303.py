@@ -60,8 +60,15 @@ check('stock_called_with_args', args[0] == 0 and args[2:] == [0, 16], str(args))
 check('ptch_rate_neutral_for_stock', words[0] == 0x4000 and words[3] == 0x7f00, '%04x %04x' % (words[0], words[3]))
 check('ptch_rate_restored', r.cpu.mem.r(0x80200000, 'w') == 0x4000 and r.cpu.mem.r(0x80200006, 'w') == 64 << 8)
 check('positions_pinned', r.positions(0) == pos0)
-check('silence_from_the_empty_engine', set(L) == {0} and set(Rr) == {0})
 check('latched', field(r, 0, 'S_LATCHED') == 1)
+# vFable (skeleton): the engine is no longer silent, so this runs on the shell with an empty engine put back
+# (o3e_render writes silence): none of the stock renderer's samples reach the output; only the engine writes.
+_SILENT = ('o3e_render:\n.Lz_smp:\n        clr.l   (%a1)+\n        clr.l   (%a1)+\n        subq.l  #1,%d7\n'
+           '        bne     .Lz_smp\n        rts\n')
+_ssrc = source(); assert _ssrc.count('o3e_render:\n') == 1
+r = Rig(_ssrc.replace('o3e_render:\n', _SILENT, 1))
+L, Rr = play(r, 0, W(cut=99))
+check('silence_from_the_empty_engine', set(L) == {0} and set(Rr) == {0})
 
 # 3. the engine's inputs
 r = Rig()
@@ -205,15 +212,21 @@ check('gate_slide_on_the_next_step', 540 <= _so[0] <= 560 and all(195 <= x <= 20
 # 7. an engine that uses everything ENGINE_ABI.md lets it clobber: the shell still keeps its promises
 _cl = '\n'.join('        move.l  #0x5A5A5A5A,%' + r for r in ('d0', 'd1', 'd4'))
 _cla = '\n        lea     0x5A5A5A5A,%a0\n        lea     0x5A5A5A5A,%a1'
-_src = source().replace('o3e_note_on:\n        rts', 'o3e_note_on:\n' + _cl + _cla + '\n        rts', 1)
+# vFable (skeleton): the clobbers go just before each routine's rts (o3e_note_on has a body now), and the output
+# must be the same engine's output without the clobbers (it was "silence" while the engine was a stub).
+_NOTE_END = '        clr.l   E_CNT(%a3)\n        rts'
+_src0 = source(); assert _src0.count(_NOTE_END) == 1 and _src0.count('o3e_params:\n        rts') == 1
+_src = _src0.replace(_NOTE_END, '        clr.l   E_CNT(%a3)\n' + _cl + _cla + '\n        rts', 1)
 _src = _src.replace('o3e_params:\n        rts', 'o3e_params:\n' + _cl + _cla + '\n        rts', 1)
 assert _src.count('0x5A5A5A5A') == 10
+_args = (2, W(tune=12, cut=10, res=20, env=30, dec=40, acc=110)); _kw = dict(setup=(5, 1, 64 + 32, 77, 90, 100))
+_L0, _ = play(Rig(_src0), *_args, **_kw)
 r = Rig(_src)
 _pos0 = r.positions(2)
-L, Rr = play(r, 2, W(tune=12, cut=10, res=20, env=30, dec=40, acc=110), setup=(5, 1, 64 + 32, 77, 90, 100))
+L, Rr = play(r, *_args, **_kw)
 ok = [field(r, 2, n) for n in ('R_CUT', 'R_RES', 'R_ENV', 'R_DEC', 'R_ACC', 'R_WAVE', 'R_ACCV', 'R_DRIV', 'S_GSEL', 'S_LATCHED')]
 _w = r.seen[-1][1]
-check('engine_clobbers_allowed', ok == [10, 20, 30, 40, 110, 5, 100, 90, 1, 1] and set(L) == {0}
+check('engine_clobbers_allowed', ok == [10, 20, 30, 40, 110, 5, 100, 90, 1, 1] and L == _L0 and Rr == L and set(L) != {0}
       and _w[0] == 0x4000 and _w[3] == 0x7f00 and r.cpu.mem.r(0x80200006, 'w') == 30 << 8 and r.positions(2) == _pos0, str(ok))
 
 print('\n%d/%d PASS' % (sum(results), len(results)))
