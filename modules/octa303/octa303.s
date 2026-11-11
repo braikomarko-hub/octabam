@@ -2263,7 +2263,6 @@ o3_names:                               | slots 0..5 (PTCH STRT LEN RATE RTRG RT
 o3_defaults:                            | CUT RES ENV DEC ACC: v6.9, the knobs in the middle
         .byte   64, 64, 64, 64, 0
 
-| ---- dEVILish neutral: the knobs that make the TB-303 (the Devil Fish limited to the 303); page 1, page 2
 | ---- v7.0: the machine's record: the PLAYBACK fields above, then the SETUP page (slots 6..11)
         .align  4
 o3_mover:

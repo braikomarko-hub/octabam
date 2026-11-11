@@ -14,7 +14,9 @@ half lists the knobs' laws that must stay as they are.
 
 The shell's code is the code that played on the author's MKI with the earlier engines. On this
 branch it is checked by:
-- `tools/octa303/sim/test_octa303.py`, which runs the source in cfsim against a mock of OS 1.40C;
+- `tools/octa303/sim/test_octa303.py` (22 checks), which runs the source in cfsim against a mock of OS 1.40C. It
+  covers the engine's inputs, the output stage, the stopwatch, and the gate against `tools/octa303/o3gate.py`:
+  the first note after PLAY, and a slide;
 - `tools/octa303/play_gate.py IMAGE --project DIR`, under the port;
 - `tools/verify/verify_octa303_ui.py`, the panel under the port.
 
@@ -74,15 +76,27 @@ Two more fields: `S_GSEL` is SETUP's GATE, and `S_OSIN` is DRIV's gain for `o3_o
 `bsr o3_out` with `d6` = your sample `y`, `a1` = the output and `a3` = the state. It writes the
 16-bit sample to L and R and does `a1 += 8`. It clobbers `d0`–`d2`, `d6` and `a0`.
 
-- **DRIV 0:** `y` is clamped to ±2^24 (the output pin's ceiling), then `y >> 6`, clamped to ±32767.
+- **DRIV 0:** `y` is only clamped to ±2^24 (a safety bound), then `y >> 6`, clamped to ±32767.
+  The ceiling that shapes the sound is not here. In the old engine it was inside the voice: the BA662A's
+  output, pin 6, cannot leave the supply. It was a soft knee, `y / (1 + (y/L)^4)^(1/4)`, with
+  L− = 478,658 and L+ = 698,840 in `y` units (fitted on Din Sync 🟡). It came before the output coupling.
 - **DRIV above 0:** `y × G` (0..+10 dB) goes into the output mixer's soft, asymmetric saturation, Q33/Q34.
+  Its knees sit on the old pin-6 ceiling: K− = 454,725 and L− = 478,658 (= pin 6's L−); K+ = 818,505
+  and L+ = 861,584 (1.8 L−). **For DRIV to behave as now, your voice needs the same ceiling at the same
+  levels** (or one that reaches them).
   This is the TB-303's VOLUME (VR8) turned past Din Sync's position. Marko: "the drive must be the
   TB-303's, as it is now."
 - The Python model is `tools/octa303/o3out.py`, bit for bit; `test_octa303` checks it.
+- **Not in `o3_out`:** the output coupling, the old engine's DC high-pass after `+D`. That belongs to the
+  engine.
 
 **Its level is part of the law.** DRIV saturates at fixed points in `y`, so the voice's level in `y`
-decides where DRIV bites. The previous engine's levels (`y` at DRIV 0, measured in its model, 0.5 s
-notes, TUNE 0):
+decides where DRIV bites. These are the previous engine's levels:
+- `y` at DRIV 0, measured in its Python model;
+- through the shell's call path (`render_call`), from a fresh state, default SETUP, no dEVILish;
+- 0.5 s notes, TUNE 0.
+
+A different call path gives up to ~0.3 dB less on the loudest row.
 
 | note | peak abs(y) | rms y |
 |---|---|---|
@@ -109,21 +123,21 @@ Each law gives a source: W = Robin Whittle's Devil Fish manual (2019), R = the R
 | TUNE | raw 40..88 = −24..+24 semitones, C3 = 0. The CHROMATIC keys play semitones. |
 | FINE | (raw − 64) × 2/256 semitone: −½..+0.49 semitone |
 | GATE | OFF = the AMP page shapes the note. 303 = the 303's own gate (§2; W: 3.5 of 6 clocks). |
-| SLID (SETUP), and dEVILish SLID | 0 = the 303's slide: the RC of 103.3 kΩ (DAC + protection) and C35 0.22 µF, τ = 22.7 ms (W p. 16). Up to 127 = the Devil Fish pot: R = 103.3 kΩ + 0..500 kΩ on the same capacitor, 60 → 360 ms (W p. 16). A one-pole glide of the pitch toward `R_PTGT`. |
+| SLID (SETUP), and dEVILish SLID | Both knobs use the same law. A one-pole glide of the pitch toward `R_PTGT`, through the RC of R × C35 0.22 µF. 0 = the 303: R = 103.3 kΩ (DAC + protection), τ = 22.7 ms. 127: R = 103.3 + 500 kΩ (the Devil Fish pot), τ = 132.6 ms, linear in raw. Whittle (p. 16) gives these as slide times of 60 → 360 ms. |
 | WAVE bit 0 | SAW / SQR, the 303's two waveforms |
 | WAVE bit 1, `+D` | a fixed distortion pedal after the VCA (and after MUFF), before the output coupling. The old engine (`1.0` = 2^20): `o = softclip(5·o + 0.12)`, then a one-pole low-pass at 6 kHz. Here `softclip(x)` = `x − x³/6` with x clamped to ±√2. Keep its character: gain 5, a small asymmetry, a 6 kHz tone. |
-| WAVE bit 2, `R` | the 303 as Roland's factory trim sets the filter: the cutoff **+0.575 octave at every CUT** (TM3; R gives a 400–667 Hz window around 500 Hz). Without `R`, Din Sync's 303. |
+| WAVE bit 2, `R` | the 303 as Roland's factory trim sets the filter. The law is the trim procedure (R, "ADJ. VCF"): SAW, CUT 64, RES 127, ENV / DEC / ACC 0, and the filter's ring at TP6 has a period of 2.0 ms (2–2.5 ms), around 500 Hz. Without `R`, Din Sync's 303. In the old engine this came out as the cutoff +0.575 octave at every CUT (🟡 its result, not the law). |
 | ACCV | the accent's loudness: the accent's contribution to the VCA × ACCV/64. 64 = the 303 (R: the accent current into the VCA). |
 | DRIV | `o3_out` (§3), as it is |
 | OVDR | the VCO into the filter (W p. 4). 0 = none, 25 = the 303, 127 = 66.6 × normal: gain = raw/25 up to 25, then 66.6^((raw−25)/102). Above normal, the resonance is swamped and the output must not jump: the old engine scaled its resonance level compensation by G^−1.5 and the output by G^−0.3. |
-| FM | the VCA's output, after MUFF and AC-coupled, moves the cutoff per sample (W pp. 5, 18–19). The old depth: about 47 semitones at full output level for raw 127, linear in raw. |
+| FM | the VCA's output, after MUFF, moves the cutoff per sample (W pp. 5, 18–19). The old engine took the VCA output with no high-pass. Its depth: linear in raw; at raw 127, about 47 semitones for abs(VCA out) = 2^20 in `y` units. |
 | TRCK | filter tracking, linear in Hz (W pp. 5, 14): at 127 the cutoff rises ~2.7 kHz per octave of pitch, as (raw/127)^1.5 × 2700 Hz/oct, zero at TUNE 0. Low notes can shut the filter. |
 | VDEC | the volume decay (W p. 4): 0..64 = 16 ms .. the 303's own decay (τ geometric); 64..127 = that decay with a sustain level from 0 (at 64) to full (at 127). 127 = endless notes. |
 | ADEC | the accented notes' filter decay (W p. 4): 30 ms .. 3 s to 10 %, continuous. 50 = the 303's own (200 ms). It is the same envelope circuit with another resistor in place of R138. |
 | SATK | the soft attack of non-accented notes (W pp. 4, 24–25). 0 = the 303's own attack. 1..127 = 90 % in 0.3 → 30 ms (log). |
 | SWP | ACID = the 303. WHST = the resonance feedback doubled ("double the usual feedback", W p. 18): self-oscillates at mid / high cutoff. SELF = doubled, and the accent sweep circuit off: accents no longer reach the filter and the VCA. |
 | SPD | the accent sweep's speed (W pp. 4–5). NORM = the 303. FAST = the first accent strongest, then the next smaller. SLOW = a much longer time constant that can rise twice as high. (The old engine charged and discharged 4× slower and doubled the sweep: an interpretation 🟡.) |
-| MUFF | the Muffler after the VCA (W pp. 6, 19): it softens the loudest extremes, with a square-wave clipping buzz, and the bass passes; no effect at low level. The old engine (🟡 interpretation): split at ~150 Hz; above it, SOFT = a soft clip and HARD = a hard clip at ~0.3 of full scale (the 303's normal peak at RES 0). |
+| MUFF | the Muffler after the VCA (W pp. 6, 19): it softens the loudest extremes, with a square-wave clipping buzz, and the bass passes; no effect at low level. The old engine (🟡 interpretation): split at ~150 Hz; above it, SOFT = a soft clip and HARD = a hard clip at 314,572 in `y` units (0.3 × 2^20, the 303's normal peak at RES 0). Note that an open filter (the reference table's last row) peaks above it. |
 | CUTX | the CUTOFF pot's range widened (W p. 6): 157 Hz → ~4.8 kHz, exponential in raw |
 | ENVX | the ENV MOD pot's range tripled, and including none (W p. 6) |
 
@@ -141,8 +155,17 @@ position sounds exactly as before, because those are the laws vFable re-derives.
 
 With the v7.3 engine this was 38 − 26 = 12 points ✅ (10 Nov 2026).
 
-🟡 Inferred: if 1 point is 1 % of the frame, 10 points are about 9,600 cycles a frame (95,782 cycles
-in a 16-sample frame at 264 MHz), so about 600 cycles a sample, **shell included**. The shell's own
+🟡 Inferred:
+- **The conversion.** If 1 point is 1 % of the frame interrupt (an assumption), 10 points are about
+  9,600 cycles a frame: there are 95,782 cycles in a 16-sample frame at 264 MHz. That is about 600
+  cycles a sample, **shell included**.
+- **The stock renderer is inside the 10.** The stock FLEX renderer still runs on every call for the
+  carrier. Bryan T measured a playing FLEX voice at about 14.6–16.5 µs, about 4–4.5 % of the frame
+  (`docs/firmware/ARCHITECTURE.md`). So perhaps 35–45 % of the 600 cycles is spent before the engine
+  runs. The stopwatch's entry-to-loop row (`O3_PROF` +12) measures exactly this on the unit.
+
+The v7.3 figure used the same procedure: the project at rest after a power-up (26 %), then T5 alone
+with 16 accented trigs (38 %). The shell's own
 cost under the port with the empty engine is 2,455 instructions a frame for two voices
 (`play_gate`, 11 Nov 2026). That is an instruction count, not cycles: the chip has cost 2.5–4×
 the simulator's count. The stopwatch (`O3_PROF`, read over USB with `tools/octa303/prof/o3prof.py`)
