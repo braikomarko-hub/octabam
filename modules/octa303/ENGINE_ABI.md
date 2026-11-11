@@ -79,7 +79,7 @@ Two more fields: `S_GSEL` is SETUP's GATE, and `S_OSIN` is DRIV's gain for `o3_o
 - **DRIV 0:** `y` is only clamped to ±2^24 (a safety bound), then `y >> 6`, clamped to ±32767.
   The ceiling that shapes the sound is not here. In the old engine it was inside the voice: the BA662A's
   output, pin 6, cannot leave the supply. It was a soft knee, `y / (1 + (y/L)^4)^(1/4)`, with
-  L− = 478,658 and L+ = 698,840 in `y` units (fitted on Din Sync 🟡). It came before the output coupling.
+  L− = 478,658 and L+ = 698,840 in `y` units: where the knee goes flat, the L in the formula is ~479,100 (fitted on Din Sync 🟡). It came before the output coupling.
 - **DRIV above 0:** `y × G` (0..+10 dB) goes into the output mixer's soft, asymmetric saturation, Q33/Q34.
   Its knees sit on the old pin-6 ceiling: K− = 454,725 and L− = 478,658 (= pin 6's L−); K+ = 818,505
   and L+ = 861,584 (1.8 L−). **For DRIV to behave as now, your voice needs the same ceiling at the same
@@ -96,13 +96,14 @@ decides where DRIV bites. These are the previous engine's levels:
 - through the shell's call path (`render_call`), from a fresh state, default SETUP, no dEVILish;
 - 0.5 s notes, TUNE 0.
 
-A different call path gives up to ~0.3 dB less on the loudest row.
+Only the third row depends on the whistle fix (the clip near the top of the filter): it is v8.2's, and v8.3
+(`CL_GMIN` 0.3) gives 577,551 / 97,724 there. The other rows are the same in both.
 
 | note | peak abs(y) | rms y |
 |---|---|---|
 | SAW, CUT RES ENV DEC 64, not accented | 213,697 | 52,457 |
 | SAW, the same, accented ACC 127 | 504,776 | 81,382 |
-| SAW, everything 127, accented | 577,551 | 97,724 |
+| SAW, everything 127, accented | 555,932 | 95,683 |
 | SQR, the knobs at 64, not accented | 162,675 | 48,946 |
 | SAW, CUT 127, RES 0, ENV 0, not accented | 418,200 | 176,848 |
 

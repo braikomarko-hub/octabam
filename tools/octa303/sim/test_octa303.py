@@ -209,9 +209,12 @@ _src = source().replace('o3e_note_on:\n        rts', 'o3e_note_on:\n' + _cl + _c
 _src = _src.replace('o3e_params:\n        rts', 'o3e_params:\n' + _cl + _cla + '\n        rts', 1)
 assert _src.count('0x5A5A5A5A') == 10
 r = Rig(_src)
+_pos0 = r.positions(2)
 L, Rr = play(r, 2, W(tune=12, cut=10, res=20, env=30, dec=40, acc=110), setup=(5, 1, 64 + 32, 77, 90, 100))
 ok = [field(r, 2, n) for n in ('R_CUT', 'R_RES', 'R_ENV', 'R_DEC', 'R_ACC', 'R_WAVE', 'R_ACCV', 'R_DRIV', 'S_GSEL', 'S_LATCHED')]
-check('engine_clobbers_allowed', ok == [10, 20, 30, 40, 110, 5, 100, 90, 1, 1] and set(L) == {0}, str(ok))
+_w = r.seen[-1][1]
+check('engine_clobbers_allowed', ok == [10, 20, 30, 40, 110, 5, 100, 90, 1, 1] and set(L) == {0}
+      and _w[0] == 0x4000 and _w[3] == 0x7f00 and r.cpu.mem.r(0x80200006, 'w') == 30 << 8 and r.positions(2) == _pos0, str(ok))
 
 print('\n%d/%d PASS' % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)
