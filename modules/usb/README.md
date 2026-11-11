@@ -1310,7 +1310,8 @@ this open; anchor is the frames skipped at that poll.
 A second vendor GET, `0xc0/0x57`, returns LOAD METER's cells when the
 remix carries it (`LM_STATS`, `LM_DSP`, `LM_OT` are `defsyms`, 0 without
 the module, and a request then STALLs as stock does): wValue low 0 is
-`lm_stats` (20 bytes), 1 `lm_dsp` (48), 2 `lm_ot` (256), big-endian longs,
+`lm_stats` (20 bytes), 1 `lm_dsp` (48), 2 `lm_ot` (256), 3 DLPUMP's counters (`DL_DIAG`, 64), 4 OCTA303's
+stopwatch (`O3_PROF`, 256; MaMarko's fork, ACIDV91, `tools/octa303/prof/o3prof.py`), big-endian longs,
 from byte `wIndex` low on. The reply is copied into `lm_reply` through the
 uncached alias (the controller does not see the CPU's cached stores: on a
 unit `lm_stats`, stored every 0.5 s, stayed stale for minutes) and is never a

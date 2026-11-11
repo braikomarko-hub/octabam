@@ -1945,6 +1945,10 @@ audio_ctrl_shim:
     moveq   #64,%d1                 | block 3: DLPUMP's counters (16 longs)
     movel   #DL_DIAG,%d3
     cmpil   #3,%d0
+    beqs    3f
+    movel   #256,%d1                | block 4: OCTA303's stopwatch (8 tracks x 8 longs; ACIDV91, tools/octa303/prof)
+    movel   #O3_PROF,%d3
+    cmpil   #4,%d0
     bne     9f
 3:  tstl    %d3
     beq     9f                      | the remix has no LOAD METER (or, for block 3, no DLPUMP)

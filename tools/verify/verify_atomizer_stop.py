@@ -41,7 +41,7 @@ def transport(v):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("remix", nargs="?", default="acidtrack")
+    ap.add_argument("remix", nargs="?", default="atomizer")   # acidtrack carries no AtoMizer since ACIDV91
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT", ""))
     a = ap.parse_args()
     project = a.project

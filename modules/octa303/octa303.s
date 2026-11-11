@@ -505,6 +505,8 @@ sy_render:
         .endif
         lea     -48(%sp),%sp
         movem.l %d2-%d7/%a2-%a6,(%sp)
+        move.l  O3_DTCN3,%d0            | ACIDV91 stopwatch (tools/octa303/prof): the call's entry on DMA timer 3
+        move.l  %d0,o3_pt0
         move.l  CURSOR,%a2              | the header this call writes
         move.l  52(%sp),%d2             | track
         moveq   #NTRACKS-1,%d0
@@ -604,6 +606,11 @@ sy_render:
         lea     16(%a2),%a1
         lea     O3_K,%a5
         clr.l   S_P11(%a3)              | v8.2 P11: the knobs may have moved since the last frame
+        move.l  O3_DTCN3,%d0            | stopwatch: the sample loop starts (d0 is free: the loop writes it first)
+        move.l  %d0,o3_pt1
+        move.l  %d7,o3_pn               | and how many samples it renders
+        moveq   #1,%d0
+        move.l  %d0,o3_pflag
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -1025,6 +1032,34 @@ sy_render:
         subq.l  #1,%d7
         bne     .Lloop
 .Ldone:
+        tst.l   o3_pflag                | stopwatch: a call that ran the sample loop adds its times to its track's row
+        beq     .Lpf_x
+        clr.l   o3_pflag
+        move.l  O3_DTCN3,%d1            | the call's end
+        move.l  52(%sp),%d0             | track
+        lsl.l   #5,%d0                  | 32 bytes a track
+        lea     O3_PROF,%a0
+        add.l   %d0,%a0
+        addq.l  #1,(%a0)                | +0  calls
+        move.l  %d1,%d0
+        sub.l   o3_pt0,%d0
+        add.l   %d0,4(%a0)              | +4  the whole call (counts of 132 MHz)
+        cmp.l   8(%a0),%d0
+        bls     .Lpf_1
+        move.l  %d0,8(%a0)              | +8  its longest
+.Lpf_1:
+        move.l  o3_pt1,%d0
+        sub.l   o3_pt0,%d0
+        add.l   %d0,12(%a0)             | +12 entry to the loop: params, gate, the stock renderer's call
+        sub.l   o3_pt1,%d1
+        add.l   %d1,16(%a0)             | +16 the sample loop (with the control steps inside it)
+        cmp.l   20(%a0),%d1
+        bls     .Lpf_2
+        move.l  %d1,20(%a0)             | +20 its longest
+.Lpf_2:
+        move.l  o3_pn,%d0
+        add.l   %d0,24(%a0)             | +24 samples rendered
+.Lpf_x:
         move.l  44(%sp),%d0
         movem.l (%sp),%d2-%d7/%a2-%a6
         lea     48(%sp),%sp
@@ -6449,6 +6484,19 @@ o3_snap:                                | v7.1: the trigless masks at the trig h
         .space  16
 o3_snapt:
         .long   -1
+
+| ---- ACIDV91 stopwatch: per track 8 longs {calls, call sum, call max, entry-to-loop sum, loop sum, loop max,
+|      samples, 0}, read over USB (0xc0/0x57 block 4, modules/usb; tools/octa303/prof/o3prof.py).  Only adds:
+|      the readers take deltas.  DMA timer 3 runs free at 132 MHz (the OS reads it too; load-meter/meter.s).
+        .set    O3_DTCN3,0xfc07c00c
+        .align  4
+        .globl  O3_PROF
+O3_PROF:
+        .fill   256, 1, 0
+o3_pt0: .long   0
+o3_pt1: .long   0
+o3_pn:  .long   0
+o3_pflag: .long 0
 
 | ---- runtime state: zeros, depacked by the loader at every boot (poly.s keeps its the same way)
         .align  4

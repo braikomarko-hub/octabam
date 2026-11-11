@@ -1068,7 +1068,7 @@ def main():
              "dlspike": (),   # all 14 stock effects stay; MODULATION is loaded on demand
              "atomizer": (),  # all 14 stock effects stay; ATOMIZER is loaded on demand into T8's FX2 slot
              # DISTORX on SPATIALIZER's id, dEVILish on PHASER's, dB666 on EQUALIZER's; their DSP words come
-             # from the others the remix does not list; ATOMIZER is loaded on demand (no words)
+             # from the others the remix does not list (ACIDV91: no ATOMIZER, no demand loader)
              # FET76 on a new id; FLANGER given up to join the two runs (its 289 words)
              "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS", "PLATE REV", "SPRING REV"),
              "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
