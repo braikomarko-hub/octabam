@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..', '..'))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..'))
 from cfsim import CPU, Mem, s32, M32
-import ref303 as R, o3tables as T
+# (vFable: the engine-specific imports are gone; a test brings its own model)
 
 SRC_PATH = os.environ.get('OCTA_SRC', os.path.join(ROOT, 'modules', 'octa303', 'octa303.s'))
 CURSOR, FP_PTR, RS_PTR, NIBBLE, STOCK = 0x80001c80, 0x800062a8, 0x800062a4, 0x46104d0c, 0x40004008

@@ -8,7 +8,7 @@ off and the track is the 303 of v6.1.1, sample for sample. Its DSP part is a pas
 (init and proc return at once: an in-place insert that touches no frame).
 
 After Whittle, "User Manual for the Devil Fish mods to the TB-303" (2019); the knob laws are
-tools/octa303/o3tables.py (DF_*), the voice is modules/octa303/octa303.s.
+the voice (modules/octa303/ENGINE_ABI.md) applies them.
 
 Page 1, the knobs (lock-, scene- and LFO-able): OVDR FM TRCK VDEC SLID ADEC.
 Page 2: SATK, then the switches SWP SPD MUFF CUTX ENVX (selects, as on the Devil Fish).
