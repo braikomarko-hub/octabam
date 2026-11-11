@@ -173,7 +173,7 @@ defects; the three that are calibration choices stay as fitted until they can be
   resonance sweeps up through ~11 kHz its 3rd harmonic (3 fs/4) folds onto fs/4 and the loop locks to a
   period-4 cycle. v7.3 runs the clip at a lower operating point near the top of the table only:
   `y0 = softclip(u·g)/g`, g = 1 up to ladder index 383 (~5 kHz; the engine is unchanged below it), falling
-  linearly to 0.5 at index 431 (~10 kHz) and above. The clip's slope at 0 is 1, so the small-signal
+  linearly to 0.5 at index 431 (~10 kHz) and above (v8.3: 0.3, see below). The clip's slope at 0 is 1, so the small-signal
   resonance law (KO / KD) is the same. ACID mode only: dEVILish's WHST / SELF oscillate on purpose and the
   clip sets their level (eased there, they were up to +4.6 dB louder at the top), so they are unchanged.
   Share of the first 46 ms at fs/4, `octa303_repro.py` cases: −2.7 → **−24.2**, −5.1 → **−29.1**,
@@ -184,6 +184,13 @@ defects; the three that are calibration choices stay as fitted until they can be
   96-note grid (CUT 20/64/100/127 × RES 0/64/110/127 × ENV 0/64/120 × ACC 0/127), 65 notes are within
   −60 dB of v7.1 (the VCA's extra bit); the notes that change are the high CUT + RES + ENV ones, in their
   first ~45 ms (level ±2.3 dB there), the rest of the note within 0.1 dB and the same brightness.
+  **v8.3: 0.5 → 0.3** (simulator, `ref303`). At 0.5 one note still locked in a 12-note accented run at
+  CUT 110, RES/ENV/ACC 127, SAW R, TUNE −12/0/+12 (fs/4 above −6 dB of the note for 49 ms); on a
+  2,304-note grid (TUNE ±12/0 × RES, ENV, CUT 110/127 × ACC 0/127 × SAW/SQR/RSAW/RSQR) 3 locked notes at
+  0.5, **0 at 0.3**. Not 0.25 (also 0 locks): the clip's output grows as 1/g into the ladder's first
+  multiply, and a random search with dEVILish OVDR / FM / MUFF up reached 0.72 of 2^31 there at 0.25,
+  0.62 at 0.3, 0.37 at 0.5 (measured; no closed-form bound). Side effect: notes at CUT and RES near 127 are
+  louder in their first ~50 ms (+0.3 to +1.8 dB measured at 0.25; 0.3 not yet measured). Not yet heard on the unit.
 - ✅ **The VCA's room** (simulator). The multiply is now `(o >> 7) · (amp >> 1) >> 6` (was `(o >> 6) · amp >> 8`),
   and `AMP_MAX` counts SETUP's ACCV: before, ACCV above 64 on an open accented note **wrapped the 32-bit
   multiply** (found while checking #1011; CUT 80 RES 0 ENV 127 ACC 127 ACCV 127: full-scale jumps, a

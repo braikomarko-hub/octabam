@@ -487,7 +487,11 @@ assert all(P6_FP[j + 1] >= P6_FP[j] and P6_FP[j + 1] - P6_FP[j] < 1 << 15 for j 
 # is 1 at 0, so the resonance law, KO/KD, is the same); only the loop's saturation eases where it folds.
 # ACID mode only: dEVILish's WHST / SELF oscillate on purpose, the clip sets their level, and easing it there
 # made them up to +4.6 dB louder at the top without curing their own fs/4 lock (left as it was, see the README).
-CL_I0, CL_I1, CL_GMIN = 383, 431, 0.25
+# v8.3 (#1011): CL_GMIN 0.5 -> 0.3.  At 0.5 a 12-note accented run at CUT 110, RES/ENV/ACC 127, SAW R still
+# locked one note in three TUNEs (ref303, 2,304-note grid: 3 locked notes); at 0.3: 0.  Not 0.25: the clip's
+# output grows as 1/g and feeds the ladder's first multiply (l1); a random search with dEVILish OVDR/FM/MUFF
+# up reached 0.72 of 2^31 there at 0.25, 0.62 at 0.3 (0.37 at 0.5).
+CL_I0, CL_I1, CL_GMIN = 383, 431, 0.3
 def _clg(i):
     if i <= CL_I0: return 4096
     if i >= CL_I1: return int(round(CL_GMIN * 4096))

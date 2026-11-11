@@ -169,7 +169,9 @@ _DFM = (25, 90, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0)                  # FM up, ACID
 _DWH = (25, 0, 0, 64, 0, 50, 0, 1, 1, 0, 1, 1)                   # WHST, CUTX, ENVX
 for df, su, v in ((None, (0, 0, 64, 0, 0, 64), (127, 127, 120, 64, 0)), (None, (0, 0, 64, 0, 0, 64), (127, 127, 104, 64, 127)),
                   (_DFM, None, (112, 120, 127, 64, 90)), (_DWH, None, (127, 127, 127, 64, 127)),
-                  (None, (0, 0, 64, 0, 0, 127), (80, 0, 127, 64, 127)), (None, (1, 0, 64, 0, 127, 127), (127, 0, 127, 64, 127))):
+                  (None, (0, 0, 64, 0, 0, 127), (80, 0, 127, 64, 127)), (None, (1, 0, 64, 0, 127, 127), (127, 0, 127, 64, 127)),
+                  # v8.3 (review): OVDR 127 + FM 127 + MUFF HARD at the top, the case that uses most of l1's headroom
+                  ((127, 127, 0, 64, 0, 50, 0, 0, 1, 2, 0, 0), None, (110, 127, 127, 64, 127))):
     n = 90 if FULL else 45
     fn = 'KICK.WAV' if su else 'TB303.WAV'                       # the machine (SETUP), or the TB303.WAV carrier (run(): SU(0)) + dEVILish
     fr = lambda tune, at: (W(tune, *v), at, fn, True, df, 1, None, df, su)        # rdf: the 303 hears dEVILish too
