@@ -2206,23 +2206,274 @@ O3_DRV_TH:
 | ============================================================================
 | THE ENGINE -- empty.  ENGINE_ABI.md is the contract.  Replace these three.
 | ============================================================================
-| ---- o3e_note_on: a START (R_WAVE, R_ACC, R_PNOTE and every R_* knob are set).  a3 = state, a4 = FP,
-|      d2 = track.  May clobber d0, d1, d4, a0, a1 only.
+| ---- THE SKELETON (vFable, 11 Nov 2026; code written by Claude, Anthropic).  The voice's sample loop with a
+|      fake slow part: fixed filter coefficients and the 303 gate ramp.  It is here to be MEASURED on a unit
+|      (O3_PROF) before the voice is tuned; its sound does not matter.  The model, bit for bit, is
+|      tools/octa303/o3e_skel.py; tools/octa303/sim/test_o3e_skel.py compares the two sample by sample.
+|      The engine's state (E_BASE.., longs):
+        .set    E_PH,    E_BASE+0       | the oscillator's phase (32 bits = one cycle)
+        .set    E_INC,   E_BASE+4
+        .set    E_S1,    E_BASE+8       | the four one-poles' states
+        .set    E_S2,    E_BASE+12
+        .set    E_S3,    E_BASE+16
+        .set    E_S4,    E_BASE+20
+        .set    E_LP,    E_BASE+24      | the loop's high-pass (its low-pass state)
+        .set    E_LP2,   E_BASE+28      | the VCA input's high-pass
+        .set    E_G1,    E_BASE+32      | coefficients, Q31
+        .set    E_G2,    E_BASE+36
+        .set    E_G3,    E_BASE+40
+        .set    E_G4,    E_BASE+44
+        .set    E_KQ,    E_BASE+48      | the feedback, Q26
+        .set    E_DQ,    E_BASE+52      | 1 / (1 + k Gamma), Q31
+        .set    E_GH,    E_BASE+56
+        .set    E_GV,    E_BASE+60
+        .set    E_GAIN,  E_BASE+64      | the VCA's gain, Q28, ramped per sample
+        .set    E_DGAIN, E_BASE+68
+        .set    E_CNT,   E_BASE+72      | samples to the next slow step
+        .set    E_MACSR, E_BASE+76      | the caller's MACSR, restored at the end of the call
+        .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
+        .macro  E_SET val, off          | off(a3) = val, through d0
+        move.l  #\val,%d0
+        move.l  %d0,\off(%a3)
+        .endm
+        .macro  E_POLE_A s, g           | one-pole: in d6 -> out d3 (y); state s(a3); g = a register (Q31)
+        move.l  \s(%a3),%d3
+        sub.l   %d3,%d6
+        mac.l   \g,%d6,%acc0
+        movclr.l %acc0,%d6              | v = (in - s) G
+        add.l   %d6,%d3                 | y = s + v
+        add.l   %d3,%d6                 | s = y + v
+        move.l  %d6,\s(%a3)
+        .endm
+        .macro  E_POLE_B s, g           | the same, in d3 -> out d6
+        move.l  \s(%a3),%d6
+        sub.l   %d6,%d3
+        mac.l   \g,%d3,%acc0
+        movclr.l %acc0,%d3
+        add.l   %d3,%d6
+        add.l   %d6,%d3
+        move.l  %d3,\s(%a3)
+        .endm
+        .macro  E_OUT0                  | o3_out's DRIV-0 path, copied: d6 = y -> the 16-bit word to L and R
+        CLAMP   %d6,-16777216,16777216
+        asr.l   #SHIFT_OUT,%d6
+        CLAMP   %d6,-32767,32767
+        lsl.l   #8,%d6
+        lsl.l   #8,%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        .endm
+
+| ---- o3e_note_on: a START.  a3 = state, a4 = FP, d2 = track.  May clobber d0, d1, d4, a0, a1 only.
+|      The skeleton: the fake slow part's fixed numbers, and the slow step forced on the next sample.
 o3e_note_on:
+        E_SET   SK_INC,E_INC
+        E_SET   SK_G1,E_G1
+        E_SET   SK_G2,E_G2
+        E_SET   SK_G3,E_G3
+        E_SET   SK_G4,E_G4
+        E_SET   SK_KQ,E_KQ
+        E_SET   SK_DQ,E_DQ
+        E_SET   SK_GH,E_GH
+        E_SET   SK_GV,E_GV
+        clr.l   E_CNT(%a3)
         rts
-| ---- o3e_params: every call of a latched track, before o3e_render (R_* hold this call's knobs).
-|      a3 = state, a4 = FP, d2 = track.  May clobber d0, d1, a0, a1 only.
+| ---- o3e_params: every call of a latched track, before o3e_render.  May clobber d0, d1, a0, a1 only
+|      (and must keep a2 and d5: the shell uses them after it).  The skeleton: nothing.
 o3e_params:
         rts
-| ---- o3e_render: d7 = n (1..16) samples into (a1)+ (each: the same long to L then R, o3_out's form),
-|      a3 = state, a4 = FP, d2 = track, S_GLVL = the gate.  May clobber d0-d7, a0-a2, a4-a6 (sy_render
-|      saved them); must keep a3 and sp.  The stub writes silence through the output stage.
-o3e_render:
-        moveq   #0,%d6
-        bsr     o3_out
-        subq.l  #1,%d7
-        bne     o3e_render
+| ---- o3e_out0_test (d6 = y, a1 = the output): the inlined DRIV-0 output alone, for the test that compares
+|      it with o3_out over every y.
+o3e_out0_test:
+        E_OUT0
         rts
+| ---- o3e_render: d7 = n (1..16) samples into (a1)+, a3 = the track's state.  May clobber d0-d7, a0-a2,
+|      a4-a6; keeps a3 and sp.  EMAC in fractional mode (MACSR 0x20, as poly.s; saved and restored here).
+o3e_render:
+        move.l  %macsr,%d0
+        move.l  %d0,E_MACSR(%a3)
+        moveq   #0x20,%d0
+        move.l  %d0,%macsr              | fractional, signed, truncating: (a b) >> 31
+        move.l  E_G1(%a3),%a2           | the four coefficients live in registers for the call
+        move.l  E_G2(%a3),%a4
+        move.l  E_G3(%a3),%a5
+        move.l  E_G4(%a3),%a6
+.Le_smp:
+        subq.l  #1,E_CNT(%a3)
+        bpl     .Le_run
+        | ---- the slow step, every 16 rendered samples (the skeleton's: the 303 gate and the VCA's ramp)
+        moveq   #15,%d0
+        move.l  %d0,E_CNT(%a3)
+        tst.l   S_GMODE(%a3)
+        beq     .Le_gl                  | GATE OFF: the shell wrote S_GLVL
+        move.l  S_GLVL(%a3),%d0
+        tst.l   S_GATE(%a3)
+        beq     .Le_gdn
+        add.l   #GATE_K,%d0
+        cmp.l   #32767,%d0
+        ble     .Le_gst
+        move.l  #32767,%d0
+        bra     .Le_gst
+.Le_gdn:
+        sub.l   #GATE_K,%d0
+        bpl     .Le_gst
+        moveq   #0,%d0
+.Le_gst:
+        move.l  %d0,S_GLVL(%a3)
+.Le_gl:
+        move.l  S_GLVL(%a3),%d0
+        move.l  #SK_G0,%d1
+        muls.l  %d1,%d0                 | the gain's target, Q28 (4096 * 32767 < 2^27)
+        sub.l   E_GAIN(%a3),%d0
+        asr.l   #4,%d0
+        move.l  %d0,E_DGAIN(%a3)
+.Le_run:
+        | ---- the oscillator: a saw, +-2^20
+        move.l  E_PH(%a3),%d6
+        add.l   E_INC(%a3),%d6
+        move.l  %d6,E_PH(%a3)
+        eor.l   #0x80000000,%d6
+        asr.l   #8,%d6
+        asr.l   #3,%d6                  | x
+        | ---- the zero-input pass: z = what the four poles give with no input
+        move.l  E_S1(%a3),%d5
+        mac.l   %a2,%d5,%acc0
+        movclr.l %acc0,%d0
+        sub.l   %d0,%d5
+        move.l  E_S2(%a3),%d0
+        sub.l   %d0,%d5
+        mac.l   %a4,%d5,%acc0
+        movclr.l %acc0,%d5
+        add.l   %d0,%d5
+        move.l  E_S3(%a3),%d0
+        sub.l   %d0,%d5
+        mac.l   %a5,%d5,%acc0
+        movclr.l %acc0,%d5
+        add.l   %d0,%d5
+        move.l  E_S4(%a3),%d0
+        sub.l   %d0,%d5
+        mac.l   %a6,%d5,%acc0
+        movclr.l %acc0,%d5
+        add.l   %d0,%d5                 | z
+        | ---- the loop, solved with no delay: u = (x - k (z - lp)) D
+        sub.l   E_LP(%a3),%d5
+        move.l  E_KQ(%a3),%d0
+        mac.l   %d0,%d5,%acc0
+        movclr.l %acc0,%d5
+        lsl.l   #5,%d5
+        sub.l   %d5,%d6
+        move.l  E_DQ(%a3),%d0
+        mac.l   %d0,%d6,%acc0
+        movclr.l %acc0,%d6              | u
+        | ---- the four poles
+        E_POLE_A E_S1,%a2
+        E_POLE_B E_S2,%a4
+        E_POLE_A E_S3,%a5
+        E_POLE_B E_S4,%a6               | y4 in d6
+        | ---- the loop's high-pass, then the VCA input's
+        move.l  %d6,%d4
+        move.l  E_GH(%a3),%d0
+        E_POLE_A E_LP,%d0
+        sub.l   %d3,%d4                 | hp = y4 - lo
+        move.l  %d4,%d6
+        move.l  E_GV(%a3),%d0
+        E_POLE_A E_LP2,%d0
+        sub.l   %d3,%d4                 | v = hp - lo2
+        | ---- the VCA
+        move.l  E_GAIN(%a3),%d0
+        add.l   E_DGAIN(%a3),%d0
+        move.l  %d0,E_GAIN(%a3)
+        mac.l   %d0,%d4,%acc0
+        movclr.l %acc0,%d6
+        lsl.l   #3,%d6                  | y
+        | ---- the BA662A's ceiling: a table per sign, step 2^14, linear between the entries
+        lea     o3e_kpos,%a0
+        move.l  %d6,%d0
+        bpl     .Le_kp
+        neg.l   %d0
+        lea     o3e_kneg,%a0
+.Le_kp:
+        move.l  %d0,%d1
+        moveq   #14,%d2
+        lsr.l   %d2,%d1                 | the entry
+        cmp.l   #E_KN-2,%d1
+        bls     .Le_ki
+        move.l  4*(E_KN-1)(%a0),%d5     | past the table: its last value
+        bra     .Le_ks
+.Le_ki:
+        and.l   #16383,%d0              | the fraction, Q14
+        lea     (%a0,%d1.l*4),%a0
+        move.l  (%a0)+,%d5
+        move.l  (%a0),%d1
+        sub.l   %d5,%d1                 | < 2^14: the product stays inside 32 bits
+        muls.l  %d0,%d1
+        asr.l   %d2,%d1
+        add.l   %d1,%d5
+.Le_ks:
+        tst.l   %d6
+        bpl     .Le_ko
+        neg.l   %d5
+.Le_ko:
+        move.l  %d5,%d6
+        | ---- the output: DRIV 0 inlined (o3_out's own path, bit for bit); DRIV above 0 is o3_out itself
+        move.l  S_OSIN(%a3),%d0
+        cmp.l   #DRV_G0,%d0
+        bne     .Le_drv
+        E_OUT0
+        subq.l  #1,%d7
+        bne     .Le_smp
+        bra     .Le_end
+.Le_drv:
+        bsr     o3_out                  | clobbers d0-d2, d6, a0: nothing the loop keeps
+        subq.l  #1,%d7
+        bne     .Le_smp
+.Le_end:
+        move.l  E_MACSR(%a3),%d0
+        move.l  %d0,%macsr
+        rts
+
+| ---- o3e generated: tools/octa303/o3e_skel.py --gen (do not edit by hand)
+        .set    SK_INC, 6390833
+        .set    SK_G1, 44594129
+        .set    SK_G2, 315142186
+        .set    SK_G3, 597340181
+        .set    SK_G4, 750765282
+        .set    SK_KQ, 1057729871
+        .set    SK_DQ, 2137499944
+        .set    SK_GH, 10655624
+        .set    SK_GV, 15190018
+        .set    SK_G0, 4096
+        .align  4
+o3e_kneg:
+        .long   0, 16384, 32768, 49151, 65530, 81902, 98260, 114594
+        .long   130888, 147126, 163283, 179330, 195233, 210954, 226448, 241667
+        .long   256559, 271072, 285152, 298748, 311812, 324301, 336179, 347418
+        .long   358000, 367915, 377161, 385747, 393689, 401007, 407730, 413889
+        .long   419517, 424650, 429322, 433571, 437431, 440934, 444112, 446995
+        .long   449610, 451983, 454137, 456092, 457869, 459485, 460955, 462294
+        .long   463514, 464628, 465645, 466575, 467426, 468206, 468922, 469579
+        .long   470183, 470738, 471250, 471723, 472158, 472561, 472934, 473279
+        .long   473599, 473895, 474171, 474427, 474666, 474888, 475095, 475288
+        .long   475468, 475637, 475794, 475942, 476080, 476210, 476331, 476446
+        .long   476553, 476654, 476749, 476839, 476923, 477002, 477077, 477148
+        .long   477215, 477279, 477338, 477395, 477449, 477500, 477548, 477594
+        .long   477637
+        .align  4
+o3e_kpos:
+        .long   0, 16384, 32768, 49152, 65535, 81916, 98294, 114667
+        .long   131031, 147383, 163716, 180025, 196301, 212535, 228715, 244829
+        .long   260862, 276798, 292619, 308305, 323836, 339188, 354339, 369263
+        .long   383937, 398335, 412432, 426204, 439627, 452681, 465344, 477599
+        .long   489430, 500825, 511774, 522270, 532308, 541888, 551011, 559682
+        .long   567908, 575697, 583061, 590013, 596566, 602735, 608536, 613986
+        .long   619101, 623899, 628395, 632607, 636551, 640242, 643696, 646927
+        .long   649949, 652777, 655421, 657895, 660210, 662376, 664403, 666301
+        .long   668079, 669744, 671305, 672768, 674140, 675428, 676637, 677772
+        .long   678839, 679841, 680784, 681672, 682507, 683294, 684035, 684734
+        .long   685394, 686016, 686604, 687160, 687684, 688181, 688651, 689095
+        .long   689516, 689915, 690294, 690653, 690993, 691316, 691623, 691915
+        .long   692192
+| ---- o3e generated: end
 
 
 
