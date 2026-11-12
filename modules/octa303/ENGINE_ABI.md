@@ -46,7 +46,7 @@ every call of a latched track
   record and `d2` the track.
 - `o3e_note_on` and `o3e_params` may clobber `d0`, `d1`, `d4`, `a0` and `a1` only.
 - `o3e_render` may clobber everything except `a3` and `sp`. It writes `d7` (1..16) samples to
-  `(a1)+`, each as the same long to L and then to R. `o3_out` does this for you; see §3.
+  `(a1)+`, each as the same long to L and then to R. `o3_out` does this for you; see section 3.
 
 ## 2. The state: what the shell gives the engine
 
@@ -56,7 +56,7 @@ state elsewhere only if you must, and measure the cache cost.
 
 | field | what it is |
 |---|---|
-| `R_PTGT` | the pitch the knobs ask for now, in Q8 semitones. `P_CENTER` (16384) is TUNE 0 = C3. TUNE runs −24..+24 semitones (raw 40..88), FINE is included, and the value is clamped to `P_LO`..`P_HI` (±36 semitones). A slide is this value changing while the note plays: a trigless PTCH lock on the next step. Glide to it with the slide time (§4). |
+| `R_PTGT` | the pitch the knobs ask for now, in Q8 semitones. `P_CENTER` (16384) is TUNE 0 = C3. TUNE runs −24..+24 semitones (raw 40..88), FINE is included, and the value is clamped to `P_LO`..`P_HI` (±36 semitones). A slide is this value changing while the note plays: a trigless PTCH lock on the next step. Glide to it with the slide time (section 4). |
 | `R_PNOTE` | the pitch at the START, in the same units |
 | `R_CUT` `R_RES` `R_ENV` `R_DEC` | PLAYBACK CUT, RES, ENV MOD and DECAY, raw 0..127, locks / scenes / LFOs applied |
 | `R_ACC` | the trig's ACC, raw 0..127, read at the START. 0 = not accented. Above 0 = accented, with the ACCENT knob at that value. |
@@ -123,13 +123,13 @@ Each law gives a source: W = Robin Whittle's Devil Fish manual (2019), R = the R
 |---|---|
 | TUNE | raw 40..88 = −24..+24 semitones, C3 = 0. The CHROMATIC keys play semitones. |
 | FINE | (raw − 64) × 2/256 semitone: −½..+0.49 semitone |
-| GATE | OFF = the AMP page shapes the note. 303 = the 303's own gate (§2; W: 3.5 of 6 clocks). |
+| GATE | OFF = the AMP page shapes the note. 303 = the 303's own gate (section 2; W: 3.5 of 6 clocks). |
 | SLID (SETUP), and dEVILish SLID | Both knobs use the same law. A one-pole glide of the pitch toward `R_PTGT`, through the RC of R × C35 0.22 µF. 0 = the 303: R = 103.3 kΩ (DAC + protection), τ = 22.7 ms. 127: R = 103.3 + 500 kΩ (the Devil Fish pot), τ = 132.6 ms, linear in raw. Whittle (p. 16) gives these as slide times of 60 → 360 ms. |
 | WAVE bit 0 | SAW / SQR, the 303's two waveforms |
 | WAVE bit 1, `+D` | a fixed distortion pedal after the VCA (and after MUFF), before the output coupling. The old engine (`1.0` = 2^20): `o = softclip(5·o + 0.12)`, then a one-pole low-pass at 6 kHz. Here `softclip(x)` = `x − x³/6` with x clamped to ±√2. Keep its character: gain 5, a small asymmetry, a 6 kHz tone. |
 | WAVE bit 2, `R` | the 303 as Roland's factory trim sets the filter. The law is the trim procedure (R, "ADJ. VCF"; the same in the RE-303 build guide by Din Sync's author, https://smakela.github.io/re-303-buildguide/docs/build_calibration): SAW, note A (110 Hz), CUT at the centre, RES fully clockwise, ENV / DEC / ACC 0; TM3 is set until the resonant peaks at TP6 are 2 ms apart (R: 2–2.5 ms), around 500 Hz. Without `R`, Din Sync's 303. In the old engine this came out as the cutoff +0.575 octave at every CUT (🟡 its result, not the law). |
 | ACCV | the accent's loudness: the accent's contribution to the VCA × ACCV/64. 64 = the 303 (R: the accent current into the VCA). |
-| DRIV | `o3_out` (§3), as it is |
+| DRIV | `o3_out` (section 3), as it is |
 | OVDR | the VCO into the filter (W p. 4). 0 = none, 25 = the 303, 127 = 66.6 × normal: gain = raw/25 up to 25, then 66.6^((raw−25)/102). Above normal, the resonance is swamped and the output must not jump: the old engine scaled its resonance level compensation by G^−1.5 and the output by G^−0.3. |
 | FM | the VCA's output, after MUFF, moves the cutoff per sample (W pp. 5, 18–19). The old engine took the VCA output with no high-pass. Its depth: linear in raw; at raw 127, about 47 semitones for abs(VCA out) = 2^20 in `y` units. |
 | TRCK | filter tracking, linear in Hz (W pp. 5, 14): at 127 the cutoff rises ~2.7 kHz per octave of pitch, as (raw/127)^1.5 × 2700 Hz/oct, zero at TUNE 0. Low notes can shut the filter. |
