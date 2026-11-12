@@ -1329,6 +1329,7 @@ int main(int _argc, char** _argv)
 	std::string dspWatch;		// O9b: core:space:addr -- the last 16 writers of one DSP word
 	std::string dspMap;		// O9: per-frame non-zero counts per 4K chunk of both cores' X and Y -> FILE
 	std::string dspWrites;		// O9: per-frame NON-ZERO WRITE counts per 256-word region of both cores' X and Y -> FILE
+	std::string datamap; uint32_t dmapLo = 0, dmapHi = 0;	// memmap probe
 	std::string coverage;		// O9b: every ColdFire PC executed from the transport start on, with its count -> FILE (diff two runs)
 	bool frameTimer = false;	// O9b: keep the free-running 16-sample frame timer with --dsp (default: the DSP's bank word is the frame edge)
 	double dspLazy = ot::DspPair::g_lazyDefault;	// O16c: --dsp-lazy N -- the pair's ticks are booked and replayed in chunks of up to N DSP instructions at the ColdFire's touch points (0 = the per-tick path); the default in every mode, byte-identical to it
@@ -1430,6 +1431,7 @@ int main(int _argc, char** _argv)
 		else if(a == "--dsp-stopwatch" && i + 1 < _argc)	dspStopwatch = _argv[++i];
 		else if(a == "--dsp-writes" && i + 1 < _argc)	dspWrites = _argv[++i];
 		else if(a == "--coverage" && i + 1 < _argc)	coverage = _argv[++i];
+		else if(a == "--datamap" && i + 3 < _argc) { datamap = _argv[++i]; dmapLo = std::stoul(_argv[++i], nullptr, 0); dmapHi = std::stoul(_argv[++i], nullptr, 0); }
 		else if(a == "--main-level" && i + 1 < _argc)	{ const std::string v = _argv[++i]; mainLevel = v == "off" ? -1 : std::atoi(v.c_str()); mainLevelGiven = true; }
 		else if(a == "--mem-dump" && i + 1 < _argc)	memDump = _argv[++i];
 		else if(a == "--lcd" && i + 1 < _argc)		lcd = _argv[++i];
@@ -2741,6 +2743,7 @@ int main(int _argc, char** _argv)
 				rtos.installTrigLog();
 				if(!coverage.empty())
 					m.setProfile(1);		// every PC from here: the coverage of the frames phase
+				if(!datamap.empty()) { m.m_dmapLo = dmapLo; m.m_dmapHi = dmapHi; m.m_dmapOn = true; }
 				// Frame 0 = the first frame delivered after the transport
 				// start returned, which is what the cold tool calls frame 0:
 				// the two reports compare directly.
@@ -3140,6 +3143,16 @@ int main(int _argc, char** _argv)
 		}
 	}
 
+	if(!datamap.empty())
+	{
+		m.m_dmapOn = false;
+		std::ofstream t(datamap);
+		for(const auto& e : m.m_dmap)
+			t << std::hex << (e.first << 4) << std::dec << ' ' << e.second[0] << ' ' << e.second[1] << ' ' << e.second[2] << ' ' << e.second[3] << '\n';
+		std::printf("datamap    : %s (%zu lines)\n", datamap.c_str(), m.m_dmap.size());
+		std::printf("cachesim   : I acc %llu miss %llu | D acc %llu miss %llu\n", (unsigned long long)m.m_ic.acc, (unsigned long long)m.m_ic.miss, (unsigned long long)m.m_dc.acc, (unsigned long long)m.m_dc.miss);
+		std::printf("cachesim   : I miss in OCTA303 code %llu, elsewhere %llu\n", (unsigned long long)m.m_imissO3, (unsigned long long)m.m_imissRest);
+	}
 	if(!coverage.empty())
 	{
 		std::ofstream t(coverage);

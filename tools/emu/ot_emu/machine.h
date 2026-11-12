@@ -172,14 +172,37 @@ namespace ot
 		// on the bursts+LTO binary, see git show 666b6154:docs/firmware/COLDFIRE_PORT.md O15c.
 		static constexpr uint32_t g_pageBits = 12;
 		static constexpr uint32_t g_pageMask = (1u << g_pageBits) - 1;
+		// memmap probe (Claude, 12 Nov 2026, not for the repo): data accesses per 16-byte line from the transport start,
+		// split by whether the PC is inside [m_dmapLo, m_dmapHi) (OCTA303's code); fetches near the PC are skipped
+		bool m_dmapOn = false; uint32_t m_dmapLo = 0, m_dmapHi = 0, m_dpc = 0;
+		std::unordered_map<uint32_t, std::array<uint64_t, 4>> m_dmap;
+		// cache model (probe): 16 KB, 4-way, 16-byte lines, LRU, for instructions and data (cacheable SDRAM only)
+		struct CacheSim { uint32_t tag[256][4]; uint8_t age[256][4]; uint64_t acc = 0, miss = 0;
+			CacheSim() { for(auto& s : tag) for(auto& t : s) t = 0xffffffff; for(auto& s : age) for(int w = 0; w < 4; ++w) s[w] = uint8_t(w); }
+			bool touch(const uint32_t _a) { const uint32_t line = _a >> 4, set = line & 255; ++acc;
+				int hit = -1; for(int w = 0; w < 4; ++w) if(tag[set][w] == line) { hit = w; break; }
+				bool missed = hit < 0; if(hit < 0) { ++miss; int v = 0; for(int w = 1; w < 4; ++w) if(age[set][w] > age[set][v]) v = w; tag[set][v] = line; hit = v; }
+				const uint8_t a0 = age[set][hit]; for(int w = 0; w < 4; ++w) if(age[set][w] < a0) ++age[set][w]; age[set][hit] = 0; return missed; } };
+		CacheSim m_ic, m_dc; uint32_t m_lastIline = 0xffffffff; uint64_t m_imissO3 = 0, m_imissRest = 0;
+		static bool cacheable(const uint32_t _a) { return _a >= 0x40000000 && _a < 0x48000000; }
+		void inote(const uint32_t _pc) { if(!cacheable(_pc)) return; const uint32_t l = _pc >> 4; if(l != m_lastIline) { if(m_ic.touch(_pc)) { if(_pc >= m_dmapLo && _pc < m_dmapHi) ++m_imissO3; else ++m_imissRest; } m_lastIline = l; } }
+		void dnote(const uint32_t _a, const int _w)
+		{
+			if(_a - m_dpc >= 12 && cacheable(_a)) m_dc.touch(_a);
+			if(_a - m_dpc < 12) return;
+			auto& c = m_dmap[_a >> 4];
+			++c[((m_dpc >= m_dmapLo && m_dpc < m_dmapHi) ? 0 : 2) + _w];
+		}
 		uint8_t read8(const uint32_t _a) override
 		{
+			if(__builtin_expect(m_dmapOn, 0)) dnote(_a, 0);
 			if(const uint8_t* const p = m_pages[_a >> g_pageBits]; p != nullptr && !m_readSlow)
 				return p[_a & g_pageMask];
 			return read8Slow(_a);
 		}
 		uint16_t read16(const uint32_t _a) override
 		{
+			if(__builtin_expect(m_dmapOn, 0)) dnote(_a, 0);
 			const uint8_t* const p = m_pages[_a >> g_pageBits];
 			if(__builtin_expect(p != nullptr && !m_readSlow && (_a & g_pageMask) <= g_pageMask - 1, 1))
 			{
@@ -189,7 +212,10 @@ namespace ot
 			}
 			return read16Slow(_a);
 		}
-		uint16_t readImm16(const uint32_t _a) override { return read16(_a); }
+		uint16_t readImm16(const uint32_t _a) override
+		{	// memmap probe: an instruction fetch is not a data access
+			const bool on = m_dmapOn; m_dmapOn = false; const auto v = read16(_a); m_dmapOn = on; return v;
+		}
 		// ⚠️ 32-BIT ACCESSES MUST ARRIVE WHOLE. Musashi's memoryOps compose a
 		// longword from two 16-bit halves unless the machine provides these,
 		// and a peripheral register is not two halves: the DSPI's status word
@@ -200,6 +226,7 @@ namespace ot
 		// as the PLL truncation that stalled the boot in O1.
 		uint32_t read32(const uint32_t _a)
 		{
+			if(__builtin_expect(m_dmapOn, 0)) dnote(_a, 0);
 			const uint8_t* const p = m_pages[_a >> g_pageBits];
 			if(__builtin_expect(p != nullptr && !m_readSlow && (_a & g_pageMask) <= g_pageMask - 3, 1))
 			{
@@ -212,6 +239,7 @@ namespace ot
 		void write8(const uint32_t _a, const uint8_t _v) override
 		{
 			++m_writes;
+			if(__builtin_expect(m_dmapOn, 0)) dnote(_a, 1);
 			if(uint8_t* const p = m_pages[_a >> g_pageBits]; p != nullptr && !m_writeSlow)
 			{
 				p[_a & g_pageMask] = _v;
@@ -222,6 +250,7 @@ namespace ot
 		void write16(const uint32_t _a, const uint16_t _v) override
 		{
 			++m_writes;
+			if(__builtin_expect(m_dmapOn, 0)) dnote(_a, 1);
 			uint8_t* const p = m_pages[_a >> g_pageBits];
 			if(__builtin_expect(p != nullptr && !m_writeSlow && (_a & g_pageMask) <= g_pageMask - 1, 1))
 			{
@@ -234,6 +263,7 @@ namespace ot
 		void write32(const uint32_t _a, const uint32_t _v)
 		{
 			++m_writes;
+			if(__builtin_expect(m_dmapOn, 0)) dnote(_a, 1);
 			uint8_t* const p = m_pages[_a >> g_pageBits];
 			if(__builtin_expect(p != nullptr && !m_writeSlow && (_a & g_pageMask) <= g_pageMask - 3, 1))
 			{

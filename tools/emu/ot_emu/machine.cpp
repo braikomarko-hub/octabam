@@ -380,6 +380,7 @@ namespace ot
 	bool Machine::step()
 	{
 		const auto p = pc();
+		m_dpc = p; if(m_dmapOn) inote(p);
 		++m_instructions;		// O9b: the RTOS phase steps through here; without this every PC-watch stamp read the boot's last count
 		if(p == m_pcCountAddr)
 			++m_pcCount;
@@ -412,6 +413,7 @@ namespace ot
 	bool Machine::stepFast()
 	{
 		const uint32_t p = pcFast();
+		m_dpc = p; if(m_dmapOn) inote(p);
 		++m_instructions;
 		if(p == m_pcCountAddr)
 			++m_pcCount;
@@ -853,6 +855,7 @@ namespace ot
 				m_why = msg;
 				return Stop::Handoff;
 			}
+			m_dpc = p; if(m_dmapOn) inote(p);
 			if(m_profileEvery && (m_instructions % m_profileEvery) == 0)
 				++m_profile[p];
 			if(p == m_pcCountAddr)
