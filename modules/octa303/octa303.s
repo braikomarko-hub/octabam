@@ -75,8 +75,8 @@
         .set    NEUTRAL_RATE,   0x7f00          | rate 1.0
         .set    NTRACKS,        8
 
-| ---- per-track state: 512 bytes a track.  0..255 THE SHELL's (do not write them from the engine,
-|      except where ENGINE_ABI.md says so); 256..511 THE ENGINE's (E_BASE.., free for you).
+| ---- per-track state: 1024 bytes a track.  0..255 THE SHELL's (do not write them from the engine,
+|      except where ENGINE_ABI.md says so); 256..1023 THE ENGINE's (E_BASE.., free for you).
         .set    S_LATCHED,0                     | 1 = this track is an OCTA303 voice since its last START
         .set    S_MACH,4                        | the track is the TB-303 machine (signed FLEX)
         .set    S_WPTCH,8                       | the record's PTCH / RATE words, saved around the stock call
@@ -123,9 +123,9 @@
                                                 |   0..127 each (the selects as stored: 0..2), dEVILish's neutral set
                                                 |   (o3_df_neutral) when it is not on the track
         .set    R_RSV,188                       | 188..255 reserved for the shell
-        .set    E_BASE,256                      | 256..511: the engine's
-        .set    ST_SHIFT,9
-        .set    ST_SIZE,512
+        .set    E_BASE,256                      | 256..1023: the engine's
+        .set    ST_SHIFT,10
+        .set    ST_SIZE,1024
 
 | ---- shell constants
         .set    SHIFT_OUT,       6               | o3_out: the 16-bit sample = y >> 6
@@ -257,8 +257,8 @@ sy_render:
         cmp.l   %d0,%d2
         bhi     .Lstock                 | (never: the packer renders tracks 0..7)
         move.l  %d2,%d0
-        lsl.l   #8,%d0                 | track * ST_SIZE (512: 8 + 1)
-        add.l   %d0,%d0
+        lsl.l   #8,%d0                 | track * ST_SIZE (1024: 8 + 2)
+        lsl.l   #2,%d0
         lea     o3_state,%a3
         add.l   %d0,%a3
         move.l  FP_PTR,%a4
@@ -414,8 +414,8 @@ o3_retrig:
         move.l  %a1,%d1
         cmp.l   #NTRACKS,%d1
         bcc     .Lrt_out
-        lsl.l   #8,%d1                 | track * ST_SIZE (512: 8 + 1)
-        add.l   %d1,%d1
+        lsl.l   #8,%d1                 | track * ST_SIZE (1024: 8 + 2)
+        lsl.l   #2,%d1
         lea     o3_state,%a2
         tst.l   S_LATCHED(%a2,%d1.l)
         .if     HK_MACHINE_ROWS

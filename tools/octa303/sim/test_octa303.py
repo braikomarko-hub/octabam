@@ -41,7 +41,7 @@ SETUP0 = (0, 0, 64, 0, 0, 64)                       # WAVE SAW, GATE OFF, FINE 0
 def W(tune=0, cut=64, res=64, env=64, dec=64, acc=0):
     return [0x4000 + tune * 256, cut << 8, res << 8, env << 8, dec << 8, acc << 8]
 def field(rig, track, name, sz='l'):
-    return s32(rig.cpu.mem.r(rig.cpu.consts['o3_state'] + 512 * track + sym(name), sz))
+    return s32(rig.cpu.mem.r(rig.cpu.consts['o3_state'] + sym('ST_SIZE') * track + sym(name), sz))
 
 def play(rig, track, words, setup=SETUP0, df=None, slot=1, start=True, sign=True, alive=True):
     rig.machine(track, setup, sign=sign); rig.voice(track, alive, 3); rig.path(3, '/AUDIO/x.wav')
@@ -79,12 +79,12 @@ fine = 32 * sym('FINE_Q8')
 check('r_pitch', field(r, 2, 'R_PTGT') == sym('P_CENTER') + 12 * 256 + fine and field(r, 2, 'R_PNOTE') == field(r, 2, 'R_PTGT'),
       '%d %d' % (field(r, 2, 'R_PTGT'), field(r, 2, 'R_PNOTE')))
 check('r_slid_from_setup', field(r, 2, 'R_SLID') == 77 and field(r, 2, 'R_DFON') == 0)
-check('r_df_neutral', [r.cpu.mem.r(r.cpu.consts['o3_state'] + 1024 + sym('R_DF') + i, 'b') for i in range(12)] == list(DF_NEUTRAL))
+check('r_df_neutral', [r.cpu.mem.r(r.cpu.consts['o3_state'] + sym('ST_SIZE') * 2 + sym('R_DF') + i, 'b') for i in range(12)] == list(DF_NEUTRAL))
 check('s_osin_is_drv_g', field(r, 2, 'S_OSIN') == o3out.driv_gain(90))
 for slot in (1, 2):
     r = Rig(); df = (127, 3, 50, 70, 33, 51, 9, 2, 0, 2, 1, 1)
     play(r, 3, W(), df=df, slot=slot)
-    got = [r.cpu.mem.r(r.cpu.consts['o3_state'] + 512 * 3 + sym('R_DF') + i, 'b') for i in range(12)]
+    got = [r.cpu.mem.r(r.cpu.consts['o3_state'] + sym('ST_SIZE') * 3 + sym('R_DF') + i, 'b') for i in range(12)]
     check('r_df_fx%d' % slot, got == list(df) and field(r, 3, 'R_DFON') == 1 and field(r, 3, 'R_SLID') == 33, str(got))
 r = Rig(); play(r, 4, W(acc=0)); check('r_acc_unaccented', field(r, 4, 'R_ACC') == 0)
 
@@ -134,7 +134,7 @@ def gate_fuzz(n, seed):
         step = rnd.choice([st.lstep, (st.lstep + 1) % LL, st.gstep, (st.gstep + 1) % LL, rnd.randrange(300)])
         tick = rnd.choice([st.ltick, rnd.randrange(12)])
         seq = (rnd.choice([127, 0, 64]), step, tick, rnd.getrandbits(64), L, rnd.choice([1, 1, 0, 2]))   # v7.5: 2 = STOP key
-        a3 = base + t * 512
+        a3 = base + t * sym('ST_SIZE')
         for f in GF: m.w(a3 + GOFF[f], 'l', getattr(st, f) & M32)
         rig.seq(t, seq)
         c.d[2] = t; c.a[3] = a3; c.a[7] = STACK
@@ -155,7 +155,7 @@ check('gate_state_machine_bit_exact', bad is None, bad or 'random states and inp
 class _GatePair:
     """v7.5 (review): o3_gate and o3gate.gate_frame on one state each, frame by frame, every field compared"""
     def __init__(self, st, t=0):
-        self.st, self.t, self.rig = st, t, Rig(); c = self.rig.cpu; self.a3 = c.consts['o3_state'] + t * 512; self.bad = None
+        self.st, self.t, self.rig = st, t, Rig(); c = self.rig.cpu; self.a3 = c.consts['o3_state'] + t * sym('ST_SIZE'); self.bad = None
         for f in GF: c.mem.w(self.a3 + GOFF[f], 'l', getattr(st, f) & M32)
     def __call__(self, seq):
         c = self.rig.cpu; m = c.mem

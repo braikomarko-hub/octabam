@@ -42,7 +42,7 @@ every call of a latched track
 - A track is "latched" from its first START as the TB-303 machine until a START plays something
   else. A latched track is rendered every call, even when muted. This is a measured cost:
   `o3e_render` should be cheap when the voice is silent.
-- **Registers.** In every call, `a3` is the track's state (512 bytes), `a4` the packer's parameter
+- **Registers.** In every call, `a3` is the track's state (1024 bytes, `ST_SIZE`), `a4` the packer's parameter
   record and `d2` the track.
 - `o3e_note_on` and `o3e_params` may clobber `d0`, `d1`, `d4`, `a0` and `a1` only.
 - `o3e_render` may clobber everything except `a3` and `sp`. It writes `d7` (1..16) samples to
@@ -50,8 +50,8 @@ every call of a latched track
 
 ## 2. The state: what the shell gives the engine
 
-Offsets are into the 512-byte state. Bytes **0..255 belong to the shell**: read them, do not write
-them, except `S_GLVL` (see the gate). Bytes **256..511 (`E_BASE`) belong to the engine**. Add more
+Offsets are into the 1024-byte state (`ST_SIZE`, 8 KB for the 8 tracks). Bytes **0..255 belong to the shell**: read them, do not write
+them, except `S_GLVL` (see the gate). Bytes **256..1023 (`E_BASE`) belong to the engine** (768 bytes). Add more
 state elsewhere only if you must, and measure the cache cost.
 
 | field | what it is |

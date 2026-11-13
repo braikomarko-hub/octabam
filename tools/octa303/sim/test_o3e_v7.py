@@ -68,7 +68,7 @@ class Eng:
     """the engine alone, driven as the shell drives it"""
     def __init__(self, kind='y'):
         self.rig = Rig(SRC_Y if kind == 'y' else SRC_REAL)
-        c = self.cpu = self.rig.cpu; self.C = c.consts; self.st = self.C['o3_state'] + 512 * T
+        c = self.cpu = self.rig.cpu; self.C = c.consts; self.st = self.C['o3_state'] + self.C['ST_SIZE'] * T
         self.low_bad = 0; self.watch = False
     def w(self, name, v, sz='l'): self.cpu.mem.w(self.st + self.C[name], sz, v & M32)
     def r(self, name): return s32(self.cpu.mem.r(self.st + self.C[name], 'l'))
@@ -314,7 +314,7 @@ def shell_run(args):
     """GATE (0 OFF, 1 303), frames; a START every 48 frames (a step) in mid frame, accents alternating; random splits
     elsewhere.  -> (name, samples, differing, first, the gate closes seen)"""
     gsel, nfr, tune, wave, seed = args
-    r = Rig(SRC_REAL); rnd = random.Random(seed); C = r.cpu.consts; st = C['o3_state'] + 512 * T
+    r = Rig(SRC_REAL); rnd = random.Random(seed); C = r.cpu.consts; st = C['o3_state'] + C['ST_SIZE'] * T
     fld = lambda n: s32(r.cpu.mem.r(st + C[n], 'l'))
     setup = (wave, gsel, 64, 0, 0, 64)                    # WAVE, GATE, FINE 64, SLID 0, DRIV 0, ACCV 64
     r.machine(T, setup); r.voice(T, True, 3); r.path(3, '/AUDIO/x.wav')
@@ -419,7 +419,8 @@ if __name__ == '__main__':
     bad += [k for k, v in o3m7.derived(SCAL).items() if (C.get(k) & M32) != (v & M32)]
     check('tables_eq_committed', not bad, '%d tables, %d O3S, %d O3E: %s' % (len(LAYOUT) - 1, len(SCAL), len(o3m7.derived(SCAL)),
           'equal to model_v7/o3tab.h and o3m7.derived' if not bad else 'DIFFER: %s' % bad))
-    check('engine_state_fits', C['E_END'] - C['E_BASE'] <= 256, '%d of 256 bytes' % (C['E_END'] - C['E_BASE']))
+    check('engine_state_fits', C['E_END'] - C['E_BASE'] <= C['ST_SIZE'] - C['E_BASE'],
+          '%d of %d bytes' % (C['E_END'] - C['E_BASE'], C['ST_SIZE'] - C['E_BASE']))
 
     pool = mp.Pool(max(1, os.cpu_count() or 1))
     groups = [('a1_single_notes', singles()), ('a2_sequences', sequences()), ('a3_features_and_devilish', features()),
@@ -535,7 +536,7 @@ if __name__ == '__main__':
         def r16(cnt):
             e.w('E_CNT', cnt); return e.render(16)[2]
         s_wo = r16(1000); s_w = r16(0)
-        snap = {a: e.cpu.mem.b.get(a, 0) for a in range(e.st, e.st + 512)}
+        snap = {a: e.cpu.mem.b.get(a, 0) for a in range(e.st, e.st + e.C['ST_SIZE'])}
         e.w('E_NEW', 1); s_st = r16(0)
         for a, v in snap.items(): e.cpu.mem.b[a] = v
         e.w('E_NEW', 1); e.w('E_PBASE', e.r('R_PNOTE') + 256); s_rb = r16(0)   # the same state, a START on a new note
