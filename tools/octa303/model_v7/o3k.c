@@ -38,6 +38,8 @@ enum { D_MX,       /* the v5 maxstate (s1, u, s4, z) */
        D_N };
 
 static inline int32_t fmul(int32_t a, int32_t b) { return (int32_t)(((int64_t)a * (int64_t)b) >> 31); }
+/* a << n through uint32 (C leaves a negative a's left shift undefined; the ColdFire's lsl is this) */
+static inline int32_t shl32(int32_t a, int n) { return (int32_t)((uint32_t)a << n); }
 static inline int32_t q31(double x) { if (x > 0.99999999) x = 0.99999999; if (x < -1.0) x = -1.0; return (int32_t)floor(x * 2147483648.0); }
 
 /* polyBLEP residual for a step of height 2A at fractional position; returns A*(1-t)^2, t Q15 */
@@ -66,7 +68,7 @@ static inline int32_t sclip_s(int32_t v, int64_t kin, int32_t S) {
 static inline int32_t dp_clip(int32_t y) {
     int32_t X = 5 * y + 125829;                      /* 0.12 x 2^20 */
     if (X > 1482910) X = 1482910; if (X < -1482910) X = -1482910;   /* sqrt(2) x 2^20 */
-    return sclip30(X << 10) >> 10;
+    return sclip30(shl32(X, 10)) >> 10;
 }
 
 typedef struct { double a_meg, a_att, a_c, a_d, a_v, a_va, a_v2; } Der;
@@ -304,7 +306,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         z = s2 + fmul(z - s2, g2);
         z = s3 + fmul(z - s3, g3);
         z = s4 + fmul(z - s4, g4);
-        int32_t u = fmul(x - (fmul(z - lp, kq) << 7), Dq);   /* with FM: Dq stays the control step's (see the report) */
+        int32_t u = fmul(x - shl32(fmul(z - lp, kq), 7), Dq);   /* with FM: Dq stays the control step's (see the report) */
         if (F & (F_FM | F_GOV)) u = sclip_s(u, kuc, So);   /* v6 FM, SWP: the ladder input saturates at +-4 x 2^20 (the linear loop under audio-rate FM, or above critical k, outruns the governor) */
         int32_t y1 = s1 + fmul(u - s1, g1);  s1 = 2 * y1 - s1;
         int32_t y2 = s2 + fmul(y1 - s2, g2); s2 = 2 * y2 - s2;
@@ -317,7 +319,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         int32_t v = hp1 - lo2;
         /* ---- VCA ---- */
         gain += dgain;
-        int32_t y = fmul(v, gain) << 3;
+        int32_t y = shl32(fmul(v, gain), 3);
         if (F & F_DIAG) { TRACK(s2); TRACK(s3); TRACK(lp); TRACK(lp2); TRACK(x); TRACK(y);
                           int32_t a4 = y4 < 0 ? -y4 : y4; if (a4 > pk4all) pk4all = a4; }
         /* ---- BA662 ceiling: table, step 2^14 ---- */

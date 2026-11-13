@@ -38,7 +38,7 @@ static inline int32_t fm_(int32_t a, int32_t b, int l) { int64_t r = ((int64_t)a
 #else
 #define ADD(a, b) ((a) + (b))
 #define SUB(a, b) ((a) - (b))
-#define SHL(a, n) ((a) << (n))
+#define SHL(a, n) shl32((a), (n))   /* through uint32: no UB for a negative a (13 Nov 2026) */
 #define FM_(a, b) fmul((a), (b))
 #endif
 #ifdef O3_COUNT                    /* the operation count for the report: multiplies, divides, table lookups, branches */
@@ -115,13 +115,13 @@ static inline void is_step(IS *s, const int32_t *T, const int F, int32_t pk4, in
        47 + 50 a(1-a) kOhm) as a chord between the tables at 47 and 59.5 kOhm, weight wrs = 4 a (1 - a) */
     int spd = df[8], swp = df[7];
     int32_t E = s->accnet ? SUB(MUL(s->A, mv), S[S_VDF]) : (int32_t)0x80000000; CB;
-    int32_t c1 = ADD(T[TB_C1B + res], MUL(s->wrs, T[TB_C1S + res] << 16)); CT; CT;
-    int32_t c2 = ADD(T[TB_C2B + res], MUL(s->wrs, T[TB_C2S + res] << 16)); CT; CT;
+    int32_t c1 = ADD(T[TB_C1B + res], MUL(s->wrs, SHL(T[TB_C1S + res], 16))); CT; CT;
+    int32_t c2 = ADD(T[TB_C2B + res], MUL(s->wrs, SHL(T[TB_C2S + res], 16))); CT; CT;
     int32_t VW0 = ADD(MUL(c1, E), MUL(c2, s->vc));
     int on = E > VW0; CB;
     int32_t b, Veq;
-    if (on) { b = ADD(T[TB_BONB + res], MUL(s->wrs, T[TB_BONS + res] << 16)); CT; CT;
-              int32_t cV = ADD(T[TB_CVB + res], MUL(s->wrs, T[TB_CVS + res] << 16)); CT; CT; Veq = MUL(cV, E); }
+    if (on) { b = ADD(T[TB_BONB + res], MUL(s->wrs, SHL(T[TB_BONS + res], 16))); CT; CT;
+              int32_t cV = ADD(T[TB_CVB + res], MUL(s->wrs, SHL(T[TB_CVS + res], 16))); CT; CT; Veq = MUL(cV, E); }
     else { b = T[TB_BOFF + res]; CT; Veq = 0; }
     CB; if (spd == 2) b >>= 2; else if (spd == 0) b = SHL(b, 2);   /* SLOW: C13 x 4; FAST: C13 / 4 */
     /* alpha = 1 - exp(-b) = b - b^2/2 + b^3/6 (b <= 0.04: error < 1e-7) */
@@ -146,7 +146,7 @@ static inline void is_step(IS *s, const int32_t *T, const int F, int32_t pk4, in
         int32_t m = exp2_q30(T, o2, &ip);                                   /* Hz Q12 = m Q30 >> (18 - ip) */
         int32_t fa = m >> (18 - ip);
         int32_t po = ADD(s->pitch_oct, MUL(s->pst, 178956971));            /* Q24 octaves */
-        fa = ADD(fa, MUL(T[TB_TRK + df[2]] << 12, SHL(po, 4))); CT;         /* (Q3 << 12 = Q15) x Q28 -> Q12 */
+        fa = ADD(fa, MUL(SHL(T[TB_TRK + df[2]], 12), SHL(po, 4))); CT;         /* (Q3 << 12 = Q15) x Q28 -> Q12 */
         if (fa < (16 << 12)) fa = 16 << 12; CB;
         oct = log2_q24(T, (uint32_t)fa, 12);
     }
@@ -172,7 +172,7 @@ static inline void is_step(IS *s, const int32_t *T, const int F, int32_t pk4, in
     /* feedback: kh = K(res) kcd (WHST/SELF x 2, OVDR x G^-0.5, governor), Q24, capped at 120 */
     int32_t kh = SHL(MUL(T[TB_K + res], kcd), 1); CT;
     CB; if (swp >= 1) kh = SHL(kh, 1);
-    CB; if (df[0] > 25) { kh = MUL(kh, T[TB_OVK + df[0]] << 16); CT; }   /* Q15 << 16 */
+    CB; if (df[0] > 25) { kh = MUL(kh, SHL(T[TB_OVK + df[0]], 16)); CT; }   /* Q15 << 16 */
     if (F & F_GOV) {
         CB; if (pk4 > 3 * 1048576) { s->kgov = MUL(s->kgov, 2083059138); if (s->kgov < 644245094) s->kgov = 644245094; CB; }   /* x 0.97, floor 0.3 */
         else { int32_t t = ADD(s->kgov >> 1, MUL(s->kgov >> 1, 10737418)); s->kgov = t > (ONE >> 1) ? ONE : SHL(t, 1); CB; } /* x 1.005, cap 1 */

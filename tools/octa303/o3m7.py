@@ -19,15 +19,20 @@ CFLAGS = ['-O2', '-ffp-contract=off', '-shared', '-fPIC']     # no fused multipl
 def lib_path():
     if not os.path.isfile(os.path.join(MODEL, 'o3k.c')):
         sys.exit('o3m7: the model is not at %s (set O3_MODEL_V7)' % MODEL)
+    cc = os.environ.get('CC') or shutil.which('cc') or shutil.which('gcc') or shutil.which('clang')
+    if not cc:
+        sys.exit('o3m7: no C compiler (set CC, or install one: on macOS `xcode-select --install`)')
     h = hashlib.sha256()
     for f in SOURCES: h.update(open(os.path.join(MODEL, f), 'rb').read())
     h.update(' '.join(CFLAGS).encode())
+    try:                                                       # one kernel per compiler (CC=gcc / CC=clang apart)
+        h.update(subprocess.run([cc, '--version'], capture_output=True, text=True).stdout.encode())
+    except OSError:
+        sys.exit('o3m7: the C compiler %s does not run' % cc)
+    h.update(cc.encode())
     out = os.path.join(ROOT, 'out', 'octa303')
     so = os.path.join(out, 'libo3k-%s.so' % h.hexdigest()[:12])
     if not os.path.isfile(so):
-        cc = os.environ.get('CC') or shutil.which('cc') or shutil.which('gcc') or shutil.which('clang')
-        if not cc:
-            sys.exit('o3m7: no C compiler (set CC, or install one: on macOS `xcode-select --install`)')
         os.makedirs(out, exist_ok=True)
         tmp = so + '.%d.tmp' % os.getpid()
         r = subprocess.run([cc] + CFLAGS + ['-I', MODEL, '-o', tmp, os.path.join(MODEL, 'o3k.c'), '-lm'],

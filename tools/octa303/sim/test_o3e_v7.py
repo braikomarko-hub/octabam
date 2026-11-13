@@ -210,7 +210,7 @@ def sequences():
         retrig, slides, goff = [], [], []
         sliding = False; base = 16384 - 12 * 256 * (p % 2)
         for k in range(16):
-            t = k * STEP; acc = 100 + 3 * k if am >> (15 - k) & 1 else 0
+            t = k * STEP; acc = 80 + 3 * k if am >> (15 - k) & 1 else 0   # 80..125: the raw range
             if k > 0 and not sliding: retrig.append((t, acc))
             if k == 0: acc0 = acc
             if sliding: slides.append((t, 256 * deltas[k]))     # the slid-to note: R_PTGT moves, no START
@@ -297,6 +297,62 @@ def shell_run(args):
     first = next(('sample %d: engine %#x, model %#x (y %d)' % (i, L[i], want[i], y[i]) for i in range(t) if L[i] != want[i]), '')
     return s['name'], t, nd, first, len(goff), len(retrig)
 
+def random_events(n, seed=7, nsamp=6000):
+    """n random model events in the raw range: both waves, R, accents, slides, retrigs, gate closes, GATE OFF, ACCV, and
+    dEVILish's stage-A knobs (OVDR 25, FM 0, MUFF 0, SWP ACID)"""
+    rnd = random.Random(seed); out = []
+    for j in range(n):
+        df = list(DFN)
+        for idx in (2, 3, 4, 5, 6, 8, 10, 11):
+            if rnd.random() < 0.4: df[idx] = rnd.randrange(128)
+        ev = dict(freq_hz=rnd.choice([32.7, 65.62, 130.8128, 261.6, 523.2]) * (1 + rnd.random() * 0.05),
+                  poct=rnd.randrange(-3 << 24, 3 << 24), cut=rnd.randrange(128), res=rnd.randrange(128),
+                  env=rnd.randrange(128), dec=rnd.randrange(128), acc=rnd.choice([0, rnd.randrange(128)]),
+                  wave=rnd.choice([0, 1, 4, 5]), accv=rnd.randrange(128), slid=rnd.randrange(128), dfon=int(rnd.random() < 0.6),
+                  df=df, gmode=int(rnd.random() < 0.8), nsamp=nsamp, fase=0.0,
+                  retrig=[(16 * rnd.randrange(1, nsamp // 16), rnd.choice([0, rnd.randrange(128)])) for _ in range(rnd.randrange(4))],
+                  slides=[(rnd.randrange(nsamp), rnd.randrange(-24 * 256, 24 * 256) / 256.0) for _ in range(rnd.randrange(4))],
+                  gate_off=[rnd.randrange(nsamp) for _ in range(rnd.randrange(3))] or None)
+        out.append(ev)
+    return out
+
+def model_events(s):
+    poct, inc0 = eng_pitch(s['pnote'], o3m7.derived(SCAL)['O3E_INCC3'])
+    return dict(freq_hz=freq_of(inc0), poct=poct, cut=s['cut'], res=s['res'], env=s['env'], dec=s['dec'], acc=s['acc'],
+                wave=s['wave'], accv=s['accv'], slid=s['slid'], dfon=s['dfon'], df=list(s['df']), gmode=s['gmode'],
+                nsamp=s['nsamp'], fase=0.0, retrig=[(t, a) for t, a in s['retrig']],
+                slides=[(t, d / 256.0) for t, d in s['slides']], gate_off=list(s['gate_off']) or None)
+
+def compilers_check():
+    """m_compilers: the model built by gcc and by clang, at -O0 and -O2, gives the same samples on the sequences and on
+    50 random events.  -> (ok or None for SKIP, detail)"""
+    import shutil
+    have = [c for c in ('gcc', 'clang') if shutil.which(c)]
+    if len(have) < 2:
+        return None, 'SKIP: needs both gcc and clang (found: %s)' % (', '.join(have) or 'neither')
+    import subprocess, tempfile, importlib.util
+    td = tempfile.mkdtemp(prefix='o3m7cc'); mods = {}
+    for cc in have:
+        for opt in ('-O0', '-O2'):
+            so = os.path.join(td, 'lib_%s%s.so' % (cc, opt))
+            r = subprocess.run([cc, opt] + o3m7.CFLAGS[1:] + ['-I', o3m7.MODEL, '-o', so, os.path.join(o3m7.MODEL, 'o3k.c'), '-lm'],
+                               capture_output=True, text=True)
+            if r.returncode: return False, '%s %s does not build: %s' % (cc, opt, r.stderr[-300:])
+            os.environ['O3K_LIB'] = so
+            spec = importlib.util.spec_from_file_location('o3m_' + cc + opt, os.path.join(o3m7.MODEL, 'o3model.py'))
+            mm = importlib.util.module_from_spec(spec); spec.loader.exec_module(mm); mods[cc + opt] = mm
+    os.environ['O3K_LIB'] = o3m7.lib_path()
+    evs = [model_events(s) for s in sequences()] + random_events(50)
+    bad = []
+    for k, ev in enumerate(evs):
+        ys = {n: mm.render_engine(ev, M7, tables=BLOB, knee=KNEE) for n, mm in mods.items()}
+        ref = ys[next(iter(ys))]
+        for n, y in ys.items():
+            if (y != ref).any(): bad.append('event %d: %s differs in %d samples' % (k, n, int((y != ref).sum())))
+    shutil.rmtree(td, ignore_errors=True)
+    return not bad, '%s at -O0 and -O2, %d events (the %d sequences + 50 random), %d samples each build: %s' % (
+        ' and '.join(have), len(evs), len(sequences()), sum(e['nsamp'] for e in evs), '; '.join(bad[:3]) or 'identical')
+
 def _pair(p):
     a, b = p
     ya = model_y(a, rig_of('y').cpu.consts['O3E_INCC3'])[0]; yb = model_y(b, rig_of('y').cpu.consts['O3E_INCC3'])[0]
@@ -348,6 +404,9 @@ if __name__ == '__main__':
     res = pool.map(_pair, neutral_pairs())
     check('a4_neutral_set_eq_devilish_off', all(r[1] == 0 and r[2] == 0 for r in res),
           '; '.join('%s: model %d, engine %d differ' % r for r in res))
+    _ok, _det = compilers_check()
+    if _ok is None: print('SKIP  m_compilers   [' + _det + ']')
+    else: check('m_compilers', _ok, _det)
     pool.close()
 
     # GATE 303 closed for 3.5 s after a note: engine == model, silent from the end of the release, S_GLVL 0 and the

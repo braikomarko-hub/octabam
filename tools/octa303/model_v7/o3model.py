@@ -237,6 +237,10 @@ def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=No
     e = dict(EV_DEFAULT); e.update(ev)
     bad = [k for k in ev if k not in EV_DEFAULT]
     if bad: raise KeyError('unknown event key(s): %s' % bad)
+    raw = [e[k] for k in ('cut', 'res', 'env', 'dec', 'acc', 'accv', 'slid')] + list(e['df']) + \
+          [r[1] for r in e['retrig'] if isinstance(r, (tuple, list))]
+    if any(not 0 <= int(v) <= 127 for v in raw):         # the machine's raw range: outside it the integer kernel
+        raise ValueError('raw knob values must be 0..127: %s' % raw)   # overflows (C undefined behaviour)
     df = [int(v) for v in (e['df'] if e['dfon'] else DF_NEUTRAL)]
     for j in (7, 8, 9): df[j] = min(df[j], 2)          # the selects (MIN2)
     for j in (10, 11): df[j] = min(df[j], 1)
