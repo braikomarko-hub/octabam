@@ -67,7 +67,7 @@ state elsewhere only if you must, and measure the cache cost.
 | `R_SLID` | the slide knob in force, raw: dEVILish's SLID when dEVILish is on the track, else SETUP's SLID |
 | `R_DFON` | 1 = dEVILish is on the track (FX1 or FX2) |
 | `R_DF` | 12 bytes, raw 0..127: OVDR FM TRCK VDEC SLID ADEC / SATK SWP SPD MUFF CUTX ENVX. The selects are stored as their index (0..2), so clamp them with `MIN2`. Without dEVILish this is the neutral set 25 0 0 64 0 50 / 0 0 1 0 0 0, the Devil Fish limited to the 303 (Whittle p. 8). **The engine must sound the same with the neutral set as without dEVILish.** |
-| `S_GMODE` `S_GATE` `S_GLVL` | the gate. **GATE OFF** (`S_GMODE` 0): `S_GLVL` = 32767 and the AMP page shapes the note. **GATE 303** (`S_GMODE` 1): `S_GATE` = 1 from the START until 3.5 of the step's 6 clocks (Whittle), held through slides; when the sequencer stands still it stays open. With GATE 303 the engine owns `S_GLVL` (Q15): move it toward `S_GATE × 32767` with ~3 ms edges. The old engine used `GATE_K` (3733, Q15 per 16 samples). |
+| `S_GMODE` `S_GATE` `S_GLVL` | the gate. **GATE OFF** (`S_GMODE` 0): `S_GLVL` = 32767 and the AMP page shapes the note. **GATE 303** (`S_GMODE` 1): `S_GATE` = 1 from the START until 3.5 of the step's 6 clocks (Whittle), held through slides; when the sequencer stands still it stays open. With GATE 303 the engine owns `S_GLVL` (Q15). The note's end follows the TB-303 (Whittle, Devil Fish manual 2019, p. 6: "the decay at the end of an unaccented note was about 16 ms – 8 ms of normal volume and 8 ms of linear decay"): after `S_GATE` falls, 8 ms at full level, then 8 ms of linear decay to zero. The note's start has no added delay (the 303's 1–5 ms is left out so the voice stays in time with the other tracks; Marko, 13 Nov 2026). The old engine moved `S_GLVL` by `GATE_K` (3733, Q15 per 16 samples, about 3.2 ms each way): a description of that engine, not a rule. The judge holds the gate for the whole note, so it does not measure the note's end: that is decided by ear. |
 
 Two more fields: `S_GSEL` is SETUP's GATE, and `S_OSIN` is DRIV's gain for `o3_out`.
 
@@ -112,6 +112,11 @@ mix stay where they were.
 
 ## 4. The interface laws: what each value means (keep them)
 
+**What binds and what describes** (Marko, 13 Nov 2026). Where this document says "the old engine did this", it is a
+description, not an obligation: the TB-303 or the Devil Fish decides. The obligations are the rules on registers,
+memory and computing time (sections 1, 2 and 5), and "the engine must sound the same with the neutral set as without
+dEVILish".
+
 Two kinds of knob:
 - **Sound laws:** CUT, RES, ENV MOD, DECAY and ACCENT are the TB-303's own pots. Find their laws
   from Din Sync's recordings and the Roland service notes; how a position sounds may change.
@@ -131,7 +136,7 @@ Each law gives a source: W = Robin Whittle's Devil Fish manual (2019), R = the R
 | ACCV | the accent's loudness: the accent's contribution to the VCA × ACCV/64. 64 = the 303 (R: the accent current into the VCA). |
 | DRIV | `o3_out` (section 3), as it is |
 | OVDR | the VCO into the filter (W p. 4). 0 = none, 25 = the 303, 127 = 66.6 × normal: gain = raw/25 up to 25, then 66.6^((raw−25)/102). Above normal, the resonance is swamped and the output must not jump: the old engine scaled its resonance level compensation by G^−1.5 and the output by G^−0.3. |
-| FM | the VCA's output, after MUFF, moves the cutoff per sample (W pp. 5, 18–19). The old engine took the VCA output with no high-pass. Its depth: linear in raw; at raw 127, about 47 semitones for abs(VCA out) = 2^20 in `y` units. |
+| FM | the VCA's output, after MUFF, moves the cutoff per sample (W pp. 5, 18–19). It is AC coupled, as on the Devil Fish (W p. 12: "the AC coupled output of the VCA (which incorporates the Muffler) via the Filter FM Pot"; W p. 3 puts the corner at about 5 Hz): vFable takes the VCA output through a one-pole high-pass at 5 Hz. (The old engine took it with no high-pass.) With FM at 0 the sound must not change, bit for bit. Its depth: linear in raw; at raw 127, about 47 semitones for abs(VCA out) = 2^20 in `y` units. |
 | TRCK | filter tracking, linear in Hz (W pp. 5, 14): at 127 the cutoff rises ~2.7 kHz per octave of pitch, as (raw/127)^1.5 × 2700 Hz/oct, zero at TUNE 0. Low notes can shut the filter. |
 | VDEC | the volume decay (W p. 4): 0..64 = 16 ms .. the 303's own decay (τ geometric); 64..127 = that decay with a sustain level from 0 (at 64) to full (at 127). 127 = endless notes. |
 | ADEC | the accented notes' filter decay (W p. 4): 30 ms .. 3 s to 10 %, continuous. 50 = the 303's own (200 ms). It is the same envelope circuit with another resistor in place of R138. |
