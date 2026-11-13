@@ -5,7 +5,10 @@ code written by Claude (Anthropic)
 
 Executes modules/octa303/octa303.s in cfsim (its EMAC: MACSR 0x20, fractional, signed, truncating) and compares the
 engine (o3e_note_on / o3e_params / o3e_render) with the C model model_v7 (render_engine, the integer control step),
-which lives outside the repository: O3_MODEL_V7=DIR (default ../../vfable/model_v7 beside the repository's parent).
+tools/octa303/model_v7 (O3_MODEL_V7=DIR names another copy; its kernel is built by tools/octa303/o3m7.py into
+out/octa303/ with the system's C compiler).  Platform independence: the model is fed the COMMITTED tables
+(model_v7/o3tab.h) and the knee tables of octa303.s, never tables computed here with numpy / libm; the
+assembly's tables and constants are checked against the same committed files.
 Thresholds fixed before the results: 0 differing samples everywhere, every check.
 
 The engine is driven as the shell drives it: R_* / S_GMODE / S_GATE / S_GLVL / S_OSIN written into the track's
@@ -20,23 +23,21 @@ a. raw y: a test build whose inline output writes the engine's 32-bit y (the E_O
 b. the real build: DRIV 0 (inline) and DRIV 64, 127 (o3_out) == tools/octa303/o3out.py of the model's y;
 c. the shell's own call path (sy_render, the mock of OS 1.40C): GATE 303 from the sequencer mock and GATE OFF;
 d. the inlined DRIV-0 output == o3_out over y; MACSR restored, ACC0 0; the register contract; the engine writes
-   nothing below E_BASE but S_GLVL; the generated block == tools/octa303/gen_o3e_v7.py;
+   nothing below E_BASE but S_GLVL; the assembly's tables, O3S_* and O3E_* == model_v7/o3tab.h and o3m7.derived;
 e. instruction counts (printed).
 """
-import os, sys, re, random, math, subprocess, importlib.util, multiprocessing as mp
+import os, sys, re, random, math, multiprocessing as mp
+sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..'))
 from harness import *
 import o3out
 
-ROOTR = os.path.normpath(os.path.join(HERE, '..', '..', '..'))
-MODEL = os.environ.get('O3_MODEL_V7') or os.path.normpath(os.path.join(ROOTR, '..', '..', 'vfable', 'model_v7'))
-LAWS = os.path.join(HERE, '..', 'leggi_A_v5.json')
+import o3m7
 QUICK = '--quick' in sys.argv
-if not os.path.isfile(os.path.join(MODEL, 'o3model.py')):
-    sys.exit('test_o3e_v7: the model is not at %s (set O3_MODEL_V7)' % MODEL)
-_spec = importlib.util.spec_from_file_location('o3model_v7', os.path.join(MODEL, 'o3model.py'))
-m7 = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(m7)
-M7 = m7.load_laws(LAWS)
+m7 = o3m7.load()
+M7 = m7.load_laws(o3m7.LAWS)
+TABS, SCAL, LAYOUT, W16 = o3m7.committed()
+BLOB = o3m7.blob()
 FS = 44100.0
 T = 5                                       # the track
 DFN = (25, 0, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0)
@@ -53,6 +54,11 @@ _OUT0 = ('        CLAMP   %d6,-16777216,16777216\n        asr.l   #SHIFT_OUT,%d6
          '        lsl.l   #8,%d6\n        lsl.l   #8,%d6\n        move.l  %d6,(%a1)+\n        move.l  %d6,(%a1)+\n'
          '        .endm\n        .macro  E_OUT1')
 assert SRC_REAL.count(_OUT0) == 1
+def _knee(name):
+    m = re.search(r'^' + name + r':\n((?:        \.long .*\n)+)', SRC_REAL, re.M)
+    return [int(x) for x in re.findall(r'-?\d+', m.group(1))]
+KNEE = (_knee('o3e_kneg'), _knee('o3e_kpos'))
+assert len(KNEE[0]) == len(KNEE[1]) == 97
 SRC_Y = SRC_REAL.replace(_OUT0, '        move.l  %d6,(%a1)+\n        move.l  %d6,(%a1)+\n        .endm\n        .macro  E_OUT1', 1)
 
 _rigs = {}
@@ -93,8 +99,7 @@ class Eng:
         return [m.r(0x80500000 + 8 * i, 'l') for i in range(n)], [m.r(0x80500004 + 8 * i, 'l') for i in range(n)], steps
 
 # ---- the engine's pitch, as o3e_ctl computes it (checked against the engine's state)
-_TB = m7.int_tables(M7, parts=True)[1]
-EXP2 = [int(v) for v in _TB['EXP2']]
+EXP2 = TABS['EXP2']
 def eng_pitch(pnote, incc3):
     n = (pnote - 16384) << 14
     poct = (n + 1) // 3 if n >= 0 else -((-n + 1) // 3)
@@ -121,7 +126,7 @@ def model_y(s, incc3):
               wave=s['wave'], accv=s['accv'], slid=s['slid'], dfon=s['dfon'], df=list(s['df']), gmode=s['gmode'],
               nsamp=s['nsamp'], fase=0.0, retrig=[(t, a) for t, a in s['retrig']],
               slides=[(t, d / 256.0) for t, d in s['slides']], gate_off=list(s['gate_off']) or None)
-    return [int(v) for v in m7.render_engine(ev, M7)], poct, inc0
+    return [int(v) for v in m7.render_engine(ev, M7, tables=BLOB, knee=KNEE)], poct, inc0
 
 def run_engine(s, eng=None, watch=False):
     """-> (L, R, steps per call, the engine) for the scenario; calls split at random, every event on a call boundary"""
@@ -303,9 +308,17 @@ if __name__ == '__main__':
         r0 = Rig(); check('coldfire_lint', True, '%d instructions' % len(r0.cpu.prog)); Rig(SRC_Y)
     except Exception as ex:
         check('coldfire_lint', False, str(ex)); sys.exit(1)
-    g = subprocess.run([sys.executable, os.path.join(HERE, '..', 'gen_o3e_v7.py'), '--check'], capture_output=True, text=True)
-    check('generated_block_current', g.returncode == 0, g.stdout.strip() or g.stderr.strip()[-300:])
-    C = r0.cpu.consts
+    C = r0.cpu.consts; mem = r0.cpu.mem
+    bad = []
+    for nm, n in LAYOUT:
+        if nm == 'SC': continue
+        a = C['O3T_' + nm]; w = 2 if nm in W16 else 4
+        got = [s32(mem.r(a + w * i, 'w' if w == 2 else 'l')) if w == 4 else ((mem.r(a + 2 * i, 'w') ^ 0x8000) - 0x8000) for i in range(n)]
+        if got != TABS[nm]: bad.append(nm)
+    bad += [k for k, v in SCAL.items() if C.get(k) != v]
+    bad += [k for k, v in o3m7.derived(SCAL).items() if (C.get(k) & M32) != (v & M32)]
+    check('tables_eq_committed', not bad, '%d tables, %d O3S, %d O3E: %s' % (len(LAYOUT) - 1, len(SCAL), len(o3m7.derived(SCAL)),
+          'equal to model_v7/o3tab.h and o3m7.derived' if not bad else 'DIFFER: %s' % bad))
     check('engine_state_fits', C['E_END'] - C['E_BASE'] <= 256, '%d of 256 bytes' % (C['E_END'] - C['E_BASE']))
 
     pool = mp.Pool(max(1, os.cpu_count() or 1))

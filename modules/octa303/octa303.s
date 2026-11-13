@@ -2206,11 +2206,13 @@ O3_DRV_TH:
 | ============================================================================
 | THE ENGINE -- the vFable voice, model v7, stage A.  ENGINE_ABI.md is the contract.
 | ============================================================================
-| ---- (vFable, 13 Nov 2026; code written by Claude, Anthropic).  A bit-exact port of model_v7 (o3k.c's per-sample
+| ---- (vFable, 13 Nov 2026; code written by Claude, Anthropic).  A bit-exact port of model_v7 (tools/octa303/model_v7:
+|      o3k.c's per-sample
 |      path, neutral variant, and o3int.h's integer control step, every 16 samples).  The model's arithmetic is kept
 |      operation for operation: fmul(a, b) = (a b) >> 31 is the EMAC in fractional mode (MACSR 0x20: signed,
 |      truncating), one MAC from an empty ACC0 then MOVCLR.  tools/octa303/sim/test_o3e_v7.py compares this code
-|      with the C model sample for sample; tools/octa303/gen_o3e_v7.py writes the tables (the "o3e generated" block).
+|      with the C model sample for sample; tools/octa303/gen_o3e_v7.py writes the "o3e generated" block from the
+|      committed model_v7/o3tab.s and o3tab.h.
 |      Stage A: everything the control step does, the per-sample path of the neutral variant.  NOT here (stage B,
 |      hooks marked "STAGE B"): OVDR (any value plays as 25 = the 303), FM, MUFF, +D (WAVE bit 1), the ladder
 |      input's soft clip and the SWP governor's peak; SWP WHST / SELF play as ACID (the doubled feedback without
@@ -3146,8 +3148,8 @@ o3e_ctl:
         rts
 
 | ---- o3e generated: tools/octa303/gen_o3e_v7.py (do not edit by hand)
-| From the laws tools/octa303/leggi_A_v5.json through model_v7 (gen_tables.py, o3model.py); code written by
-| Claude (Anthropic).  Layout and Q formats: model_v7 o3int.h.
+| From tools/octa303/model_v7: o3tab.s / o3tab.h (gen_tables.py from leggi_A_v5.json); code written by
+| Claude (Anthropic).  Layout and Q formats: model_v7/o3int.h.
         .set    O3S_AATT, 191583317
         .set    O3S_AV2, 2146704656
         .set    O3S_G0, 449039599
