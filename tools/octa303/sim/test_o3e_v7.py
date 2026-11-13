@@ -534,6 +534,78 @@ def fm0_check(pool):
     return nm_ == 0 and ne == 0 and nv == 0, ('%d renders (random dEVILish with FM 0, SWP / MUFF moving in half): the model vs the '
         'model with no FM code %d differing samples, FM bit in %d variant indices; the engine vs the model %d differing samples' % (len(ss), nm_, nv, ne))
 
+# ---------------------------------------------------------------------------------------------------- g. robustness
+_ENG = {}
+def _eng(kind):
+    if kind not in _ENG: _ENG[kind] = Eng(kind)
+    e = _ENG[kind]
+    for a in range(e.st, e.st + e.C['ST_SIZE']): e.cpu.mem.w(a, 'b', 0)
+    e.low_bad = e.high_bad = 0
+    return e
+G_LONGS = ['R_CUT', 'R_RES', 'R_ENV', 'R_DEC', 'R_ACC', 'R_ACCV', 'R_SLID', 'R_WAVE']
+G_FEAT = [('none', DFN, 0), ('OVDR 127', _df(OVDR=127), 0), ('FM 127', _df(FM=127), 0), ('SWP WHST', _df(SWP=1), 0),
+          ('MUFF SOFT', _df(MUFF=1), 0), ('+D', DFN, 2)]
+def _gclamp(field, v):
+    if field == 'R_WAVE': return v & 7
+    if field.startswith('R_'): return 127
+    i = int(field[2:])
+    return 2 if i in (7, 8, 9) else (1 if i in (10, 11) else 127)
+def _grun(e, feat, field, v, n=16):
+    """a note with one raw input set to v: -> (the samples, an exception or '')"""
+    _, df, wb = feat
+    try:
+        e.w('S_GMODE', 1); e.w('S_GATE', 1); e.w('S_OSIN', o3out.driv_gain(0))
+        e.knobs(64, 100, 80, 64, 64, 64, 1, df, 16384)
+        if field.startswith('df'): e.cpu.mem.w(e.st + e.C['R_DF'] + int(field[2:]), 'b', v)
+        e._call('o3e_params'); e.w('R_ACC', 100); e.w('R_WAVE', wb); e.w('R_PNOTE', 16384)
+        if field.startswith('R_'): e.w(field, v)
+        e._call('o3e_note_on')
+        e.w('R_PTGT', 16384 + 12 * 256)                         # a slide: R_SLID is read
+        out = []
+        for k in range(n):
+            out += e.render(16 if k else 9)[0]
+        return out, ''
+    except Exception as ex:
+        return None, '%s: %s' % (type(ex).__name__, ex)
+def g_out_of_range(job):
+    feat, field = job
+    e = _eng('y'); e.watch = True; bad = []; nsamp = 0
+    for v in (128, 200, 255):
+        a, xa = _grun(_eng('y'), feat, field, v); wa = _ENG['y'].low_bad + _ENG['y'].high_bad
+        b, xb = _grun(_eng('y'), feat, field, _gclamp(field, v))
+        if xa or xb: bad.append('%s %s=%d: %s' % (feat[0], field, v, xa or xb)); continue
+        nsamp += len(a)
+        if a != b: bad.append('%s %s=%d: %d samples differ from %d' % (feat[0], field, v, sum(1 for p, q in zip(a, b) if p != q), _gclamp(field, v)))
+        if max(abs(s32(x)) for x in a) >= 1 << 23: bad.append('%s %s=%d: |y| %d' % (feat[0], field, v, max(abs(s32(x)) for x in a)))
+        if wa: bad.append('%s %s=%d: %d bytes written outside the engine\'s' % (feat[0], field, v, wa))
+    return bad, nsamp
+def g_zero_state(job):
+    """an all-zero state, o3e_render for 100 frames (no START): silence, nothing written outside the state (or in
+    it but E_MACSR); then a note == the model"""
+    drv, dfon = job
+    e = Eng('real'); e.watch = True; bad = []
+    df = (127, 127, 0, 64, 0, 50, 0, 1, 1, 2, 0, 0) if dfon else DFN
+    e.w('S_OSIN', o3out.driv_gain(drv)); e.knobs(64, 100, 80, 64, 64, 0, dfon, df, 16384); e.w('R_WAVE', 3 if dfon else 0)
+    snap = [e.cpu.mem.r(a, 'b') for a in range(e.st + e.C['E_BASE'], e.st + e.C['ST_SIZE'])]
+    try:
+        for f in range(100):
+            l, r_, _ = e.render(16)
+            if any(l) or any(r_): bad.append('frame %d: not silent' % f); break
+    except Exception as ex:
+        return ['%s: %s' % (type(ex).__name__, ex)]
+    m = e.C['E_MACSR'] - e.C['E_BASE']
+    ch = [i for i, (a, b) in enumerate(zip(snap, [e.cpu.mem.r(a, 'b') for a in range(e.st + e.C['E_BASE'], e.st + e.C['ST_SIZE'])])) if a != b and not m <= i < m + 4]
+    if ch: bad.append('the engine state changed at %d bytes' % len(ch))
+    if e.low_bad or e.high_bad: bad.append('written outside: %d below E_BASE, %d past E_END' % (e.low_bad, e.high_bad))
+    s_ = scen('after silence', 3000, cut=64, res=100, env=80, dec=64, acc=127, wave=3 if dfon else 0, dfon=dfon, df=df,
+              kind='real', drv=drv, retrig=[(1600, 0)])
+    e.watch = False
+    L = run_engine(s_, e)[0]
+    want = [(o3out.out(v, o3out.driv_gain(drv)) << 16) & M32 for v in model_y(s_, e.C['O3E_INCC3'])[0]]
+    nd = sum(1 for a, b in zip(L, want) if a != b)
+    if nd: bad.append('the note after it: %d of 3000 samples differ from the model' % nd)
+    return bad
+
 def _pair(p):
     a, b = p
     ya = model_y(a, rig_of('y').cpu.consts['O3E_INCC3'])[0]; yb = model_y(b, rig_of('y').cpu.consts['O3E_INCC3'])[0]
@@ -591,6 +663,16 @@ if __name__ == '__main__':
             len(res), sum(r[1] for r in res), len(bad), ('; first: %s %s' % (bad[0][0], bad[0][3])) if bad else '',
             ('; the engine wrote outside its bytes (below E_BASE but S_GLVL, or past E_END): %d' % wb) if wb else
             '; watched (%d renders): nothing written below E_BASE but S_GLVL, nothing past E_END' % min(3, len(res))))
+    _r = pool.map(g_zero_state, [(d, f) for d in (0, 64) for f in (0, 1)], chunksize=1)
+    check('g1_zero_state_silent', not any(_r), '; '.join(x for r in _r for x in r) or
+          'DRIV 0 / 64, stage-B knobs set and unset: 100 frames with no START silent, no exception, nothing written but '
+          'E_MACSR; then a note == the model (0 differing samples)')
+    _jobs = [(f, fl) for f in G_FEAT for fl in G_LONGS + ['df%d' % i for i in range(12)]]
+    _r = pool.map(g_out_of_range, _jobs, chunksize=4)
+    _bad = [x for r in _r for x in r[0]]
+    check('g2_knobs_out_of_range', not _bad, ('%d raw inputs (8 longs, 12 R_DF bytes) at 128 / 200 / 255 x %d stage-B settings, '
+          '%d samples: no exception, |y| < 2^23, nothing written outside, == the input at its clamped value' % (
+          len(G_LONGS) + 12, len(G_FEAT), sum(r[1] for r in _r))) if not _bad else '%d failures: %s' % (len(_bad), '; '.join(_bad[:4])))
     _ok, _det = fm0_check(pool)
     check('f5_fm0_eq_no_fm_code', _ok, _det)
     _ok, _det = compilers_check()
@@ -717,6 +799,6 @@ if __name__ == '__main__':
         _cnt[nm] = (s_wo / 16, s_w - s_wo)
     _n = _cnt['SAW, knobs 64, DRIV 0']
     check('e_neutral_path_not_slower', _n == (123.25, 319), 'SAW, knobs 64, DRIV 0: %.2f a sample, the control step %d '
-          '(stage A, 05e3bd0: 123.25 and 319)' % _n)
+          '(stage A, 05e3bd0: 123.25 and 319; with the zero-state guard and the knob clamps)' % _n)
     print('\n%d/%d PASS' % (sum(results), len(results)))
     sys.exit(0 if all(results) else 1)

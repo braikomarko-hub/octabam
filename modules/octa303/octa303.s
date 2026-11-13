@@ -161,6 +161,12 @@
         move.l  #\lo,\reg
 .Lcl\@b:
         .endm
+        .macro  KCL reg                 | reg = min(reg, 127) unsigned: a raw knob as a table index (vFable engine:
+        cmp.l   #127,\reg               | a byte or long past 127, or negative, reads as 127; in range: as it is)
+        bls     .Lkc\@
+        moveq   #127,\reg
+.Lkc\@:
+        .endm
         .macro  KB off, areg            | d0 = the knob byte at off(areg), clamped 0..127
         moveq   #0,%d0
         move.b  \off(\areg),%d0
@@ -2292,7 +2298,7 @@ O3_DRV_TH:
         | stage B, group C (o3e_kC, from the knobs at a control step: o3k.c core()'s r_*)
         .set    E_XCL,   E_BASE+256     | the class: 0 = the neutral loops, 1 = the stage-B loops
         .set    E_LIX,   E_BASE+260     | the loops' row in o3e_ltab, x 16 (by the wave's bit 0 and the class)
-        .set    E_LP0,   E_BASE+264     | the loop a call enters with DRIV 0
+        .set    E_LP0,   E_BASE+264     | the loop a call enters with DRIV 0, as an offset from o3e_sil (0: silence)
         .set    E_LP1,   E_BASE+268     | ... with DRIV above 0
         .set    E_OVM,   E_BASE+272     | OVDR: 0 = 25 (none), 1 = below (x G), 2 = above (the soft clip)
         .set    E_OVQ,   E_BASE+276     | OVDR below 25: G, Q31
@@ -2883,8 +2889,7 @@ o3e_out0_test:
 o3e_render:
         move.l  %macsr,%d0
         move.l  %d0,E_MACSR(%a3)
-        moveq   #0x20,%d0
-        move.l  %d0,%macsr              | fractional, signed, truncating: (a b) >> 31
+        move.l  #0x20,%macsr            | fractional, signed, truncating: (a b) >> 31
         movclr.l %acc0,%d0              | and an empty accumulator, whatever the caller left in it
         tst.l   E_NEW(%a3)
         beq     .Le_w
@@ -2899,11 +2904,21 @@ o3e_render:
         move.l  S_OSIN(%a3),%d0
         cmp.l   #DRV_G0,%d0
         bne     .Le_dv
-        move.l  E_LP0(%a3),%a0
+        lea     o3e_sil,%a0             | E_LP0 / E_LP1 are offsets from o3e_sil: a state that never had a START
+        add.l   E_LP0(%a3),%a0          | (0, all zero) plays silence and changes nothing
         jmp     (%a0)
 .Le_dv:
-        move.l  E_LP1(%a3),%a0
+        lea     o3e_sil,%a0
+        add.l   E_LP1(%a3),%a0
         jmp     (%a0)
+o3e_sil:                                | silence: d7 zero samples, the state untouched
+        moveq   #0,%d0
+.Le_sl:
+        move.l  %d0,(%a1)+
+        move.l  %d0,(%a1)+
+        subq.l  #1,%d7
+        bne     .Le_sl
+        bra     .Le_end
         E_LOOP  0,0,o3e_l00,o3e_p00
         E_LOOP  1,0,o3e_l10,o3e_p10
         E_LOOP  0,1,o3e_l01,o3e_p01
@@ -2936,6 +2951,7 @@ o3e_render:
         beq     .Lc_kn\@
         clr.l   E_NEW(%a3)
         move.l  R_ACC(%a3),%d0
+        KCL     %d0
         move.l  #16909320,%d1
         muls.l  %d0,%d1                 | A = acc / 127, Q31
         move.l  %d1,E_A(%a3)
@@ -2961,6 +2977,7 @@ o3e_render:
 .Lc_sf\@:
         moveq   #0,%d0                  | accented: ADEC's decay, the 303's attack
         move.b  R_DF+5(%a3),%d0
+        KCL     %d0
         lea     O3T_AMEGA,%a0
         move.l  (%a0,%d0.l*4),%d1
         move.l  %d1,E_AMEG(%a3)
@@ -2970,6 +2987,7 @@ o3e_render:
 .Lc_na\@:
         moveq   #0,%d0                  | not accented: SATK's attack (the decay: DEC, live, E_KAMEG)
         move.b  R_DF+6(%a3),%d0
+        KCL     %d0
         lea     O3T_AVA,%a0
         move.l  (%a0,%d0.l*4),%d2
 .Lc_ns0\@:
@@ -3070,6 +3088,7 @@ o3e_render:
         tst.l   %d4
         beq     .Lc_gate\@
         move.l  R_RES(%a3),%d6
+        KCL     %d6
         btst    #0,%d4
         beq     .Lc_k5\@
         bsr     o3e_kA
@@ -3142,6 +3161,7 @@ o3e_render:
         beq     .Lc_ns\@
         sub.l   %d1,%d0
         move.l  R_SLID(%a3),%d2
+        KCL     %d2                     | (while the pitch moves only)
         lea     O3T_ASL,%a0
         move.l  (%a0,%d2.l*4),%d2
         mac.l   %d0,%d2,%acc0
@@ -3601,6 +3621,7 @@ o3e_kA:
 |      the sweep's gain (SPD), TRCK, the volume decay (VDEC), ACCV, DEC's decay.  d6 = RES.  Clobbers d0-d3, d5, a0.
 o3e_kB:
         move.l  R_CUT(%a3),%d0
+        KCL     %d0
         tst.b   R_DF+10(%a3)
         beq     .LkB1
         move.l  #O3S_CUTXS,%d1          | CUTX: 157 Hz .. 4.8 kHz, exponential
@@ -3613,6 +3634,7 @@ o3e_kB:
         move.l  (%a0,%d0.l*4),%d3
 .LkB2:
         move.l  R_ENV(%a3),%d0
+        KCL     %d0
         lea     O3T_ENVB,%a0
         move.l  (%a0,%d0.l*4),%d1
         lea     O3T_RESC,%a0
@@ -3645,6 +3667,7 @@ o3e_kB:
         moveq   #0,%d0
         move.b  R_DF+2(%a3),%d0
         beq     .LkB6
+        KCL     %d0
         lea     O3T_TRK,%a0
         mvs.w   (%a0,%d0.l*2),%d0
         moveq   #12,%d1
@@ -3653,6 +3676,7 @@ o3e_kB:
         move.l  %d0,E_KTRK(%a3)
         moveq   #0,%d1
         move.b  R_DF+3(%a3),%d1         | VDEC
+        KCL     %d1
         lea     O3T_AV,%a0
         move.l  (%a0,%d1.l*4),%d0
         move.l  %d0,E_KAV(%a3)
@@ -3671,6 +3695,7 @@ o3e_kB:
         move.l  %d2,E_KK1(%a3)
         move.l  #O3S_ACCV,%d1
         move.l  R_ACCV(%a3),%d2
+        KCL     %d2
         moveq   #64,%d3
         cmp.l   %d3,%d2
         beq     .LkB8
@@ -3683,6 +3708,7 @@ o3e_kB:
 .LkB8:
         move.l  %d1,E_KACCV(%a3)
         move.l  R_DEC(%a3),%d0
+        KCL     %d0
         lea     O3T_AMEG,%a0
         move.l  (%a0,%d0.l*4),%d0
         move.l  %d0,E_KAMEG(%a3)
@@ -3701,6 +3727,7 @@ o3e_kC:
         clr.l   E_OVK(%a3)
         moveq   #0,%d0
         move.b  R_DF(%a3),%d0           | OVDR
+        KCL     %d0
         moveq   #0,%d1
         moveq   #25,%d2
         cmp.l   %d2,%d0
@@ -3737,6 +3764,7 @@ o3e_kC:
         or.l    %d1,%d5
         moveq   #0,%d0
         move.b  R_DF+1(%a3),%d0         | FM
+        KCL     %d0
         lea     O3T_FMC,%a0
         move.l  (%a0,%d0.l*4),%d2
         lsl.l   #8,%d2
@@ -3776,7 +3804,8 @@ o3e_kC:
         move.l  %d0,E_XCL(%a3)
         bne     o3e_lsel
         clr.l   E_PK4(%a3)              | the neutral class: no peak is kept (the model's restarts every step)
-| ---- o3e_lsel: E_LIX, E_LP0, E_LP1 from the wave's bit 0 and E_XCL.  Clobbers d0, a0.
+| ---- o3e_lsel: E_LIX, E_LP0, E_LP1 from the wave's bit 0 (only) and E_XCL (0 or 1): one of o3e_ltab's four rows.
+|      Clobbers d0, a0.
 o3e_lsel:
         moveq   #1,%d0
         and.l   E_WAVE(%a3),%d0
@@ -3789,8 +3818,10 @@ o3e_lsel:
         lea     o3e_ltab,%a0
         add.l   %d0,%a0
         move.l  (%a0)+,%d0
+        sub.l   #o3e_sil,%d0            | as an offset from o3e_sil (never 0: the loops follow it)
         move.l  %d0,E_LP0(%a3)
         move.l  (%a0),%d0
+        sub.l   #o3e_sil,%d0
         move.l  %d0,E_LP1(%a3)
         rts
 | ---- the sample loops: a row by the wave's bit 0 + 2 x the class: the entry with DRIV 0, with DRIV above 0; the
