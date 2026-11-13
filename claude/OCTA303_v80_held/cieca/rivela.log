@@ -1,0 +1,50 @@
+== 1) sha256 ==
+  1294f94f2124bef7a366ebb2d0fe3f162b1b01f6acdaf09c8942e25ca6e47e96  risposte_marko.txt
+  ca8b14c3e9711fdf410b4960f4fc0975f7f5d061c7dfd4cd7f9f06a317b20fba  key.json
+  52e866b8ff8e8b1dfff444faa95c31d5b169eb25338671d61264ee34da566fb2  clips.py
+
+== 2) the key ==
+  seed 11299240965668718717 
+  how: perm = numpy.random.default_rng(seed).permutation(3) per triplet, in the order t01..t13; letter A,B,C = VER[perm[0..2]], VER = [REAL, TUNED, CIRCUIT]
+  t01 perm [0, 2, 1] -> A=REAL    B=CIRCUIT C=TUNED   | recomputed SAME
+  t02 perm [0, 2, 1] -> A=REAL    B=CIRCUIT C=TUNED   | recomputed SAME
+  t03 perm [1, 2, 0] -> A=TUNED   B=CIRCUIT C=REAL    | recomputed SAME
+  t04 perm [2, 0, 1] -> A=CIRCUIT B=REAL    C=TUNED   | recomputed SAME
+  t05 perm [2, 1, 0] -> A=CIRCUIT B=TUNED   C=REAL    | recomputed SAME
+  t06 perm [2, 0, 1] -> A=CIRCUIT B=REAL    C=TUNED   | recomputed SAME
+  t07 perm [0, 2, 1] -> A=REAL    B=CIRCUIT C=TUNED   | recomputed SAME
+  t08 perm [0, 2, 1] -> A=REAL    B=CIRCUIT C=TUNED   | recomputed SAME
+  t09 perm [2, 0, 1] -> A=CIRCUIT B=REAL    C=TUNED   | recomputed SAME
+  t10 perm [1, 2, 0] -> A=TUNED   B=CIRCUIT C=REAL    | recomputed SAME
+  t11 perm [1, 0, 2] -> A=TUNED   B=REAL    C=CIRCUIT | recomputed SAME
+  t12 perm [1, 0, 2] -> A=TUNED   B=REAL    C=CIRCUIT | recomputed SAME
+  t13 perm [2, 0, 1] -> A=CIRCUIT B=REAL    C=TUNED   | recomputed SAME
+  permutations recomputed from the seed = the key: PASS
+
+== 3) per triplet ==
+  terna | VERA TARATA CIRCUITO | Q1  giusta | Q2  = versione | Q1 sbagliata: preso per vero
+  t01  |  A     C       B     |  A  sì     |  C  = TARATA   | 
+  t02  |  A     C       B     |  A  sì     |  B  = CIRCUITO | 
+  t03  |  C     A       B     |  C  sì     |  B  = CIRCUITO | 
+  t04  |  B     C       A     |  C  no     |  A  = CIRCUITO | TARATA
+  t05  |  C     B       A     |  A  no     |  B  = TARATA   | CIRCUITO
+  t06  |  B     C       A     |  A  no     |  B  = VERA     | CIRCUITO
+  t07  |  A     C       B     |  A  sì     |  B  = CIRCUITO | 
+  t08  |  A     C       B     |  A  sì     |  C  = TARATA   | 
+  t09  |  B     C       A     |  B  sì     |  A  = CIRCUITO | 
+  t10  |  C     A       B     |  C  sì     |  B  = CIRCUITO | 
+  t11  |  B     A       C     |  A  no     |  C  = CIRCUITO | TARATA
+  t12  |  B     A       C     |  A  no     |  C  = CIRCUITO | TARATA
+  t13  |  B     C       A     |  A  no     |  C  = TARATA   | CIRCUITO
+
+  part 1 (t01..t12): Q1 right 7 / 12
+  Q2 on the 7 triplets with Q1 right: TARATA 2, CIRCUITO 5
+  Q1 wrong (5): TARATA taken for real 3, CIRCUITO taken for real 2; their Q2: [('t04', 'CIRCUITO'), ('t05', 'TARATA'), ('t06', 'VERA'), ('t11', 'CIRCUITO'), ('t12', 'CIRCUITO')]
+  t13 (information only): Q1 A = CIRCUITO, Q2 C = TARATA
+  Q1 answered A in 9 / 13; the version under A: t01:VERA t02:VERA t03:TARATA t04:CIRCUITO t05:CIRCUITO t06:CIRCUITO t07:VERA t08:VERA t09:CIRCUITO t10:TARATA t11:TARATA t12:TARATA t13:CIRCUITO
+
+== 4a) final RMS of each model clip / RMS of the REAL clip of its triplet ==
+  ratio 0.999986 .. 1.000415 (16-bit WAVs as served)
+
+[ARCHIVE NOTE: sections 4b and 5 of this log (noise stretches and per-clip RMS / prescale / sha256 rows) were not copied;
+ the per-clip values are in key.json, which was not archived either (its letters are recomputable from the seed above).]

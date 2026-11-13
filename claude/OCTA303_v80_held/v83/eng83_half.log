@@ -1,0 +1,8 @@
+MOTORE: /root/v83/e_435630b4/tools/octa303 | ref303 768ca017a95a468a o3tables ece63f7ebabcd7f3 o3q8 a6ea337e9c948f11 o3meg 89981fe99287afbd | moduli ref303=/root/v83/e_435630b4/tools/octa303 o3tables=/root/v83/e_435630b4/tools/octa303 o3q8=/root/v83/e_435630b4/tools/octa303 o3meg=/root/v83/e_435630b4/tools/octa303 | giudice /root/fit21 (guard8.load, niente verify) | divisione split_half.json: A 208 note, B 128 note
+/root/blk3/v80/held/v83/p8_half_eng.py:64: RuntimeWarning: Mean of empty slice
+  C[:, :2, :] = 10 * np.log10(np.nanmean(np.array(P), axis=0))
+eng83      celle40 1.328574|1.326291  celle 2.046379|2.062570  lumin 0.151922|0.124604  accento 0.928813|0.809634  (coppie dell'accento A 104, B 52)
+eng83      (5) celle40 ACC 95-127 1.551348|1.384223   (note A 44, B 24)
+eng83      ONDA celle40 quadra 1.306553|1.383028   dente 1.348721|1.272102
+eng83      denti: luminosita 0.152323 | 0.130841
+eng83      Zac totale 1.727932|1.788994  timbro 1.667629|1.692630  (livello -87.92 dB)

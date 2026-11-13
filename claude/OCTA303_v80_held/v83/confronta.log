@@ -1,0 +1,43 @@
+== point 2: v8.2 twice ==
+  every logged number a - b: 0 everywhere
+  C, PK, e, Bm bit for bit: SAME
+  paletto 8 (two runs): PASS
+
+== point 4: per half, v8.2 | v8.3 | d = v8.3 - v8.2 ==
+  -- half A (guard as reference only)
+    celle40     1.327633 | 1.328574 | +0.000941  guard 0.049568 -> PARI
+    celle       2.047552 | 2.046379 | -0.001173
+    lumin       0.148903 | 0.151922 | +0.003019
+    accento     0.924999 | 0.928813 | +0.003814
+    race_core   2.848244 | 2.865075 | +0.016831  guard 0.156000 -> PARI
+    (5)         1.550810 | 1.551348 | +0.000538
+    quadra      1.305482 | 1.306553 | +0.001071
+    dente       1.347897 | 1.348721 | +0.000824
+    L           0.143883 | 0.152323 | +0.008440
+    Zac totale  1.723563 | 1.727932 | +0.004369
+    Zac timbro  1.663810 | 1.667629 | +0.003819
+  -- half B
+    celle40     1.326067 | 1.326291 | +0.000224  guard 0.049568 -> PARI
+    celle       2.061946 | 2.062570 | +0.000624
+    lumin       0.124150 | 0.124604 | +0.000454
+    accento     0.808246 | 0.809634 | +0.001388
+    race_core   2.630913 | 2.634341 | +0.003428  guard 0.156000 -> PARI
+    (5)         1.384877 | 1.384223 | -0.000654
+    quadra      1.382191 | 1.383028 | +0.000837
+    dente       1.272502 | 1.272102 | -0.000400
+    L           0.129524 | 0.130841 | +0.001317
+    Zac totale  1.787777 | 1.788994 | +0.001217
+    Zac timbro  1.691979 | 1.692630 | +0.000651
+  level offset g (from half A): v8.2 -87.715794 dB, v8.3 -87.712676 dB
+
+== the notes that change (model cells C, v8.3 - v8.2, cells where both are counted) ==
+  notes with any cell changed: 94 of 400 (cells that switch counted/not counted by the -40 dB mask: 17)
+  peak40 changed (any phase): 94 notes; max |d| 1.3294 dB
+  the 5 that change most (largest |d| in one cell):
+    note | half | SET  n | wave CUT RES ENV DEC ACC | cell: window ms, band Hz | d dB | change in celle40 (rms over its cells 40 ms+) | windows 4-40 ms max |d|
+    345 | B | E2 n 9 | 0 127  95 127 127  127 |   4-  15 ms,  3200 Hz | -2.342 | 0.0274 | 2.342
+    347 | B | E2 n11 | 1 127  95 127 127  127 |   4-  15 ms,  3200 Hz | -1.939 | 0.0213 | 1.939
+    361 | A | E3 n 9 | 0 127 127  95 127  127 |  40-  80 ms,  6400 Hz | +1.555 | 0.1752 | 0.857
+    285 | B | D3 n13 | 0  95  95 127  95   95 |   4-  15 ms,  1270 Hz | -1.520 | 0.0072 | 1.520
+    385 | A | E5 n 1 | 0 127 127 127 127   32 |   4-  15 ms,  4032 Hz | +1.470 | 0.0193 | 1.470
+  the judge's top band: 8063 Hz, upper edge 9051 Hz

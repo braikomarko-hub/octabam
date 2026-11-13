@@ -1,0 +1,15 @@
+Prova alla cieca 303 · risposte di Marko
+
+t01:  Q1 vera = A   Q2 più 303 = C
+t02:  Q1 vera = A   Q2 più 303 = B
+t03:  Q1 vera = C   Q2 più 303 = B
+t04:  Q1 vera = C   Q2 più 303 = A
+t05:  Q1 vera = A   Q2 più 303 = B
+t06:  Q1 vera = A   Q2 più 303 = B
+t07:  Q1 vera = A   Q2 più 303 = B
+t08:  Q1 vera = A   Q2 più 303 = C
+t09:  Q1 vera = B   Q2 più 303 = A
+t10:  Q1 vera = C   Q2 più 303 = B
+t11:  Q1 vera = A   Q2 più 303 = C
+t12:  Q1 vera = A   Q2 più 303 = C
+t13:  Q1 vera = A   Q2 più 303 = C

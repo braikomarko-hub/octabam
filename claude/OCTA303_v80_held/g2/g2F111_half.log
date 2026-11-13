@@ -1,0 +1,7 @@
+paletto 8 ok: fit_rF111.json ridà celle dai 40 ms 4.0939 (taratura 4.0939, scarto +0.0000)
+MODELLO: cartella /root/fit20 | taratura /root/blk3/v80/held/g2/run/fit_rF111.json | celle40 taratura 4.0939 / ridate 4.0939 | sim a60bf7dca0 sim.c e6310bb69e hyb ac839dc0cb tab ea224d4dee o3tables 7708374873 | cambi: nessuno | divisione split_half.json: A 208 note, B 128 note
+g2F111     celle40 4.093883|4.252763  celle 4.245270|4.334606  lumin 0.315023|0.295204  accento 0.792525|0.569281  (coppie dell'accento A 104, B 52)
+g2F111     (5) celle40 ACC 95-127 3.904439|4.289456   (note A 44, B 24)
+g2F111     ONDA celle40 quadra 5.056601|5.212510   dente 2.932894|3.118159
+g2F111     denti: luminosita 0.331213 | 0.305624
+g2F111     Zac totale 4.134856|4.087353  timbro 3.790269|3.690845  (livello -87.28 dB)
