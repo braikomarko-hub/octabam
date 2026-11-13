@@ -230,7 +230,7 @@ def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=No
     start pitch)], the pitch target; retrig: [sample] or [(sample, acc)] or [(sample, acc, semitones from the start
     pitch)], a new START (it reopens the gate; v7.1: it sets the pitch to its note, 0 when not given, and ends a slide);
     knobs (v7.1, the integer path): [(sample > 0, dict of cut res env dec accv slid dfon df)], the knobs moving during
-    the render (OVDR FM SWP MUFF must stay as they start: those select the kernel's variant); gate_off: a sample or a list of samples where the gate closes; poct: the note's pitch in octaves from C3,
+    the render (v7.2: OVDR FM SWP MUFF too: a feature runs while its knob is not neutral); gate_off: a sample or a list of samples where the gate closes; poct: the note's pitch in octaves from C3,
     Q24, as the engine computes it from R_PNOTE (None: from freq_hz; it only matters with TRCK).
     Events act at the first control step (16 samples) at or after their sample.  Returns int32 y (before o3_out);
     with want_diag also a dict of the kernel's maxima (diag=True tracks every internal state).
@@ -292,10 +292,11 @@ def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=No
         Krows.append(krow(e, a, on, int(np.floor(pst * 16777216.0 + 0.5))))
     KS = np.ascontiguousarray(np.array(Krows, np.int64).astype(np.int32))
     assert KS.shape[1] == _lib.o3_k_n()
-    for _, k_ in kev:
-        d_ = k_['df'] if k_['dfon'] else DF_NEUTRAL
-        if [d_[0], d_[1], min(d_[7], 2), min(d_[9], 2)] != [df[0], df[1], df[7], df[9]]:
-            raise ValueError('knob events may not move OVDR, FM, SWP or MUFF')
+    if cs != 'int':                                     # v7.2: the integer path takes OVDR FM SWP MUFF live too
+        for _, k_ in kev:
+            d_ = k_['df'] if k_['dfon'] else DF_NEUTRAL
+            if [d_[0], d_[1], min(d_[7], 2), min(d_[9], 2)] != [df[0], df[1], df[7], df[9]]:
+                raise ValueError('knob events may not move OVDR, FM, SWP or MUFF (the float path)')
     KA = np.array([t_ for t_, _ in kev] or [0], np.int32)
     KR = np.ascontiguousarray(np.array([krow(k_, 0, 0, 0) for _, k_ in kev] or [[0] * KS.shape[1]], np.int64).astype(np.int32))
     TB = (int_tables(M) if tables is None else np.ascontiguousarray(np.asarray(tables, np.int64).astype(np.int32))) \
@@ -328,7 +329,8 @@ NG_I, CTN_I = 513, 77
 TB_LAYOUT = [('CUT', 128), ('ENVB', 128), ('RESC', 128), ('ENVD', 128), ('K', 128), ('GV', 128), ('AMEG', 128), ('AMEGA', 128),
              ('AVA', 128), ('AV', 128), ('ASL', 128), ('OVK', 128), ('TRK', 128), ('C1B', 128), ('C1S', 128), ('C2B', 128),
              ('C2S', 128), ('CVB', 128), ('CVS', 128), ('BONB', 128), ('BONS', 128), ('C3', 128), ('BOFF', 128),
-             ('OCTD', CTN_I), ('KCD', CTN_I), ('G', NG_I), ('EXP2', 129), ('LOG2', 65), ('FM', 66), ('SC', 20)]
+             ('OCTD', CTN_I), ('KCD', CTN_I), ('G', NG_I), ('EXP2', 129), ('LOG2', 65), ('FM', 66),
+             ('OVQ', 128), ('KOV', 128), ('FMC', 128), ('SC', 20)]
 SC_NAMES = ['AATT', 'AV2', 'G0', 'ACCF', 'ACCV', 'VDF', 'VDV', 'VFLOOR', 'VW', 'VFK', 'RCONST', 'CUTX0', 'CUTXS', 'ENVX',
             'LR0', 'LR1', 'LR2', 'LR3', 'U0', 'LOG098']
 ENVX_GAIN = 3.2 * (60.0 / 50.0)              # the ENVX law of o3model._seg_params (kept in step with it)
@@ -396,6 +398,13 @@ def int_tables(M=DEFAULT, parts=False):
     T['EXP2'] = np.minimum(np.floor(2.0 ** (np.arange(129) / 128.0) * 2.0 ** 30 + 0.5), 2 ** 31 - 1).astype(np.int64)   # 2.0 -> 2^31 - 1
     T['LOG2'] = _qi(np.log2(1.0 + np.arange(65) / 64.0), 24)
     T['FM'] = np.append(_qi(2.0 ** ((np.arange(65) * 1.5 - 48.0) / 12.0), 26), 0); T['FM'][65] = T['FM'][64]
+    # v7.2: what o3k.c core() derived from X once per render, by the raw knob (the same expressions, in Python floats
+    # as render_engine's X; core()'s So_d with M_SQRT2 = sqrt(2.0), correctly rounded both)
+    So_d = 4.0 * 1048576.0 / (2.0 * np.sqrt(2.0) / 3.0)
+    ovg = [ovdr_gain(int(r)) for r in raw]
+    T['OVQ'] = np.array([int(_q31c(g if g < 1.0 else 0.0)) for g in ovg], np.int64)            # OVDR < 25: x G, Q31
+    T['KOV'] = np.array([int(np.floor(g * 70368744177664.0 / So_d + 0.5)) for g in ovg], np.int64)   # OVDR > 25: the clip's input
+    T['FMC'] = np.array([int(np.floor(float(r) / 127.0 * 47.0 / 24.0 * 65536.0 + 0.5)) for r in raw], np.int64)   # FM: steps Q16
     r = ladder_poles(M['caps'])
     sc = dict(AATT=_q31c(1.0 - np.exp(-dt / M['meg_att'])), AV2=_q31c(np.exp(-dt / M['tau_v2'])), G0=_qi(M['g0'], 28),
               ACCF=_qi(M['accf_gain'], 24), ACCV=_qi(M['accv_gain'], 27), VDF=_q31c(M['vd_f']), VDV=_q31c(M['vd_v']),

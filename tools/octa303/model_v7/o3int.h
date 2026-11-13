@@ -7,7 +7,10 @@
 #define O3INT_H
 
 /* ---- table blob layout (o3model.int_tables() builds it in the same order; gen_tables.py emits it).  The model keeps
-   every entry in an int32; C1S C2S CVS BONS GV TRK OVK hold int16 values (shifted at use) and ship as int16. ---- */
+   every entry in an int32; C1S C2S CVS BONS GV TRK OVK hold int16 values (shifted at use) and ship as int16.
+   v7.2 (stage B, the knobs live): OVQ KOV FMC, by the raw knob, hold what core() derived from X once per render: OVDR's
+   gain below 1 (q31) and its soft clip's input factor above 1, FM's depth in table steps; the per-sample FM table is
+   FM (it was pow() in core(): the same values).  Committed, so no libm decides a sample. ---- */
 #define NG     513                 /* g(u) = 2^u / (1 + 2^u), u = log2(w r), 1/32 octave from U0 = -13 to +3 */
 #define CTN_I  77                  /* the compensation table, 1/8 octave from 4.0 */
 enum {
@@ -16,7 +19,7 @@ enum {
     TB_C1B = 1664, TB_C1S = 1792, TB_C2B = 1920, TB_C2S = 2048, TB_CVB = 2176, TB_CVS = 2304,
     TB_BONB = 2432, TB_BONS = 2560, TB_C3 = 2688, TB_BOFF = 2816,
     TB_OCTD = 2944, TB_KCD = 2944 + CTN_I, TB_G = 2944 + 2 * CTN_I, TB_EXP2 = TB_G + NG, TB_LOG2 = TB_EXP2 + 129,
-    TB_FM = TB_LOG2 + 65, TB_SC = TB_FM + 66,
+    TB_FM = TB_LOG2 + 65, TB_OVQ = TB_FM + 66, TB_KOV = TB_OVQ + 128, TB_FMC = TB_KOV + 128, TB_SC = TB_FMC + 128,
     /* scalars */
     S_AATT = 0, S_AV2, S_G0, S_ACCF, S_ACCV, S_VDF, S_VDV, S_VFLOOR, S_VW, S_VFK, S_RCONST, S_CUTX0, S_CUTXS, S_ENVX,
     S_LR0, S_LR1, S_LR2, S_LR3, S_U0, S_LOG098, S_N,
@@ -182,7 +185,7 @@ static inline void is_step(IS *s, const int32_t *T, const int F, int32_t pk4, in
     int32_t kh = SHL(MUL(T[TB_K + res], kcd), 1); CT;
     CB; if (swp >= 1) kh = SHL(kh, 1);
     CB; if (df[0] > 25) { kh = MUL(kh, SHL(T[TB_OVK + df[0]], 16)); CT; }   /* Q15 << 16 */
-    if (F & F_GOV) {
+    if (F & F_GOV) {   /* v7.2: F_GOV here only while SWP > 0 at this step (core() masks it) */
         CB; if (pk4 > 3 * 1048576) { s->kgov = MUL(s->kgov, 2083059138); if (s->kgov < 644245094) s->kgov = 644245094; CB; }   /* x 0.97, floor 0.3 */
         else { int32_t t = ADD(s->kgov >> 1, MUL(s->kgov >> 1, 10737418)); s->kgov = t > (ONE >> 1) ? ONE : SHL(t, 1); CB; } /* x 1.005, cap 1 */
         if (s->kgov < s->kgmin) s->kgmin = s->kgov; CB;

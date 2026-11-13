@@ -7,6 +7,11 @@
  * o3_render (the judge's entry point) is o3_render_ex with every feature neutral: bit-identical to model v5.
  * The per-sample features (OVDR, FM, MUFF, +D, the SWP governor's peak tracker, the diagnostics) are compile-time
  * flags of one always-inlined core: the neutral variant (F = 0) contains none of their code.
+ * v7.2 (stage B): in the integer path OVDR, FM, SWP and MUFF are live knobs like the others: their settings (r_*) are
+ * taken from the knobs at every control step, and a feature's per-sample code runs while its knob is not neutral
+ * (its states are kept, frozen, while it is).  The variant F holds every feature some knob row of the render asks
+ * for; without knob events the r_* never change and the samples are those of v7.1.  OVDR's and FM's constants come
+ * from the committed tables (OVQ KOV FMC FM), not from libm.
  */
 #include <stdint.h>
 #include <math.h>
@@ -155,6 +160,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
     int32_t fmtab[66];
     const int32_t fmcq = (int32_t)floor(X[X_FM] / 127.0 * 47.0 / 24.0 * 65536.0 + 0.5);  /* table steps (Q16) per y unit x 2^16 */
     if (F & F_FM) { for (int j = 0; j < 65; j++) fmtab[j] = (int32_t)floor(pow(2.0, (j * 1.5 - 48.0) / 12.0) * 67108864.0 + 0.5); fmtab[65] = fmtab[64]; }
+    const int32_t *fmt = csint ? T + TB_FM : fmtab;      /* v7.2: the integer path takes the committed table (equal) */
     int32_t yprev = 0, shp = 0;                           /* FM source and its 5 Hz high-pass state */
     const int32_t Gf5 = q31(tpt(5.0));
     int64_t pqmax = (64 << 16) - 1;   /* FM: the table position's ceiling, from the control step */
@@ -168,6 +174,9 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
     /* +D: the 6 kHz low-pass and the 8 Hz DC blocker start at the pedal's rest value (zero in -> zero out) */
     const int32_t Gd6 = q31(tpt(6000.0)), Gdc = q31(tpt(8.0));
     int32_t sd6 = dp_clip(0), sdc = sd6;
+    /* v7.2: the per-sample features' settings in force (the float path: X's, for the whole render) */
+    int r_ov = (F & F_OV) ? ovmode : 0, r_fm = X[X_FM] > 0.0, r_gov = X[X_SWP] > 0.5, r_muff = muff;
+    int32_t r_ovq = ovq, r_fmc = fmcq; int64_t r_kov = kov;
 
     for (int i = 0; i < n; i++) {
         if ((i % CTL) == 0) {
@@ -200,7 +209,12 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
             if (csint) {   /* ---- v7: the integer control step ---- */
                 int32_t Gx[4], gq;
                 Gv = T[TB_GV + st.k[K_RES]] << 9;          /* int16 table, Q31 >> 9 */
-                is_step(&st, T, F, pk4, glvl, Gx, &kq, &Dq, &gq, &inc, &pqmax);
+                {   /* v7.2: the stage-B knobs now (MIN2 already applied to the selects by the row) */
+                    const int32_t *df = st.k + K_DF0;
+                    r_ov = df[0] < 25 ? 1 : (df[0] > 25 ? 2 : 0); r_ovq = T[TB_OVQ + df[0]]; r_kov = T[TB_KOV + df[0]];
+                    r_fm = df[1] > 0; r_fmc = T[TB_FMC + df[1]]; r_gov = df[7] > 0; r_muff = df[9];
+                }
+                is_step(&st, T, F & ~((r_fm ? 0 : F_FM) | (r_gov ? 0 : F_GOV)), pk4, glvl, Gx, &kq, &Dq, &gq, &inc, &pqmax);
                 G1 = Gx[0]; G2 = Gx[1]; G3 = Gx[2]; G4 = Gx[3]; pk4 = 0;
                 dgain = (gq - gain) / CTL;
 #ifdef O3_TRACE
@@ -298,17 +312,17 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
             else if ((uint32_t)(0u - pd) <= inc) sq -= blep(A, (uint32_t)(0u - pd), inc);
             x = fmul(sq, sqlev) + fmul(sawdir > 0 ? saw : -saw, leak);
         }
-        if (F & F_OV) {   /* v6 OVDR: G < 1 scales; G > 1 amplifies into a soft clip at +-4 x 2^20 */
-            if (ovmode == 1) x = fmul(x, ovq);
-            else x = sclip_s(x, kov, So);
+        if ((F & F_OV) && r_ov) {   /* v6 OVDR: G < 1 scales; G > 1 amplifies into a soft clip at +-4 x 2^20 */
+            if (r_ov == 1) x = fmul(x, r_ovq);
+            else x = sclip_s(x, r_kov, So);
         }
         /* ---- filter: 4 one-poles (TPT), linear loop solved with no delay ---- */
         int32_t g1 = G1, g2 = G2, g3 = G3, g4 = G4;
-        if (F & F_FM) {   /* v6 FM: the previous output (after MUFF) moves the four pole coefficients; Dq is the control step's */
-            int64_t pq = (32 << 16) + (((int64_t)yprev * fmcq) >> 16);
+        if ((F & F_FM) && r_fm) {   /* v6 FM: the previous output (after MUFF) moves the four pole coefficients; Dq is the control step's */
+            int64_t pq = (32 << 16) + (((int64_t)yprev * r_fmc) >> 16);
             if (pq < 0) pq = 0; if (pq > pqmax) pq = pqmax;
             int32_t ix = (int32_t)(pq >> 16), fr = (int32_t)(pq & 65535);
-            int32_t m = fmtab[ix] + (int32_t)(((int64_t)(fmtab[ix + 1] - fmtab[ix]) * fr) >> 16);   /* Q26 */
+            int32_t m = fmt[ix] + (int32_t)(((int64_t)(fmt[ix + 1] - fmt[ix]) * fr) >> 16);   /* Q26 */
             int64_t t1 = ((int64_t)G1 * m) >> 26, t2 = ((int64_t)G2 * m) >> 26, t3 = ((int64_t)G3 * m) >> 26, t4 = ((int64_t)G4 * m) >> 26;
             g1 = (int32_t)t1; g2 = (int32_t)t2; g3 = (int32_t)t3; g4 = (int32_t)t4;   /* m <= pqmax's: every g <= 0.98 (+ the interpolation's 0.1 %) */
         }
@@ -317,12 +331,12 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         z = s3 + fmul(z - s3, g3);
         z = s4 + fmul(z - s4, g4);
         int32_t u = fmul(x - shl32(fmul(z - lp, kq), 7), Dq);   /* with FM: Dq stays the control step's (see the report) */
-        if (F & (F_FM | F_GOV)) u = sclip_s(u, kuc, So);   /* v6 FM, SWP: the ladder input saturates at +-4 x 2^20 (the linear loop under audio-rate FM, or above critical k, outruns the governor) */
+        if (((F & F_FM) && r_fm) || ((F & F_GOV) && r_gov)) u = sclip_s(u, kuc, So);   /* v6 FM, SWP: the ladder input saturates at +-4 x 2^20 (the linear loop under audio-rate FM, or above critical k, outruns the governor) */
         int32_t y1 = s1 + fmul(u - s1, g1);  s1 = 2 * y1 - s1;
         int32_t y2 = s2 + fmul(y1 - s2, g2); s2 = 2 * y2 - s2;
         int32_t y3 = s3 + fmul(y2 - s3, g3); s3 = 2 * y3 - s3;
         int32_t y4 = s4 + fmul(y3 - s4, g4); s4 = 2 * y4 - s4;
-        if (F & F_GOV) { int32_t a4 = y4 < 0 ? -y4 : y4; if (a4 > pk4) pk4 = a4; }
+        if ((F & F_GOV) && r_gov) { int32_t a4 = y4 < 0 ? -y4 : y4; if (a4 > pk4) pk4 = a4; }
         int32_t lo = lp + fmul(y4 - lp, Gh); lp = 2 * lo - lp;
         int32_t hp1 = y4 - lo;
         int32_t lo2 = lp2 + fmul(hp1 - lp2, Gv); lp2 = 2 * lo2 - lp2;
@@ -342,15 +356,15 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
             else r = T[ix] + (int32_t)(((int64_t)(T[ix + 1] - T[ix]) * fr) >> 14);
             y = y < 0 ? -r : r;
         }
-        if (F & F_MUFF) {   /* v6 MUFF: split at 150 Hz, clip the high part at 314,572 */
+        if ((F & F_MUFF) && r_muff) {   /* v6 MUFF: split at 150 Hz, clip the high part at 314,572 */
             int32_t low = sm + fmul(y - sm, Gm); sm = 2 * low - sm;
             int32_t h = y - low;
-            if (muff == 1) h = sclip_s(h, kmu, Sm);
+            if (r_muff == 1) h = sclip_s(h, kmu, Sm);
             else { if (h > 314572) h = 314572; if (h < -314572) h = -314572; }
             y = low + h;
             if (F & F_DIAG) TRACK(sm);
         }
-        if (F & F_FM) {   /* the FM source is AC-coupled (Whittle pp. 3, 12): one-pole high-pass at 5 Hz */
+        if ((F & F_FM) && r_fm) {   /* the FM source is AC-coupled (Whittle pp. 3, 12): one-pole high-pass at 5 Hz */
             int32_t l5 = shp + fmul(y - shp, Gf5); shp = 2 * l5 - shp; yprev = y - l5; }
         if (F & F_DP) {     /* v6 +D: softclip(5 o + 0.12), 6 kHz low-pass, 8 Hz DC blocker */
             int32_t o = dp_clip(y);
@@ -390,6 +404,14 @@ int o3_render_ex(const double *pseg, const int32_t *segstart, int nseg, const do
     if (X[X_DPLUS] > 0.5) f |= F_DP;
     if (X[X_SWP] > 0.5) f |= F_GOV;
     if (X[X_DIAG] > 0.5) f |= F_DIAG;
+    if (X[X_CSINT] > 0.5)   /* v7.2: the knob events may switch OVDR / FM / SWP / MUFF on during the render */
+        for (int j = 0; j < o3_kev_n; j++) {
+            const int32_t *df = o3_kev_rows + j * K_N + K_DF0;
+            if (df[0] != 25) f |= F_OV;
+            if (df[1] > 0) f |= F_FM;
+            if (df[7] > 0) f |= F_GOV;
+            if (df[9] > 0) f |= F_MUFF;
+        }
     if (X[X_DIAG] < -0.5) return f;   /* X_DIAG = -1: return the variant index only, render nothing (T9) */
     switch (f) { C8(0) C8(8) C8(16) C8(24) C8(32) C8(40) C8(48) C8(56) }
     return -1;

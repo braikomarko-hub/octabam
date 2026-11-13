@@ -104,4 +104,30 @@ def derived(sc):
     d['O3E_INCC3'] = int(math.floor(C3_HZ / FS * 4294967296.0))
     d['O3E_O2MAX'] = int(17.9 * 16777216)                # o3int.h TRCK: (int32_t)(17.9 * 16777216)
     assert 2 * (d['O3E_INCC3'] << 3) < (1 << 30), 'inc0 << 1 must stay below 2^31 at +3 octaves'
+    # stage B (o3k.c core()): the soft clips' S and input factors (OVDR's by the knob: model_v7/o3tab.h KOV), the
+    # per-sample one-poles, +D's rest value.  sclip_s(v, kin, S) runs in 32 bits as q = v (kin >> 16) +
+    # fmul(v, (kin & 0xffff) << 15) with |v| clamped to SQ2 / (kin >> 16) + 1 first (the clip is flat past it).
+    SQ2 = 1518500249                                     # o3k.c SQ2_Q30
+    r2 = math.sqrt(2.0)                                  # M_SQRT2: both the correctly rounded double
+    So_d = 4.0 * 1048576.0 / (2.0 * r2 / 3.0)
+    Sm_d = 314572.0 / (2.0 * r2 / 3.0)
+    So, Sm = int(math.floor(So_d + 0.5)), int(math.floor(Sm_d + 0.5))
+    kuc = int(math.floor(70368744177664.0 / So_d + 0.5))
+    kmu = int(math.floor(70368744177664.0 / Sm_d + 0.5))
+    d['O3E_SQ2'] = SQ2
+    for nm, k in (('KUC', kuc), ('KMU', kmu)):
+        d['O3E_%sH' % nm] = k >> 16
+        d['O3E_%sL' % nm] = (k & 0xFFFF) << 15
+        d['O3E_%sV' % nm] = SQ2 // (k >> 16) + 1
+        assert (d['O3E_%sV' % nm] * k) >> 16 < (1 << 31) and d['O3E_%sV' % nm] * (k >> 16) > SQ2
+    d['O3E_SO2'], d['O3E_SM2'] = 2 * So, 2 * Sm
+    assert 2 * So < (1 << 31)
+    def tptq(f):
+        g = math.pi * f / FS
+        return q31(g / (1.0 + g))
+    d['O3E_GM'], d['O3E_GF5'], d['O3E_GD6'], d['O3E_GDC'] = tptq(150.0), tptq(5.0), tptq(6000.0), tptq(8.0)
+    x = 125829 << 10                                     # +D's rest value: o3k.c dp_clip(0)
+    fm = lambda a, b: s32((a * b) >> 31)
+    x2 = fm(x, x); x3 = fm(x2, x)
+    d['O3E_DP0'] = (x - fm(x3, 1431655765)) >> 10
     return d

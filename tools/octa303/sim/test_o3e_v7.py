@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OCTA303 vFable: the v7 engine (stage A) == model_v7, sample for sample -- python3 tools/octa303/sim/test_o3e_v7.py
+"""OCTA303 vFable: the v7 engine (stages A and B) == model_v7, sample for sample -- python3 tools/octa303/sim/test_o3e_v7.py
 
 code written by Claude (Anthropic)
 
@@ -24,7 +24,13 @@ b. the real build: DRIV 0 (inline) and DRIV 64, 127 (o3_out) == tools/octa303/o3
 c. the shell's own call path (sy_render, the mock of OS 1.40C): GATE 303 from the sequencer mock and GATE OFF;
 d. the inlined DRIV-0 output == o3_out over y; MACSR restored, ACC0 0; the register contract; the engine writes
    nothing below E_BASE but S_GLVL; the assembly's tables, O3S_* and O3E_* == model_v7/o3tab.h and o3m7.derived;
-e. instruction counts (printed).
+e. instruction counts (printed); the neutral path's (SAW, DRIV 0) equal to stage A's: 123.25 a sample, 319 the
+   control step;
+f. stage B (OVDR, FM, SWP, MUFF, +D): each alone at 2-4 values on 3 notes, every pair, the worst live case (every
+   dEVILish knob at 127, MUFF HARD, WHST, FM 101..127, +D, SPD SLOW, CUTX, ENVX, WAVE R, 16 accents in a row, saw and
+   square), FM 0 == the model built with no FM code (and the engine == it), the stage-B knobs moving every frame /
+   every 7 frames / once (into and out of the neutral class), calls of 1 sample; the engine writes nothing below
+   E_BASE but S_GLVL and nothing past its state's end.
 """
 import os, sys, re, random, math, collections, multiprocessing as mp
 sys.dont_write_bytecode = True
@@ -69,19 +75,24 @@ class Eng:
     def __init__(self, kind='y'):
         self.rig = Rig(SRC_Y if kind == 'y' else SRC_REAL)
         c = self.cpu = self.rig.cpu; self.C = c.consts; self.st = self.C['o3_state'] + self.C['ST_SIZE'] * T
-        self.low_bad = 0; self.watch = False
+        self.low_bad = 0; self.watch = False; self.high_bad = 0
     def w(self, name, v, sz='l'): self.cpu.mem.w(self.st + self.C[name], sz, v & M32)
     def r(self, name): return s32(self.cpu.mem.r(self.st + self.C[name], 'l'))
     def low(self): return [self.cpu.mem.r(self.st + i, 'b') for i in range(256)]
     def _call(self, label, n=0):
         c = self.cpu
         c.a[3] = self.st; c.a[4] = FRAME; c.d[2] = T; c.a[7] = STACK; c.a[1] = 0x80500000; c.d[7] = n
-        if self.watch: b0 = self.low()
+        if self.watch: b0 = self.low(); h0 = self.high()
         steps = c.call(label)
         if self.watch:
             b1 = self.low(); g = self.C['S_GLVL']
             self.low_bad += sum(1 for i in range(256) if b0[i] != b1[i] and not g <= i < g + 4)
+            self.high_bad += sum(1 for a, b in zip(h0, self.high()) if a != b)
         return steps
+    def high(self):
+        """the bytes past the engine's state: E_END .. the end of the next track's state"""
+        m = self.cpu.mem; a0 = self.st + self.C['E_END']
+        return [m.r(a, 'b') for a in range(a0, self.st + 2 * self.C['ST_SIZE'])]
     def knobs(self, cut, res, env, dec, accv, slid, dfon, df, ptgt):
         self.w('R_CUT', cut); self.w('R_RES', res); self.w('R_ENV', env); self.w('R_DEC', dec); self.w('R_ACCV', accv)
         self.w('R_SLID', slid); self.w('R_DFON', dfon); self.w('R_PTGT', ptgt)
@@ -113,12 +124,12 @@ def freq_of(inc0):
 
 # ---- a scenario: the knobs, the events -> (engine outputs, model y)
 def scen(name, nsamp, cut=64, res=64, env=64, dec=64, acc=0, wave=0, accv=64, slid=0, dfon=0, df=DFN, gmode=1,
-         pnote=16384, retrig=(), slides=(), gate_off=(), n0=7, seed=1, kind='y', osin=None, drv=None, knobs=()):
+         pnote=16384, retrig=(), slides=(), gate_off=(), n0=7, seed=1, kind='y', osin=None, drv=None, knobs=(), split1=False):
     """retrig: (sample, acc) or (sample, acc, the note in Q8 semitones from pnote); knobs: (sample, {knob: value}) with
     the knobs cut res env dec accv slid dfon df"""
     return dict(name=name, nsamp=nsamp, cut=cut, res=res, env=env, dec=dec, acc=acc, wave=wave, accv=accv, slid=slid,
                 dfon=dfon, df=tuple(df), gmode=gmode, pnote=pnote, retrig=tuple(tuple(r) for r in retrig), slides=tuple(slides),
-                gate_off=tuple(gate_off), n0=n0, seed=seed, kind=kind, drv=drv, knobs=tuple(knobs))
+                gate_off=tuple(gate_off), n0=n0, seed=seed, kind=kind, drv=drv, knobs=tuple(knobs), split1=split1)
 
 def model_y(s, incc3):
     poct, inc0 = eng_pitch(s['pnote'], incc3)
@@ -144,6 +155,7 @@ def run_engine(s, eng=None, watch=False):
     cuts = set(range(16 - s['n0'], s['nsamp'], 16)) | set(ev_t)
     for f0 in range(16 - s['n0'], s['nsamp'], 16):
         if rnd.random() < 0.5: cuts.add(f0 + rnd.randrange(1, 16))
+    if s.get('split1'): cuts = set(range(1, s['nsamp']))         # calls of one sample each
     cuts = sorted(c for c in cuts if 0 < c < s['nsamp']) + [s['nsamp']]
     ptgt = s['pnote']; gate = 1
     re_at = {r[0]: r for r in s['retrig']}; sl_at = dict(s['slides']); go_at = set(s['gate_off'])
@@ -183,7 +195,7 @@ def compare(s):
     if e.r('E_POCT') != poct or (e.r('E_INC0') & M32) != inc0:
         nd += 1; extra = 'pitch: engine poct %d inc0 %d, mirror %d %d' % (e.r('E_POCT'), e.r('E_INC0'), poct, inc0)
     peak = max(abs(v) for v in y)
-    return s['name'], s['nsamp'], nd, first, extra, peak, e.low_bad
+    return s['name'], s['nsamp'], nd, first, extra, peak, e.low_bad + e.high_bad
 
 # ---------------------------------------------------------------------------------------------------- the scenarios
 NOTE = 11025 if QUICK else 22050            # 0.5 s
@@ -343,16 +355,16 @@ def shell_run(args):
 
 def random_events(n, seed=7, nsamp=6000):
     """n random model events in the raw range: both waves, R, accents, slides, retrigs, gate closes, GATE OFF, ACCV, and
-    dEVILish's stage-A knobs (OVDR 25, FM 0, MUFF 0, SWP ACID)"""
+    every dEVILish knob (stage B's too: OVDR, FM, SWP, MUFF; +D through WAVE)"""
     rnd = random.Random(seed); out = []
     for j in range(n):
         df = list(DFN)
-        for idx in (2, 3, 4, 5, 6, 8, 10, 11):
+        for idx in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
             if rnd.random() < 0.4: df[idx] = rnd.randrange(128)
         ev = dict(freq_hz=rnd.choice([32.7, 65.62, 130.8128, 261.6, 523.2]) * (1 + rnd.random() * 0.05),
                   poct=rnd.randrange(-3 << 24, 3 << 24), cut=rnd.randrange(128), res=rnd.randrange(128),
                   env=rnd.randrange(128), dec=rnd.randrange(128), acc=rnd.choice([0, rnd.randrange(128)]),
-                  wave=rnd.choice([0, 1, 4, 5]), accv=rnd.randrange(128), slid=rnd.randrange(128), dfon=int(rnd.random() < 0.6),
+                  wave=rnd.randrange(8), accv=rnd.randrange(128), slid=rnd.randrange(128), dfon=int(rnd.random() < 0.6),
                   df=df, gmode=int(rnd.random() < 0.8), nsamp=nsamp, fase=0.0,
                   retrig=[(16 * rnd.randrange(1, nsamp // 16), rnd.choice([0, rnd.randrange(128)])) for _ in range(rnd.randrange(4))],
                   slides=[(rnd.randrange(nsamp), rnd.randrange(-24 * 256, 24 * 256) / 256.0) for _ in range(rnd.randrange(4))],
@@ -397,6 +409,131 @@ def compilers_check():
     return not bad, '%s at -O0 and -O2, %d events (the %d sequences + 50 random), %d samples each build: %s' % (
         ' and '.join(have), len(evs), len(sequences()), sum(e['nsamp'] for e in evs), '; '.join(bad[:3]) or 'identical')
 
+# ---------------------------------------------------------------------------------------------------- f. stage B
+# dEVILish: OVDR FM TRCK VDEC SLID ADEC / SATK SWP SPD MUFF CUTX ENVX; +D = WAVE bit 1
+SB_BASES = [('SAW acc all 64', dict(cut=64, res=64, env=64, dec=64, acc=64, wave=0)),
+            ('SQR acc all 127', dict(cut=127, res=127, env=127, dec=127, acc=127, wave=1)),
+            ('SAW CUT32 RES127', dict(cut=32, res=127, env=64, dec=64, acc=0, wave=0))]
+SB_ALONE = [('OVDR', 0, (0, 10, 60, 127)), ('FM', 1, (1, 40, 101, 127)), ('SWP', 7, (1, 2)), ('MUFF', 9, (1, 2)),
+            ('+D', None, (1,))]
+def _df(**kw):
+    df = list(DFN)
+    for k, v in kw.items(): df[dict(OVDR=0, FM=1, TRCK=2, VDEC=3, SLID=4, ADEC=5, SATK=6, SWP=7, SPD=8, MUFF=9, CUTX=10, ENVX=11)[k]] = v
+    return tuple(df)
+def stage_b_alone():
+    out = []; S = 2800 if QUICK else 5600; j = 0
+    for bn, b in SB_BASES:
+        for nm, idx, vals in SB_ALONE:
+            for v in vals:
+                kw = dict(b); df = list(DFN)
+                if idx is None: kw['wave'] = b['wave'] | 2
+                else: df[idx] = v
+                out.append(scen('%s %s %s' % (bn, nm, v if idx is not None else ''), S, dfon=1, df=df, retrig=[(S // 2 // 16 * 16, 127 - b['acc'])],
+                                gate_off=[S - 900], n0=1 + j % 15, seed=200 + j, **kw)); j += 1
+    return out
+SB_PAIRV = dict(OVDR=(127, 9), FM=(127, 70), SWP=(1, 2), MUFF=(2, 1), D=(1, 1))
+def stage_b_pairs():
+    out = []; S = 2400 if QUICK else 4800; j = 0
+    names = list(SB_PAIRV)
+    for a in range(len(names)):
+        for b_ in range(a + 1, len(names)):
+            for k in (0, 1):
+                bn, b = SB_BASES[(a + b_ + k) % 3]
+                kw = dict(b); df = {}
+                for nm in (names[a], names[b_]):
+                    if nm == 'D': kw['wave'] = b['wave'] | 2
+                    else: df[nm] = SB_PAIRV[nm][k]
+                out.append(scen('%s + %s (%s) %s' % (names[a], names[b_], ', '.join('%s %d' % x for x in df.items()) or '+D', bn), S,
+                                dfon=1, df=_df(**df), retrig=[(S // 2 // 16 * 16, 127)], n0=2 + j % 13, seed=300 + j, **kw)); j += 1
+    return out
+def stage_b_worst():
+    """every dEVILish knob at 127, MUFF HARD, SWP WHST, SPD SLOW, CUTX, ENVX, FM 101..127, +D, WAVE R, CUT RES ENV DEC ACC
+    127, 16 accents in a row, saw and square"""
+    out = []; st = 560 if QUICK else 1120
+    for fm in ((101, 127) if QUICK else (101, 108, 114, 121, 127)):
+        for w in (0, 1):
+            out.append(scen('worst: FM %d %s+D R, all 127, 16 accents' % (fm, 'SQR' if w else 'SAW'), 16 * st, cut=127, res=127, env=127,
+                            dec=127, acc=127, wave=w | 2 | 4, dfon=1, df=(127, fm, 127, 127, 127, 127, 127, 1, 2, 2, 1, 1),
+                            retrig=[(k * st, 127) for k in range(1, 16)], gate_off=[k * st + st // 2 // 16 * 16 for k in range(16)],
+                            n0=3 + fm % 11, seed=fm + w))
+    out.append(scen('worst, calls of 1 sample', 600, cut=127, res=127, env=127, dec=127, acc=127, wave=3 | 4, dfon=1,
+                    df=(127, 127, 127, 127, 127, 127, 127, 1, 2, 2, 1, 1), retrig=[(320, 127)], split1=True, seed=9))
+    out.append(scen('worst, DRIV 127 (o3_out)', 3000, cut=127, res=127, env=127, dec=127, acc=127, wave=2 | 4, dfon=1, kind='real', drv=127,
+                    df=(127, 114, 127, 127, 127, 127, 127, 1, 2, 2, 1, 1), retrig=[(1120, 127), (2240, 127)], seed=10))
+    out.append(scen('worst, DRIV 0 (inline, real)', 3000, cut=127, res=127, env=127, dec=127, acc=127, wave=3 | 4, dfon=1, kind='real', drv=0,
+                    df=(127, 114, 127, 127, 127, 127, 127, 1, 2, 2, 1, 1), retrig=[(1120, 127), (2240, 127)], seed=11))
+    out.append(scen('SELF, 16 accents', 16 * st, cut=90, res=127, env=100, dec=80, acc=127, wave=0, dfon=1, df=_df(SWP=2),
+                    retrig=[(k * st, 127) for k in range(1, 16)], seed=12))
+    return out
+SB_MOVE = [('OVDR', 0), ('FM', 1), ('SWP', 7), ('MUFF', 9)]
+def stage_b_moving():
+    """the stage-B knobs moving during the notes, into and out of the neutral class: every frame, every 7 frames, once;
+    STARTs (one at a knob change's sample, one in its frame)"""
+    out = []; NS = 3200 if QUICK else 6400; n0 = 5
+    neutral = dict(OVDR=25, FM=0, SWP=0, MUFF=0)
+    for j, (nm, idx) in enumerate(SB_MOVE + [('ALL', None)]):
+        for every, lab in ((1, 'every frame'), (7, 'every 7 frames'), (0, 'once')):
+            rnd = random.Random(5000 + 10 * j + every)
+            times = [16 - n0 + 16 * k for k in range(0, NS // 16, every)][1:] if every else [NS // 2 - 9]
+            rts = [(1600, 0), (3200, 120), (4800, 0)] if not QUICK else [(1600, 0), (2400, 120)]
+            times = sorted(set(times) | {rts[0][0], rts[1][0] - 3})
+            ev = []; df = list(DFN)
+            for t in times:
+                for nm_, idx_ in (SB_MOVE if idx is None else [(nm, idx)]):
+                    if rnd.random() < 0.3: v = neutral[nm_]                 # back to neutral: the class may change
+                    elif nm_ in ('SWP', 'MUFF'): v = rnd.choice([1, 2, 3, 127])   # the selects as stored, MIN2
+                    else: v = rnd.randrange(128)
+                    df[idx_] = v
+                if idx is not None or rnd.random() < 0.5:
+                    for k_ in (2, 3, 8, 10, 11): df[k_] = rnd.randrange(128) if k_ in (2, 3) else rnd.randrange(3)
+                ev.append((t, {'df': tuple(df), 'cut': rnd.randrange(128)}))
+            out.append(scen('stage B moves: %s %s' % (nm, lab), NS, cut=60, res=110, env=80, dec=50, acc=0 if j % 2 else 110,
+                            dfon=1, df=DFN, wave=(j % 2) | (2 if j == 4 else 0), n0=n0, seed=j, knobs=ev,
+                            retrig=[r for r in rts if r[0] < NS]))
+    # the class changing with DRIV above 0 (the o3_out loops), and a wave change of loop at a square START
+    out.append(dict(out[3], name='stage B moves: FM every frame, DRIV 64 (o3_out)', kind='real', drv=64, wave=0, seed=77))
+    out.append(dict(out[7], name='stage B moves: SWP every 7 frames, SQR, DRIV 127 (o3_out)', kind='real', drv=127, wave=1, seed=78))
+    return out
+
+def _fm0_model(evs):
+    """the model built with every FM block removed (-DO3_NO_FM_CODE, test_v7.py T9): its y for the events"""
+    import subprocess, tempfile, ctypes, shutil
+    cc = os.environ.get('CC') or shutil.which('cc') or 'gcc'
+    td = tempfile.mkdtemp(prefix='o3nofm'); so = os.path.join(td, 'libo3k_nofm.so')
+    subprocess.check_call([cc] + o3m7.CFLAGS + ['-DO3_NO_FM_CODE', '-I', o3m7.MODEL, '-o', so, os.path.join(o3m7.MODEL, 'o3k.c'), '-lm'])
+    L = ctypes.CDLL(so); L.o3_render_ex.argtypes = m7._lib.o3_render_ex.argtypes
+    for f in ('o3_tab_n', 'o3_k_n'): getattr(L, f).restype = ctypes.c_int
+    lib = m7._lib; m7._lib = L
+    try: return [m7.render_engine(ev, M7, tables=BLOB, knee=KNEE) for ev in evs]
+    finally:
+        m7._lib = lib; shutil.rmtree(td, ignore_errors=True)
+def fm0_check(pool):
+    """FM 0 with the other stage-B knobs random (and moving): the model == the model with no FM code (no variant with
+    the FM bit), and the engine == the model"""
+    rnd = random.Random(909); ss = []
+    for j in range(3 if QUICK else 6):
+        df = [rnd.randrange(128), 0] + [rnd.randrange(128) for _ in range(5)] + [rnd.randrange(3), rnd.randrange(3), rnd.randrange(3),
+                                                                               rnd.randrange(2), rnd.randrange(2)]
+        kn = [(1600 + 7 * j, {'df': tuple(df[:7] + [rnd.randrange(3)] + df[8:9] + [rnd.randrange(3)] + df[10:])})] if j % 2 else ()
+        ss.append(scen('FM 0, %s%s' % (df, ', SWP / MUFF move' if kn else ''), 2400 if QUICK else 4000, cut=rnd.randrange(128),
+                       res=rnd.randrange(128), env=rnd.randrange(128), dec=rnd.randrange(128), acc=rnd.choice([0, 127]),
+                       wave=rnd.randrange(8), dfon=1, df=df, retrig=[(2400, 127)], knobs=kn, seed=900 + j))
+    incc3 = rig_of('y').cpu.consts['O3E_INCC3']
+    evs = []
+    for s_ in ss:
+        poct, inc0 = eng_pitch(s_['pnote'], incc3)
+        evs.append(dict(freq_hz=freq_of(inc0), poct=poct, cut=s_['cut'], res=s_['res'], env=s_['env'], dec=s_['dec'], acc=s_['acc'],
+                        wave=s_['wave'], accv=s_['accv'], slid=s_['slid'], dfon=1, df=list(s_['df']), gmode=s_['gmode'],
+                        nsamp=s_['nsamp'], fase=0.0, retrig=[(r[0], r[1], 0.0) for r in s_['retrig']], slides=[],
+                        gate_off=None, knobs=[(t, dict(kd)) for t, kd in s_['knobs']]))
+    nofm = _fm0_model(evs)
+    nm_ = sum(sum(1 for a, b in zip(model_y(s_, incc3)[0], y) if a != b) for s_, y in zip(ss, nofm))
+    nv = sum(1 for ev in evs if m7.render_engine(dict(ev, knobs=()), M7, diag='variant', tables=BLOB, knee=KNEE) & 2)
+    res = pool.map(compare, ss, chunksize=1)
+    ne = sum(r[2] for r in res)
+    return nm_ == 0 and ne == 0 and nv == 0, ('%d renders (random dEVILish with FM 0, SWP / MUFF moving in half): the model vs the '
+        'model with no FM code %d differing samples, FM bit in %d variant indices; the engine vs the model %d differing samples' % (len(ss), nm_, nv, ne))
+
 def _pair(p):
     a, b = p
     ya = model_y(a, rig_of('y').cpu.consts['O3E_INCC3'])[0]; yb = model_y(b, rig_of('y').cpu.consts['O3E_INCC3'])[0]
@@ -437,18 +574,25 @@ if __name__ == '__main__':
         check(gname, not bad and not low, '%d renders, %d samples, %d renders differ%s' % (
             len(res), ns, len(bad), ('; first: %s %s %s' % (bad[0][0:1] + bad[0][3:5])) if bad else '') +
             ('; the engine wrote below E_BASE (not S_GLVL): %d bytes' % low if low else ''))
-    # stage B's knobs are not in this engine: with them set it must run and play as without them (+D as its wave
-    # without +D, OVDR as 25, FM / MUFF off, SWP as ACID); not a model comparison (the model applies them)
-    _b = dict(cut=64, res=127, env=100, dec=64, acc=127, retrig=[(3200, 0)], dfon=1)
-    _pairs = [(scen('stage B: SQR+D, OVDR 127, FM 127, SWP WHST, MUFF HARD', 5000, wave=3, df=(127, 127, 0, 64, 0, 50, 0, 1, 1, 2, 0, 0), **_b),
-               scen('the same, neutral', 5000, wave=1, df=DFN, **_b)),
-              (scen('stage B: SAW, OVDR 3, SWP SELF, MUFF SOFT', 5000, wave=0, df=(3, 0, 0, 64, 0, 50, 0, 2, 1, 1, 0, 0), **_b),
-               scen('the same, neutral', 5000, wave=0, df=DFN, **_b))]
-    _r = [(run_engine(a)[0] == run_engine(b)[0]) for a, b in _pairs]
-    check('a5_stage_b_knobs_run_as_neutral', all(_r), ', '.join('%s: %s' % (p[0]['name'], 'same' if x else 'DIFFERS') for p, x in zip(_pairs, _r)))
     res = pool.map(_pair, neutral_pairs())
     check('a4_neutral_set_eq_devilish_off', all(r[1] == 0 and r[2] == 0 for r in res),
           '; '.join('%s: model %d, engine %d differ' % r for r in res))
+    # ---- f. stage B: each feature alone, the pairs, the worst live case, the knobs moving, FM 0 == no FM code
+    for gname, ss in (('f1_stage_b_alone', stage_b_alone()), ('f2_stage_b_pairs', stage_b_pairs()),
+                      ('f3_stage_b_worst_live', stage_b_worst()), ('f4_stage_b_knobs_move', stage_b_moving())):
+        if QUICK: ss = ss[::4]
+        for s_ in ss[:3]: s_['watch'] = True
+        res = pool.map(compare, ss, chunksize=1)
+        bad = [r for r in res if r[2]]
+        for r in res:
+            print('      %-56s %6d samples, %d differ, model peak |y| %d%s' % (r[0], r[1], r[2], r[5], (', first: ' + r[3]) if r[3] else ''))
+        wb = sum(r[6] for r in res)
+        check(gname, not bad and not wb, '%d renders, %d samples, %d renders differ%s%s' % (
+            len(res), sum(r[1] for r in res), len(bad), ('; first: %s %s' % (bad[0][0], bad[0][3])) if bad else '',
+            ('; the engine wrote outside its bytes (below E_BASE but S_GLVL, or past E_END): %d' % wb) if wb else
+            '; watched (%d renders): nothing written below E_BASE but S_GLVL, nothing past E_END' % min(3, len(res))))
+    _ok, _det = fm0_check(pool)
+    check('f5_fm0_eq_no_fm_code', _ok, _det)
     _ok, _det = compilers_check()
     if _ok is None: print('SKIP  m_compilers   [' + _det + ']')
     else: check('m_compilers', _ok, _det)
@@ -474,6 +618,17 @@ if __name__ == '__main__':
         _y = model_y(_s, C['O3E_INCC3'])[0]; _L = run_engine(_s, _e)[0]
         _sab.append((nm, sum(1 for i in range(3000) if _L[i] != _y[i] & M32)))
     check('a0_instrument_not_blind', all(n > 0 for _, n in _sab), ', '.join('%s nudged: %d of 3000 samples differ' % x for x in _sab))
+    # stage B's: one constant of each feature nudged by 1 %, on that feature alone, must differ from the model
+    _sab = []
+    for nm, kw in (('O3E_SO2', dict(dfon=1, df=_df(OVDR=127))), ('O3E_KUCL', dict(dfon=1, df=_df(SWP=1))),
+                   ('O3E_GF5', dict(dfon=1, df=_df(FM=127))), ('O3E_KMUL', dict(dfon=1, df=_df(MUFF=1))),
+                   ('O3E_GM', dict(dfon=1, df=_df(MUFF=2))), ('O3E_GD6', dict(wave=2)), ('O3E_DP0', dict(wave=2))):
+        src = SRC_Y.replace('        .set    %s, %d\n' % (nm, C[nm]), '        .set    %s, %d\n' % (nm, C[nm] + C[nm] // 100 + 1), 1)
+        assert src != SRC_Y, nm
+        _s = scen('sabotage B', 3000, acc=127, res=127, **kw); _e = Eng('y'); _e.rig = Rig(src); _e.cpu = _e.rig.cpu
+        _y = model_y(_s, C['O3E_INCC3'])[0]; _L = run_engine(_s, _e)[0]
+        _sab.append((nm, sum(1 for i in range(3000) if _L[i] != _y[i] & M32)))
+    check('f0_instrument_not_blind', all(n > 0 for _, n in _sab), ', '.join('%s + 1 %%: %d of 3000 samples differ' % x for x in _sab))
     res = [shell_run(a) for a in ((1, 220 if QUICK else 600, 0, 0, 7), (0, 160 if QUICK else 400, -12, 1, 8))]
     check('c_shell_call_path', all(r[2] == 0 for r in res) and res[0][4] > 0,
           '; '.join('%s: %d samples, %d differ%s, %d gate closes, %d retrigs' % (r[0], r[1], r[2], (' (first: %s)' % r[3]) if r[3] else '', r[4], r[5]) for r in res))
@@ -499,38 +654,53 @@ if __name__ == '__main__':
 
     # ---- d. MACSR restored, ACC0 0; a dirty ACC0 at entry changes nothing
     okd = []; det = []
-    s0 = scen('macsr', 400, acc=127, n0=16)
-    for ms in (0x00, 0xb0, 0x20, 0x40):
-        e = Eng('y'); run_engine(s0, e); e.cpu.macsr = ms; e.cpu.acc[0] = 0x123456789
-        l1 = e.render(16)[0]
-        okd.append(e.cpu.macsr == ms and e.cpu.acc[0] == 0)
-        det.append('%#x -> %#x acc0 %d' % (ms, e.cpu.macsr, e.cpu.acc[0]))
-    s1 = dict(s0, nsamp=416); y = model_y(s1, C['O3E_INCC3'])[0]
-    check('d_macsr_restored_acc0_zero', all(okd) and [v & M32 for v in y[400:]] == l1, '; '.join(det))
+    for lab, s0 in (('neutral', scen('macsr', 400, acc=127, n0=16)),
+                    ('stage B', scen('macsr B', 400, acc=127, n0=16, wave=3, dfon=1, df=(127, 120, 0, 64, 0, 50, 0, 1, 1, 1, 0, 0)))):
+        for ms in (0x00, 0xb0, 0x20, 0x40):
+            e = Eng('y'); run_engine(s0, e); e.cpu.macsr = ms; e.cpu.acc[0] = 0x123456789
+            l1 = e.render(16)[0]
+            okd.append(e.cpu.macsr == ms and e.cpu.acc[0] == 0)
+            det.append('%s %#x -> %#x acc0 %d' % (lab, ms, e.cpu.macsr, e.cpu.acc[0]))
+        s1 = dict(s0, nsamp=416); y = model_y(s1, C['O3E_INCC3'])[0]
+        okd.append([v & M32 for v in y[400:]] == l1)
+    check('d_macsr_restored_acc0_zero', all(okd), '; '.join(det))
 
     # ---- d. the register contract
-    e = Eng('real'); run_engine(scen('regs', 200, acc=64), e); c = e.cpu
-    def regs_call(label, keep_d, keep_a, n=0):
-        for i in range(8): c.d[i] = 0x31310000 + i
-        for i in range(7): c.a[i] = 0x42420000 + i
-        c.a[3] = e.st; c.a[4] = FRAME; c.a[7] = STACK
-        if n: c.d[7] = n; c.a[1] = 0x80500000
-        d0, a0 = list(c.d), list(c.a)
-        c.call(label)
-        bad = ['d%d' % i for i in keep_d if c.d[i] != d0[i]] + ['a%d' % i for i in keep_a if c.a[i] != a0[i]]
-        if c.a[7] != STACK: bad.append('sp')
-        return bad
-    bad_r = regs_call('o3e_render', [], [3], 16)
-    bad_n = regs_call('o3e_note_on', range(2, 8), range(2, 7))
-    bad_r2 = regs_call('o3e_render', [], [3], 7)            # a START's control step inside
-    bad_p = regs_call('o3e_params', range(2, 8), range(2, 7))
-    check('d_register_contract', not (bad_r or bad_n or bad_p or bad_r2),
-          'o3e_render changed %s; o3e_note_on %s; o3e_params %s (of the kept)' % (bad_r + bad_r2 or 'none', bad_n or 'none', bad_p or 'none'))
+    _rb = []
+    for _sr in (scen('regs', 200, acc=64), scen('regs B', 200, acc=64, wave=3, dfon=1, df=(127, 120, 0, 64, 0, 50, 0, 1, 1, 2, 0, 0))):
+      e = Eng('real'); run_engine(_sr, e); c = e.cpu
+      def regs_call(label, keep_d, keep_a, n=0):
+          for i in range(8): c.d[i] = 0x31310000 + i
+          for i in range(7): c.a[i] = 0x42420000 + i
+          c.a[3] = e.st; c.a[4] = FRAME; c.a[7] = STACK
+          if n: c.d[7] = n; c.a[1] = 0x80500000
+          d0, a0 = list(c.d), list(c.a)
+          c.call(label)
+          bad = ['d%d' % i for i in keep_d if c.d[i] != d0[i]] + ['a%d' % i for i in keep_a if c.a[i] != a0[i]]
+          if c.a[7] != STACK: bad.append('sp')
+          return bad
+      bad_r = regs_call('o3e_render', [], [3], 16)
+      bad_n = regs_call('o3e_note_on', range(2, 8), range(2, 7))
+      bad_r2 = regs_call('o3e_render', [], [3], 7)            # a START's control step inside
+      bad_p = regs_call('o3e_params', range(2, 8), range(2, 7))
+      _rb.append((_sr['name'], bad_r + bad_r2, bad_n, bad_p))
+    check('d_register_contract', not any(x[1] or x[2] or x[3] for x in _rb),
+          '; '.join('%s: o3e_render changed %s, o3e_note_on %s, o3e_params %s (of the kept)' % (x[0], x[1] or 'none', x[2] or 'none', x[3] or 'none') for x in _rb))
 
     # ---- e. instruction counts (cfsim: `steps` counts every instruction, branches included)
     print('INFO  e_counts  (cfsim instructions, branches included; the skeleton: 129.00 a sample, its slow step amortised)')
+    _cnt = {}
+    _sb = lambda **k: dict(dfon=1, df=_df(**k))
     for nm, kw in (('SAW, knobs 64, DRIV 0', dict()), ('SQR, knobs 64, DRIV 0', dict(wave=1)),
-                   ('SAW, DRIV 64 (o3_out)', dict(kind='real', drv=64)), ('SAW, accented, TRCK + CUTX + ENVX', dict(acc=127, dfon=1, df=(25, 0, 90, 64, 0, 50, 0, 0, 1, 0, 1, 1)))):
+                   ('SAW, DRIV 64 (o3_out)', dict(kind='real', drv=64)), ('SAW, accented, TRCK + CUTX + ENVX', dict(acc=127, dfon=1, df=(25, 0, 90, 64, 0, 50, 0, 0, 1, 0, 1, 1))),
+                   ('B: SAW, OVDR 10 (x G)', _sb(OVDR=10)), ('B: SAW, OVDR 127 (clip)', _sb(OVDR=127)),
+                   ('B: SAW, FM 127', _sb(FM=127)), ('B: SAW, SWP WHST', _sb(SWP=1)), ('B: SAW, SWP SELF', _sb(SWP=2)),
+                   ('B: SAW, MUFF SOFT', _sb(MUFF=1)), ('B: SAW, MUFF HARD', _sb(MUFF=2)), ('B: SAW +D', dict(wave=2)),
+                   ('B: SAW, all (OVDR 127 FM 127 WHST SOFT +D)', dict(wave=2, **_sb(OVDR=127, FM=127, SWP=1, MUFF=1))),
+                   ('B: SQR, all (OVDR 127 FM 127 WHST SOFT +D)', dict(wave=3, **_sb(OVDR=127, FM=127, SWP=1, MUFF=1))),
+                   ('B: SAW, all, DRIV 64 (o3_out)', dict(wave=2, drv=64, **_sb(OVDR=127, FM=127, SWP=1, MUFF=1))),
+                   ('B: worst live (SAW)', dict(cut=127, res=127, env=127, dec=127, acc=127, wave=2 | 4, dfon=1,
+                                               df=(127, 127, 127, 127, 127, 127, 127, 1, 2, 2, 1, 1)))):
         kw.setdefault('kind', 'real')
         e = Eng(kw['kind']); run_engine(scen(nm, 4000, **kw), e)
         def r16(cnt):
@@ -544,5 +714,9 @@ if __name__ == '__main__':
         print('INFO  e_counts  %-36s per sample %.2f without the control step; the control step %d (%.2f a sample '
               'amortised: %.2f a sample in all); a START: o3e_note_on %d + %d in its control step (+ %d more on a new note)'
               % (nm, s_wo / 16, s_w - s_wo, (s_w - s_wo) / 16, s_w / 16, n_on, s_st - s_w, s_rb - s_st))
+        _cnt[nm] = (s_wo / 16, s_w - s_wo)
+    _n = _cnt['SAW, knobs 64, DRIV 0']
+    check('e_neutral_path_not_slower', _n == (123.25, 319), 'SAW, knobs 64, DRIV 0: %.2f a sample, the control step %d '
+          '(stage A, 05e3bd0: 123.25 and 319)' % _n)
     print('\n%d/%d PASS' % (sum(results), len(results)))
     sys.exit(0 if all(results) else 1)
