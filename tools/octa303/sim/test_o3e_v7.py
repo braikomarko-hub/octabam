@@ -26,7 +26,7 @@ d. the inlined DRIV-0 output == o3_out over y; MACSR restored, ACC0 0; the regis
    nothing below E_BASE but S_GLVL; the assembly's tables, O3S_* and O3E_* == model_v7/o3tab.h and o3m7.derived;
 e. instruction counts (printed).
 """
-import os, sys, re, random, math, multiprocessing as mp
+import os, sys, re, random, math, collections, multiprocessing as mp
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..'))
 from harness import *
@@ -50,16 +50,14 @@ def fmul(a, b): return s32((a * b) >> 31)
 
 # ---- the sources: real, and a y build (the inline output writes the raw y)
 SRC_REAL = source()
-_OUT0 = ('        CLAMP   %d6,-16777216,16777216\n        asr.l   #SHIFT_OUT,%d6\n        CLAMP   %d6,-32767,32767\n'
-         '        lsl.l   #8,%d6\n        lsl.l   #8,%d6\n        move.l  %d6,(%a1)+\n        move.l  %d6,(%a1)+\n'
-         '        .endm\n        .macro  E_OUT1')
-assert SRC_REAL.count(_OUT0) == 1
+_OUT0 = re.search(r'        \.macro  E_OUT0 .*?\n(.*?)        \.endm\n', SRC_REAL, re.S)   # the inline output's body
+assert _OUT0 and 'move.l  %d6,(%a1)+' in _OUT0.group(1)
 def _knee(name):
     m = re.search(r'^' + name + r':\n((?:        \.long .*\n)+)', SRC_REAL, re.M)
     return [int(x) for x in re.findall(r'-?\d+', m.group(1))]
 KNEE = (_knee('o3e_kneg'), _knee('o3e_kpos'))
 assert len(KNEE[0]) == len(KNEE[1]) == 97
-SRC_Y = SRC_REAL.replace(_OUT0, '        move.l  %d6,(%a1)+\n        move.l  %d6,(%a1)+\n        .endm\n        .macro  E_OUT1', 1)
+SRC_Y = SRC_REAL[:_OUT0.start(1)] + '        move.l  %d6,(%a1)+\n        move.l  %d6,(%a1)+\n' + SRC_REAL[_OUT0.end(1):]
 
 _rigs = {}
 def rig_of(kind):
@@ -115,45 +113,55 @@ def freq_of(inc0):
 
 # ---- a scenario: the knobs, the events -> (engine outputs, model y)
 def scen(name, nsamp, cut=64, res=64, env=64, dec=64, acc=0, wave=0, accv=64, slid=0, dfon=0, df=DFN, gmode=1,
-         pnote=16384, retrig=(), slides=(), gate_off=(), n0=7, seed=1, kind='y', osin=None, drv=None):
+         pnote=16384, retrig=(), slides=(), gate_off=(), n0=7, seed=1, kind='y', osin=None, drv=None, knobs=()):
+    """retrig: (sample, acc) or (sample, acc, the note in Q8 semitones from pnote); knobs: (sample, {knob: value}) with
+    the knobs cut res env dec accv slid dfon df"""
     return dict(name=name, nsamp=nsamp, cut=cut, res=res, env=env, dec=dec, acc=acc, wave=wave, accv=accv, slid=slid,
-                dfon=dfon, df=tuple(df), gmode=gmode, pnote=pnote, retrig=tuple(retrig), slides=tuple(slides),
-                gate_off=tuple(gate_off), n0=n0, seed=seed, kind=kind, drv=drv)
+                dfon=dfon, df=tuple(df), gmode=gmode, pnote=pnote, retrig=tuple(tuple(r) for r in retrig), slides=tuple(slides),
+                gate_off=tuple(gate_off), n0=n0, seed=seed, kind=kind, drv=drv, knobs=tuple(knobs))
 
 def model_y(s, incc3):
     poct, inc0 = eng_pitch(s['pnote'], incc3)
     ev = dict(freq_hz=freq_of(inc0), poct=poct, cut=s['cut'], res=s['res'], env=s['env'], dec=s['dec'], acc=s['acc'],
               wave=s['wave'], accv=s['accv'], slid=s['slid'], dfon=s['dfon'], df=list(s['df']), gmode=s['gmode'],
-              nsamp=s['nsamp'], fase=0.0, retrig=[(t, a) for t, a in s['retrig']],
-              slides=[(t, d / 256.0) for t, d in s['slides']], gate_off=list(s['gate_off']) or None)
+              nsamp=s['nsamp'], fase=0.0, retrig=[(r[0], r[1], (r[2] if len(r) > 2 else 0) / 256.0) for r in s['retrig']],
+              slides=[(t, d / 256.0) for t, d in s['slides']], gate_off=list(s['gate_off']) or None,
+              knobs=[(t, dict(kd)) for t, kd in s['knobs']])
     return [int(v) for v in m7.render_engine(ev, M7, tables=BLOB, knee=KNEE)], poct, inc0
 
 def run_engine(s, eng=None, watch=False):
     """-> (L, R, steps per call, the engine) for the scenario; calls split at random, every event on a call boundary"""
     e = eng or Eng(s['kind']); e.watch = watch
     rnd = random.Random(s['seed'])
-    sw = s['df'][4] if s['dfon'] else s['slid']
-    dfr = s['df'] if s['dfon'] else DFN
-    ev_t = sorted({t for t, _ in s['retrig']} | {t for t, _ in s['slides']} | set(s['gate_off']))
+    kn = {k: s[k] for k in ('cut', 'res', 'env', 'dec', 'accv', 'slid', 'dfon', 'df')}
+    def put_knobs(kn, ptgt):
+        sw = kn['df'][4] if kn['dfon'] else kn['slid']
+        e.knobs(kn['cut'], kn['res'], kn['env'], kn['dec'], kn['accv'], sw, kn['dfon'], kn['df'] if kn['dfon'] else DFN, ptgt)
+    kn_at = collections.defaultdict(dict)
+    for t, kd in s['knobs']: kn_at[t].update(kd)
+    ev_t = sorted({r[0] for r in s['retrig']} | {t for t, _ in s['slides']} | set(s['gate_off']) | set(kn_at))
     # call boundaries: the frames (the first START at frame offset n0), a random split in half of them, the events
     cuts = set(range(16 - s['n0'], s['nsamp'], 16)) | set(ev_t)
     for f0 in range(16 - s['n0'], s['nsamp'], 16):
         if rnd.random() < 0.5: cuts.add(f0 + rnd.randrange(1, 16))
     cuts = sorted(c for c in cuts if 0 < c < s['nsamp']) + [s['nsamp']]
     ptgt = s['pnote']; gate = 1
-    re_at = dict(s['retrig']); sl_at = dict(s['slides']); go_at = set(s['gate_off'])
+    re_at = {r[0]: r for r in s['retrig']}; sl_at = dict(s['slides']); go_at = set(s['gate_off'])
     e.w('S_GMODE', s['gmode']); e.w('S_GATE', 1)
     if not s['gmode']: e.w('S_GLVL', 32767)
     e.w('S_OSIN', o3out.driv_gain(s['drv'] or 0))
-    e.knobs(s['cut'], s['res'], s['env'], s['dec'], s['accv'], sw, s['dfon'], dfr, ptgt)
+    put_knobs(kn, ptgt)
     e.start(s['acc'], s['wave'], s['pnote'])
     L, R, steps = [], [], []; t = 0
     for c in cuts:
         if t in sl_at: ptgt = s['pnote'] + sl_at[t]
         if t in go_at: e.w('S_GATE', 0)
-        e.knobs(s['cut'], s['res'], s['env'], s['dec'], s['accv'], sw, s['dfon'], dfr, ptgt)
-        if t in re_at and t > 0:
-            e.start(re_at[t], s['wave'], s['pnote']); e.w('S_GATE', 1)
+        if t in kn_at: kn = dict(kn); kn.update(kn_at[t])
+        if t in re_at and t > 0:                          # a START: the knobs, then its note (R_PNOTE = R_PTGT)
+            r_ = re_at[t]; pn = s['pnote'] + (r_[2] if len(r_) > 2 else 0); ptgt = pn
+            put_knobs(kn, ptgt); e.start(r_[1], s['wave'], pn); e.w('S_GATE', 1)
+        else:
+            put_knobs(kn, ptgt)
         if not s['gmode']: e.w('S_GLVL', 32767)
         l, r_, st = e.render(c - t); L += l; R += r_; steps.append(st); t = c
     return L, R, steps, e
@@ -221,6 +229,42 @@ def sequences():
                         dec=30 + 15 * p, acc=acc0, wave=wave, slid=slid, pnote=base, retrig=retrig, slides=slides,
                         gate_off=goff, n0=3 + 2 * p, seed=100 + p))
     return out
+
+KNOB_DF = [(2, 'TRCK'), (3, 'VDEC'), (4, 'SLID'), (5, 'ADEC'), (6, 'SATK'), (8, 'SPD'), (10, 'CUTX'), (11, 'ENVX')]
+def moving_knobs():
+    """every knob the control step reads moving during the notes: every frame, every 7 frames, once; STARTs (one in
+    the same frame as a knob change, one at the same sample), accented and not, slides for SLID"""
+    out = []; NS = 3200 if QUICK else 6400; n0 = 5
+    names = ['cut', 'res', 'env', 'dec', 'accv'] + [nm for _, nm in KNOB_DF] + ['all']
+    for j, nm in enumerate(names):
+        for every, lab in ((1, 'every frame'), (7, 'every 7 frames'), (0, 'once')):
+            rnd = random.Random(1000 + 10 * j + every)
+            times = [16 - n0 + 16 * k for k in range(0, NS // 16, every)][1:] if every else [NS // 2 - 9]
+            rts = [(1600, 0), (3200, 120), (4800, 0)] if not QUICK else [(1600, 0), (2400, 120)]
+            times = sorted(set(times) | {rts[0][0], rts[1][0] - 3})            # at a START, and in its frame
+            ev = []; df = list(DFN)
+            for t in times:
+                kd = {}
+                for k_ in (names[:13] if nm == 'all' else [nm]):
+                    v = rnd.randrange(128)
+                    if k_ in ('cut', 'res', 'env', 'dec', 'accv'): kd[k_] = v
+                    else:
+                        idx = dict((n, i) for i, n in KNOB_DF)[k_]; df[idx] = v; kd['df'] = tuple(df)
+                ev.append((t, kd))
+            out.append(scen('knobs move: %s %s' % (nm.upper(), lab), NS, cut=60, res=90, env=80, dec=50,
+                            acc=0 if j % 2 else 110, dfon=1, df=DFN, wave=j % 2, n0=n0, seed=j, knobs=ev,
+                            retrig=[r for r in rts if r[0] < NS], slides=[(800, 768), (2000, -256)] if nm in ('SLID', 'all') else ()))
+    return out
+
+def start_pitch():
+    """a START sets the pitch to its note: during a slide on the same note and on a new note, new notes in a row"""
+    S = 9600 if not QUICK else 4800
+    return [scen('START during a slide, the same note', S, slid=127, slides=[(800, 12 * 256)], retrig=[(2400, 0), (4000, 127, 0)]),
+            scen('START during a slide, a new note', S, slid=127, slides=[(800, 12 * 256)], retrig=[(2400, 0, 7 * 256), (4000, 127, -5 * 256)]),
+            scen('STARTs on new notes, no slide', S, pnote=16384 - 12 * 256, retrig=[(1600, 0, 3 * 256 + 37), (3200, 100, 24 * 256),
+                                                                          (4000, 0, -12 * 256), (4800, 127, 36 * 256)]),
+            scen('STARTs on new notes, TRCK, slides after', S, dfon=1, df=(25, 0, 100, 64, 90, 50, 0, 0, 1, 0, 0, 0),
+                 retrig=[(1600, 0, 5 * 256), (3200, 127, -7 * 256)], slides=[(2000, 10 * 256), (4000, -9 * 256)])]
 
 def features():
     out = []; S = NOTE // 2
@@ -379,8 +423,8 @@ if __name__ == '__main__':
 
     pool = mp.Pool(max(1, os.cpu_count() or 1))
     groups = [('a1_single_notes', singles()), ('a2_sequences', sequences()), ('a3_features_and_devilish', features()),
-              ('b_driv_0_64_127', driv())]
-    if QUICK: groups = [(n, g_[:4]) for n, g_ in groups]
+              ('b_driv_0_64_127', driv()), ('a7_knobs_move', moving_knobs()), ('a8_start_sets_the_pitch', start_pitch())]
+    if QUICK: groups = [(n, g_[:4] if n[:2] not in ('a7', 'a8') else g_) for n, g_ in groups]
     for gname, ss in groups:
         if gname == 'a1_single_notes': ss[0]['watch'] = True; ss[1]['watch'] = True
         res = pool.map(compare, ss, chunksize=1)
@@ -440,11 +484,17 @@ if __name__ == '__main__':
         c.a[3] = st; c.a[1] = 0x80500000; c.d[6] = y & M32; c.a[7] = STACK
         c.call(label)
         return m.r(0x80500000, 'l'), m.r(0x80500004, 'l'), c.a[1]
-    edges = [0, 1, -1, 63, -63, 64, -64]
-    for v in (1 << 24, 32767 << 6): edges += [v, -v, v + 1, v - 1, -v + 1, -v - 1]
-    ys = list(range(-(1 << 25) // 997 * 997, (1 << 25) + 1, 997)) + edges
+    # the inline output has no clamps: they are dead because y comes from the knee.  The knee's largest output, over
+    # both whole tables (it interpolates between entries and saturates at the last), bounds |y|:
+    kmax = max(max(KNEE[0]), max(KNEE[1]))
+    check('d_knee_bounds_the_output', kmax < (1 << 24) and (kmax >> 6) <= 32767 and all(
+              KNEE[j][i] <= KNEE[j][i + 1] for j in (0, 1) for i in range(96)),
+          'the knee tables rise monotonically to %d (kneg %d): below 2^24 = %d, and %d >> 6 = %d fits 16 bits' % (
+              kmax, max(KNEE[0]), 1 << 24, kmax, kmax >> 6))
+    edges = [0, 1, -1, 63, -63, 64, -64, kmax, -kmax, kmax - 1, -kmax + 1]
+    ys = list(range(-kmax, kmax + 1, 97)) + edges
     nb = sum(1 for y in ys if run_out('o3e_out0_test', y) != run_out('o3_out', y))
-    check('d_out0_inline_eq_o3_out', nb == 0, '%d values of y, %d differ' % (len(ys), nb))
+    check('d_out0_inline_eq_o3_out', nb == 0, '%d values of y over the knee\'s range +-%d, %d differ' % (len(ys), kmax, nb))
 
     # ---- d. MACSR restored, ACC0 0; a dirty ACC0 at entry changes nothing
     okd = []; det = []

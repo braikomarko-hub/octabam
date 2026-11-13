@@ -2257,10 +2257,32 @@ O3_DRV_TH:
         .set    E_GCL,   E_BASE+144     | GATE 303: 1 = closed, E_GCNT control steps ago
         .set    E_GCNT,  E_BASE+148
         .set    E_KGOV,  E_BASE+152     | STAGE B: the SWP governor (unused here)
-        .set    E_TE,    E_BASE+156     | the control step's scratch: the accent wiper's drive E
+        .set    E_ON,    E_BASE+156     | per note: 1 = accented (the MEG decays by ADEC; else by DEC, live)
         .set    E_TON,   E_BASE+160     | D24 conducts
         .set    E_TSA,   E_BASE+164     | the VCA side's accent (saccv)
-        .set    E_END,   E_BASE+168     | 168 of the engine's 256 bytes
+        | the knobs' last values and what the control step derives from them (recomputed only when they move:
+        | group A = the accent network by RES and SPD and the note's ACC; group B = the rest)
+        .set    E_SIG1,  E_BASE+168     | CUT RES ENV DEC, one byte each
+        .set    E_SIGD0, E_BASE+172     | R_DF+0..3: OVDR FM TRCK VDEC
+        .set    E_SIGD2, E_BASE+176     | R_DF+8..11: SPD MUFF CUTX ENVX
+        .set    E_SIGAV, E_BASE+180     | R_ACCV
+        .set    E_KC1,   E_BASE+184     | A: c1, c2, cV of the accent network (RES, the note's ACC)
+        .set    E_KC2,   E_BASE+188
+        .set    E_KCV,   E_BASE+192
+        .set    E_KAON,  E_BASE+196     | A: C13's coefficient alpha with D24 on and off (RES, SPD, ACC)
+        .set    E_KAOFF, E_BASE+200
+        .set    E_KC3,   E_BASE+204     | A: c3 (RES)
+        .set    E_KK,    E_BASE+208     | A: K(RES), the feedback's law
+        .set    E_KOB,   E_BASE+212     | B: the cutoff's base: CUT (or CUTX) + ENV's base + RES's term (+ WAVE R)
+        .set    E_KDEP,  E_BASE+216     | B: the MEG's depth (ENV, ENVX)
+        .set    E_KACCF, E_BASE+220     | B: the accent's octaves per volt (SPD)
+        .set    E_KTRK,  E_BASE+224     | B: TRCK's slope << 12, 0 = off
+        .set    E_KAV,   E_BASE+228     | B: VDEC's decay a step
+        .set    E_KVFL,  E_BASE+232     | B: VDEC's floor
+        .set    E_KK1,   E_BASE+236     | B: 1 - floor - VW
+        .set    E_KACCV, E_BASE+240     | B: the accent's VCA gain (ACCV), Q27
+        .set    E_KAMEG, E_BASE+244     | B: DEC's decay a step (not accented notes)
+        .set    E_END,   E_BASE+248     | 248 of the engine's 256 bytes
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
         .set    E_ONE,   0x7fffffff
@@ -2282,11 +2304,9 @@ O3_DRV_TH:
         add.l   %d6,%d3
         move.l  %d3,\s(%a3)
         .endm
-        .macro  E_OUT0                  | o3_out's DRIV-0 path, copied: d6 = y -> the 16-bit word to L and R
-        CLAMP   %d6,-16777216,16777216
-        asr.l   #SHIFT_OUT,%d6
-        CLAMP   %d6,-32767,32767
-        lsl.l   #8,%d6
+        .macro  E_OUT0                  | o3_out's DRIV-0 path: d6 = y -> the 16-bit word to L and R.  Its two clamps are
+        asr.l   #SHIFT_OUT,%d6          | dead here and left out: y comes from the knee, |y| <= 692,192 (its largest entry),
+        lsl.l   #8,%d6                  | below 2^24, and y >> 6 <= 10,815 fits 16 bits (test_o3e_v7 checks the tables)
         lsl.l   #8,%d6
         move.l  %d6,(%a1)+
         move.l  %d6,(%a1)+
@@ -2580,7 +2600,9 @@ O3_DRV_TH:
 
 | ---- o3e_note_on: a START.  a3 = state, a4 = FP, d2 = track.  May clobber d0, d1, d4, a0, a1 only.
 |      The model's START (its retrig): the next control step, at once, restarts the MEG and the volume decay,
-|      takes the note's constants and keeps the attack, C13, the filter and the phase.
+|      takes the note's constants (ACC, WAVE) and sets the pitch to R_PNOTE (a slide in progress ends there); it
+|      keeps the attack, C13, the filter and the phase.  The knobs (DEC too, for a note without accent) are read
+|      at every control step.
 o3e_note_on:
         moveq   #1,%d0
         move.l  %d0,E_NEW(%a3)
@@ -2635,14 +2657,16 @@ o3e_render:
 | ---- o3e_ctl: THE CONTROL STEP (o3int.h is_note + is_step, the gate of o3k.c core()).  Called from the sample
 |      loop with MACSR 0x20 and ACC0 empty; keeps d7, a1 and a3; clobbers d0-d6, a0, a2, a4-a6 (the loop
 |      reloads its coefficients).  Reads R_* and S_GMODE / S_GATE live; writes S_GLVL under GATE 303.
+|      The knobs' derived constants are recomputed only when a knob moved (or at a START): o3e_kA, o3e_kB.
 o3e_ctl:
         lea     -8(%sp),%sp
         movem.l %d7/%a1,(%sp)
         moveq   #15,%d0
         move.l  %d0,E_CNT(%a3)
+        moveq   #0,%d4                  | d4: the stale groups (bit 0 = A, bit 1 = B)
         | ---- a START (is_note, and the retrig's restarts)
         tst.l   E_NEW(%a3)
-        beq     .Lc_gate
+        beq     .Lc_kn
         clr.l   E_NEW(%a3)
         move.l  R_ACC(%a3),%d0
         move.l  #16909320,%d1
@@ -2654,42 +2678,39 @@ o3e_ctl:
         movclr.l %acc0,%d2
         lsl.l   #2,%d2
         move.l  %d2,E_WRS(%a3)          | 4 a (1 - a)
-        moveq   #0,%d2                  | the accent network: on when accented (STAGE B: and SWP != SELF)
+        moveq   #0,%d2                  | accented?  (the accent network on: STAGE B: and SWP != SELF)
         tst.l   %d0
         beq     .Lc_n0
         moveq   #1,%d2
 .Lc_n0:
+        move.l  %d2,E_ON(%a3)
         move.l  %d2,E_ACCN(%a3)
         beq     .Lc_na
         moveq   #0,%d0                  | accented: ADEC's decay, the 303's attack
         move.b  R_DF+5(%a3),%d0
         lea     O3T_AMEGA,%a0
         move.l  (%a0,%d0.l*4),%d1
+        move.l  %d1,E_AMEG(%a3)
         lea     O3T_AVA,%a0
         move.l  (%a0),%d2
         bra     .Lc_ns0
 .Lc_na:
-        move.l  R_DEC(%a3),%d0          | not accented: DEC's decay, SATK's attack
-        lea     O3T_AMEG,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        moveq   #0,%d0
+        moveq   #0,%d0                  | not accented: SATK's attack (the decay: DEC, live, E_KAMEG)
         move.b  R_DF+6(%a3),%d0
         lea     O3T_AVA,%a0
         move.l  (%a0,%d0.l*4),%d2
 .Lc_ns0:
-        move.l  %d1,E_AMEG(%a3)
         move.l  %d2,E_AVA(%a3)
         move.l  #E_ONE,%d0              | the MEG and the volume decay restart; the attack, C13 are kept
         move.l  %d0,E_MEGT(%a3)
         move.l  %d0,E_E1(%a3)
         move.l  %d0,E_E2(%a3)
-        | the pitch: a START on another note than the slide's base jumps there (the model's retrig keeps the
-        | slide: a START on the same note keeps it)
+        | the pitch: the first START sets the base (E_PBASE, its octaves and increment); every START sets the
+        | pitch to its note (a slide in progress ends here)
         move.l  R_PNOTE(%a3),%d0
-        cmp.l   E_PBASE(%a3),%d0
-        beq     .Lc_gate
+        tst.l   E_PBASE(%a3)
+        bne     .Lc_pb
         move.l  %d0,E_PBASE(%a3)
-        clr.l   E_PST(%a3)
         sub.l   #P_CENTER,%d0
         moveq   #14,%d1
         lsl.l   %d1,%d0                 | semitones Q8 x 2^14 = octaves x 3 x 2^24
@@ -2712,7 +2733,65 @@ o3e_ctl:
         movclr.l %acc0,%d2              | (INC_C3 m) >> 30
         E_SHIP
         move.l  %d2,E_INC0(%a3)
-        move.l  %d2,E_INC(%a3)
+        move.l  R_PNOTE(%a3),%d0
+.Lc_pb:
+        sub.l   E_PBASE(%a3),%d0
+        lsl.l   #8,%d0
+        lsl.l   #8,%d0                  | the note, Q24 semitones from the base
+        move.l  %d0,E_PST(%a3)
+        bsr     o3e_inc
+        moveq   #3,%d4                  | every derived constant: the note's ACC and WAVE are new
+.Lc_kn:
+        | ---- the knobs: CUT RES ENV DEC packed in one long, dEVILish's bytes as two longs, ACCV
+        move.l  R_CUT(%a3),%d0
+        lsl.l   #8,%d0
+        or.l    R_RES(%a3),%d0
+        lsl.l   #8,%d0
+        or.l    R_ENV(%a3),%d0
+        lsl.l   #8,%d0
+        or.l    R_DEC(%a3),%d0
+        move.l  E_SIG1(%a3),%d1
+        cmp.l   %d1,%d0
+        beq     .Lc_k1
+        move.l  %d0,E_SIG1(%a3)
+        eor.l   %d0,%d1
+        and.l   #0x00ff0000,%d1
+        beq     .Lc_k0
+        moveq   #3,%d4                  | RES: both groups
+.Lc_k0:
+        moveq   #2,%d0
+        or.l    %d0,%d4
+.Lc_k1:
+        move.l  R_DF(%a3),%d0           | OVDR FM TRCK VDEC: B
+        cmp.l   E_SIGD0(%a3),%d0
+        beq     .Lc_k2
+        move.l  %d0,E_SIGD0(%a3)
+        moveq   #2,%d0
+        or.l    %d0,%d4
+.Lc_k2:
+        move.l  R_DF+8(%a3),%d0         | SPD MUFF CUTX ENVX: both (SPD scales C13 and the sweep)
+        cmp.l   E_SIGD2(%a3),%d0
+        beq     .Lc_k3
+        move.l  %d0,E_SIGD2(%a3)
+        moveq   #3,%d4
+.Lc_k3:
+        move.l  R_ACCV(%a3),%d0         | ACCV: B
+        cmp.l   E_SIGAV(%a3),%d0
+        beq     .Lc_k4
+        move.l  %d0,E_SIGAV(%a3)
+        moveq   #2,%d0
+        or.l    %d0,%d4
+.Lc_k4:
+        tst.l   %d4
+        beq     .Lc_gate
+        move.l  R_RES(%a3),%d6
+        btst    #0,%d4
+        beq     .Lc_k5
+        bsr     o3e_kA
+.Lc_k5:
+        btst    #1,%d4
+        beq     .Lc_gate
+        bsr     o3e_kB
 .Lc_gate:
         | ---- GATE 303 (o3k.c core(): the note's end, Whittle p. 6): S_GATE falls -> 22 steps (8 ms) at full
         |      level, then 22 steps (8 ms) linear to 0.  The engine owns S_GLVL.  GATE OFF: the shell's S_GLVL.
@@ -2771,18 +2850,9 @@ o3e_ctl:
         cmp.l   %d1,%d0
         beq     .Lc_ns
         move.l  %d0,E_PST(%a3)
-        move.l  #178956971,%d1
-        mac.l   %d0,%d1,%acc0
-        movclr.l %acc0,%d0              | / 12: octaves
-        E_EXP2
-        move.l  E_INC0(%a3),%d2
-        add.l   %d2,%d2
-        mac.l   %d2,%d1,%acc0
-        movclr.l %acc0,%d2              | (inc0 m) >> 30 (inc0 < 2^30: the same as the model's 64-bit product)
-        E_SHIP
-        move.l  %d2,E_INC(%a3)
+        bsr     o3e_inc
 .Lc_ns:
-        | ---- the MEG
+        | ---- the MEG (not accented: DEC's decay, live)
         move.l  E_MEG(%a3),%d0
         move.l  E_MEGT(%a3),%d1
         move.l  %d1,%d2
@@ -2792,7 +2862,11 @@ o3e_ctl:
         movclr.l %acc0,%d2
         add.l   %d2,%d0
         move.l  %d0,E_MEG(%a3)
+        move.l  E_KAMEG(%a3),%d3
+        tst.l   E_ON(%a3)
+        beq     .Lc_md
         move.l  E_AMEG(%a3),%d3
+.Lc_md:
         mac.l   %d1,%d3,%acc0
         movclr.l %acc0,%d1
         move.l  %d1,E_MEGT(%a3)
@@ -2802,7 +2876,6 @@ o3e_ctl:
 .Lc_mv:
         move.l  %d0,%d5                 | mv = min(meg, megt)
         | ---- the accent network (C13, D24, R46, RES pot B, R72): VW to the filter, saccv to the VCA
-        move.l  R_RES(%a3),%d6          | d6 = RES for the rest of the step
         tst.l   E_ACCN(%a3)
         bne     .Lc_an
         move.l  #0x80000000,%d4         | E: no accent
@@ -2821,56 +2894,28 @@ o3e_ctl:
         moveq   #0,%d3
 .Lc_sa:
         move.l  %d3,E_TSA(%a3)          | saccv
-        move.l  %d4,E_TE(%a3)
-        E_ACT   O3T_C1B,O3T_C1S,%d2     | c1
-        E_ACT   O3T_C2B,O3T_C2S,%d7     | c2
+        move.l  E_KC1(%a3),%d2
         mac.l   %d2,%d4,%acc0
-        movclr.l %acc0,%d0
+        movclr.l %acc0,%d6              | c1 E
         move.l  E_VC(%a3),%d1
+        move.l  E_KC2(%a3),%d7
         mac.l   %d7,%d1,%acc0
-        movclr.l %acc0,%d1
-        add.l   %d1,%d0                 | VW0 = c1 E + c2 vc
+        movclr.l %acc0,%d0
+        add.l   %d6,%d0                 | VW0 = c1 E + c2 vc
         cmp.l   %d0,%d4
         ble     .Lc_off                 | D24 conducts when E > VW0
-        E_ACT   O3T_BONB,O3T_BONS,%d3   | b
-        E_ACT   O3T_CVB,O3T_CVS,%a2     | cV
-        mac.l   %a2,%d4,%acc0
-        movclr.l %acc0,%d1              | Veq
+        move.l  E_KCV(%a3),%d0
+        mac.l   %d0,%d4,%acc0
+        movclr.l %acc0,%d1              | Veq = cV E
+        move.l  E_KAON(%a3),%d3
         moveq   #1,%d0
         bra     .Lc_b
 .Lc_off:
-        lea     O3T_BOFF,%a0
-        move.l  (%a0,%d6.l*4),%d3       | b
         moveq   #0,%d1                  | Veq
+        move.l  E_KAOFF(%a3),%d3
         moveq   #0,%d0
 .Lc_b:
         move.l  %d0,E_TON(%a3)
-        moveq   #0,%d0                  | SPD: SLOW = C13 x 4 (b / 4), FAST = C13 / 4 (b x 4)
-        move.b  R_DF+8(%a3),%d0
-        cmp.l   #2,%d0
-        bls     .Lc_s2
-        moveq   #2,%d0                  | MIN2
-.Lc_s2:
-        move.l  %d0,%a4                 | a4 = SPD
-        subq.l  #1,%d0
-        beq     .Lc_sn
-        bmi     .Lc_sf
-        asr.l   #2,%d3
-        bra     .Lc_sn
-.Lc_sf:
-        lsl.l   #2,%d3
-.Lc_sn:
-        move.l  %d3,%d0                 | alpha = 1 - exp(-b) = b - b^2/2 + b^3/6
-        mac.l   %d3,%d0,%acc0
-        movclr.l %acc0,%d0              | b2
-        move.l  #357913941,%a5
-        mac.l   %d3,%a5,%acc0
-        movclr.l %acc0,%a5
-        mac.l   %d0,%a5,%acc0
-        movclr.l %acc0,%a5              | b2 (b / 6)
-        asr.l   #1,%d0
-        sub.l   %d0,%d3
-        add.l   %a5,%d3                 | alpha
         move.l  E_VC(%a3),%d0
         sub.l   %d0,%d1
         mac.l   %d1,%d3,%acc0
@@ -2879,66 +2924,27 @@ o3e_ctl:
         move.l  %d0,E_VC(%a3)           | vc += (Veq - vc) alpha
         tst.l   E_TON(%a3)
         beq     .Lc_vo
-        mac.l   %d2,%d4,%acc0
-        movclr.l %acc0,%d1
         mac.l   %d7,%d0,%acc0
         movclr.l %acc0,%d0
-        add.l   %d1,%d0                 | VW = c1 E + c2 vc
+        add.l   %d6,%d0                 | VW = c1 E + c2 vc
         bra     .Lc_vw
 .Lc_vo:
-        lea     O3T_C3,%a0
-        move.l  (%a0,%d6.l*4),%d1
+        move.l  E_KC3(%a3),%d1
         mac.l   %d1,%d0,%acc0
         movclr.l %acc0,%d0              | VW = c3 vc
 .Lc_vw:
         move.l  %d0,%a6                 | a6 = VW
-        | ---- the cutoff, Q24 octaves
-        move.l  R_CUT(%a3),%d0
-        tst.b   R_DF+10(%a3)
-        beq     .Lc_ct
-        move.l  #O3S_CUTXS,%d1          | CUTX: 157 Hz .. 4.8 kHz, exponential
-        muls.l  %d0,%d1
-        add.l   #O3S_CUTX0,%d1
-        move.l  %d1,%d4
-        bra     .Lc_c1
-.Lc_ct:
-        lea     O3T_CUT,%a0
-        move.l  (%a0,%d0.l*4),%d4
-.Lc_c1:
-        move.l  R_ENV(%a3),%d0
-        lea     O3T_ENVB,%a0
-        move.l  (%a0,%d0.l*4),%d1
-        lea     O3T_RESC,%a0
-        add.l   (%a0,%d6.l*4),%d1
-        add.l   %d1,%d4                 | + ENV's base + RES's cross term
-        lea     O3T_ENVD,%a0
-        move.l  (%a0,%d0.l*4),%d1       | the MEG's depth
-        tst.b   R_DF+11(%a3)
-        beq     .Lc_ex
-        sub.l   (%a0),%d1               | ENVX: 3.84 (d - d(0))
-        move.l  #O3S_ENVX,%d0
-        mac.l   %d0,%d1,%acc0
-        movclr.l %acc0,%d1
-        lsl.l   #3,%d1
-.Lc_ex:
+        | ---- the cutoff, Q24 octaves: the knobs' base + the MEG's depth x mv + the accent's sweep
+        move.l  E_KOB(%a3),%d4
+        move.l  E_KDEP(%a3),%d1
         mac.l   %d1,%d5,%acc0
         movclr.l %acc0,%d1
         add.l   %d1,%d4                 | + depth x mv
-        move.l  #O3S_ACCF,%d0
-        moveq   #2,%d1
-        cmp.l   %a4,%d1
-        bne     .Lc_af
-        add.l   %d0,%d0                 | SPD SLOW: the sweep doubled
-.Lc_af:
+        move.l  E_KACCF(%a3),%d0
         mac.l   %d0,%a6,%acc0
         movclr.l %acc0,%d1
         add.l   %d1,%d4                 | + the accent's VW
-        btst    #2,R_WAVE+3(%a3)
-        beq     .Lc_nr
-        add.l   #O3S_RCONST,%d4         | WAVE R: Roland's factory trim
-.Lc_nr:
-        moveq   #0,%d0
-        move.b  R_DF+2(%a3),%d0
+        move.l  E_KTRK(%a3),%d0
         beq     .Lc_nt
         move.l  %d0,%a5                 | TRCK: Hz += trk x (pitch - C3) in octaves, floor 16 Hz
         move.l  %d4,%d0
@@ -2956,11 +2962,7 @@ o3e_ctl:
         movclr.l %acc0,%d0
         add.l   E_POCT(%a3),%d0         | the pitch, Q24 octaves from C3
         lsl.l   #4,%d0
-        lea     O3T_TRK,%a0
         move.l  %a5,%d2
-        mvs.w   (%a0,%d2.l*2),%d2
-        moveq   #12,%d3
-        lsl.l   %d3,%d2
         mac.l   %d2,%d0,%acc0
         movclr.l %acc0,%d0
         add.l   %d0,%d1
@@ -3007,7 +3009,7 @@ o3e_ctl:
         move.l  #2145336164,%d2         | 0.999
 .Lc_x2:
         E_LERPR O3T_OCTD,%d4            | octd, Q24
-        E_LERPR O3T_KCD,%d6             | kcd, Q30 (RES is not needed past here)
+        E_LERPR O3T_KCD,%d6             | kcd, Q30
         | ---- the four poles, from one table: G_j = g(octd + log2(pi / FS) + log2 r_j)
         move.l  #E_ONE,%d3              | Gamma
         E_GP    O3E_LRU0,E_G1
@@ -3015,17 +3017,15 @@ o3e_ctl:
         E_GP    O3E_LRU2,E_G3
         E_GP    O3E_LRU3,E_G4
         | ---- the feedback kh = K(res) kcd, Q24, capped at 120
-        move.l  R_RES(%a3),%d1
-        lea     O3T_K,%a0
-        move.l  (%a0,%d1.l*4),%d0
+        move.l  E_KK(%a3),%d0
         mac.l   %d0,%d6,%acc0
         movclr.l %acc0,%d0
         add.l   %d0,%d0
         | STAGE B: SWP WHST / SELF (kh x 2), OVDR > 25 (kh x OVK), the SWP governor (kh x kgov) go here
         cmp.l   #120<<24,%d0
-        ble     .Lc_k1
+        ble     .Lc_k9
         move.l  #120<<24,%d0
-.Lc_k1:
+.Lc_k9:
         move.l  %d0,E_KQ(%a3)
         | ---- Dq = 1 / (1 + kh Gamma): one divide (normalised to 16 bits) and one Newton step
         mac.l   %d0,%d3,%acc0
@@ -3063,10 +3063,7 @@ o3e_ctl:
         movclr.l %acc0,%d1
         add.l   %d1,%d0
         move.l  %d0,E_AMP(%a3)          | amp
-        moveq   #0,%d1
-        move.b  R_DF+3(%a3),%d1         | VDEC
-        lea     O3T_AV,%a0
-        move.l  (%a0,%d1.l*4),%d2
+        move.l  E_KAV(%a3),%d2
         move.l  E_E1(%a3),%d3
         mac.l   %d3,%d2,%acc0
         movclr.l %acc0,%d3
@@ -3076,36 +3073,16 @@ o3e_ctl:
         mac.l   %d4,%d2,%acc0
         movclr.l %acc0,%d4
         move.l  %d4,E_E2(%a3)           | e2
-        move.l  #O3S_VFLOOR,%d5
-        moveq   #64,%d2
-        sub.l   %d2,%d1
-        ble     .Lc_v1
-        move.l  #O3S_VFK,%d2            | VDEC above 64: a sustain level
-        muls.l  %d1,%d2
-        add.l   %d2,%d5
-.Lc_v1:
-        move.l  #E_ONE,%d2
-        sub.l   %d5,%d2
-        sub.l   #O3S_VW,%d2
+        move.l  E_KK1(%a3),%d2
         mac.l   %d2,%d3,%acc0
         movclr.l %acc0,%d2
         move.l  #O3S_VW,%d1
         mac.l   %d1,%d4,%acc0
         movclr.l %acc0,%d1
         add.l   %d1,%d2
+        move.l  E_KVFL(%a3),%d5
         add.l   %d2,%d5                 | vdec
-        move.l  #O3S_ACCV,%d1
-        move.l  R_ACCV(%a3),%d2
-        moveq   #64,%d3
-        cmp.l   %d3,%d2
-        beq     .Lc_v2
-        move.l  #O3E_ACCVH,%d1          | (ACCV x k) >> 6 in 32 bits: (ACCV >> 6) k + (((ACCV & 63) k) >> 6)
-        muls.l  %d2,%d1
-        moveq   #O3E_ACCVL,%d3
-        muls.l  %d2,%d3
-        asr.l   #6,%d3
-        add.l   %d3,%d1                 | accv, Q27
-.Lc_v2:
+        move.l  E_KACCV(%a3),%d1
         move.l  E_TSA(%a3),%d2
         mac.l   %d1,%d2,%acc0
         movclr.l %acc0,%d2
@@ -3141,14 +3118,171 @@ o3e_ctl:
 .Lc_v6:
         asr.l   #4,%d0
         move.l  %d0,E_DGAIN(%a3)
-        move.l  R_RES(%a3),%d1          | the VCA input's high-pass, by RES
+        movem.l (%sp),%d7/%a1
+        lea     8(%sp),%sp
+        rts
+
+| ---- o3e_inc: E_INC = the increment at the pitch d0 (Q24 semitones from E_PBASE): (inc0 2^(d0/12)), as the model's
+|      is_inc (inc0 < 2^30: (2 inc0 m) >> 31 is its 64-bit (inc0 m) >> 30).  Clobbers d0-d3, a0.
+o3e_inc:
+        move.l  #178956971,%d1
+        mac.l   %d0,%d1,%acc0
+        movclr.l %acc0,%d0              | / 12: octaves
+        E_EXP2
+        move.l  E_INC0(%a3),%d2
+        add.l   %d2,%d2
+        mac.l   %d2,%d1,%acc0
+        movclr.l %acc0,%d2
+        E_SHIP
+        move.l  %d2,E_INC(%a3)
+        rts
+
+| ---- o3e_kA: group A, the accent network's constants (o3int.h is_step: c1 c2 cV, b on / off through SPD into
+|      alpha, c3), K(RES) and the VCA input's high-pass by RES.  d6 = RES.  Clobbers d0-d3, d5, a0.
+        .macro  E_ALPHA                 | d3 = b, d5 = SPD -> d3 = alpha = 1 - exp(-b) = b - b^2/2 + b^3/6; clobbers d0, d1
+        move.l  %d5,%d0
+        subq.l  #1,%d0
+        beq     .Ln\@                   | NORM
+        bmi     .Lf\@
+        asr.l   #2,%d3                  | SLOW: C13 x 4
+        bra     .Ln\@
+.Lf\@:
+        lsl.l   #2,%d3                  | FAST: C13 / 4
+.Ln\@:
+        move.l  %d3,%d0
+        mac.l   %d3,%d0,%acc0
+        movclr.l %acc0,%d0              | b2
+        move.l  #357913941,%d1
+        mac.l   %d3,%d1,%acc0
+        movclr.l %acc0,%d1
+        mac.l   %d0,%d1,%acc0
+        movclr.l %acc0,%d1              | b2 (b / 6)
+        asr.l   #1,%d0
+        sub.l   %d0,%d3
+        add.l   %d1,%d3
+        .endm
+o3e_kA:
+        E_ACT   O3T_C1B,O3T_C1S,%d2
+        move.l  %d2,E_KC1(%a3)
+        E_ACT   O3T_C2B,O3T_C2S,%d2
+        move.l  %d2,E_KC2(%a3)
+        E_ACT   O3T_CVB,O3T_CVS,%d2
+        move.l  %d2,E_KCV(%a3)
+        lea     O3T_C3,%a0
+        move.l  (%a0,%d6.l*4),%d2
+        move.l  %d2,E_KC3(%a3)
+        lea     O3T_K,%a0
+        move.l  (%a0,%d6.l*4),%d2
+        move.l  %d2,E_KK(%a3)
         lea     O3T_GV,%a0
-        mvs.w   (%a0,%d1.l*2),%d0
+        mvs.w   (%a0,%d6.l*2),%d0
         moveq   #9,%d1
         lsl.l   %d1,%d0
         move.l  %d0,E_GV(%a3)
-        movem.l (%sp),%d7/%a1
-        lea     8(%sp),%sp
+        moveq   #0,%d5                  | SPD, MIN2
+        move.b  R_DF+8(%a3),%d5
+        cmp.l   #2,%d5
+        bls     .LkA1
+        moveq   #2,%d5
+.LkA1:
+        E_ACT   O3T_BONB,O3T_BONS,%d3
+        E_ALPHA
+        move.l  %d3,E_KAON(%a3)
+        lea     O3T_BOFF,%a0
+        move.l  (%a0,%d6.l*4),%d3
+        E_ALPHA
+        move.l  %d3,E_KAOFF(%a3)
+        rts
+
+| ---- o3e_kB: group B: the cutoff's base (CUT / CUTX, ENV's base, RES's term, WAVE R), the MEG's depth (ENV, ENVX),
+|      the sweep's gain (SPD), TRCK, the volume decay (VDEC), ACCV, DEC's decay.  d6 = RES.  Clobbers d0-d3, d5, a0.
+o3e_kB:
+        move.l  R_CUT(%a3),%d0
+        tst.b   R_DF+10(%a3)
+        beq     .LkB1
+        move.l  #O3S_CUTXS,%d1          | CUTX: 157 Hz .. 4.8 kHz, exponential
+        muls.l  %d0,%d1
+        add.l   #O3S_CUTX0,%d1
+        move.l  %d1,%d3
+        bra     .LkB2
+.LkB1:
+        lea     O3T_CUT,%a0
+        move.l  (%a0,%d0.l*4),%d3
+.LkB2:
+        move.l  R_ENV(%a3),%d0
+        lea     O3T_ENVB,%a0
+        move.l  (%a0,%d0.l*4),%d1
+        lea     O3T_RESC,%a0
+        add.l   (%a0,%d6.l*4),%d1
+        add.l   %d1,%d3                 | + ENV's base + RES's cross term
+        btst    #2,E_WAVE+3(%a3)
+        beq     .LkB3
+        add.l   #O3S_RCONST,%d3         | WAVE R: Roland's factory trim (the note's WAVE)
+.LkB3:
+        move.l  %d3,E_KOB(%a3)
+        lea     O3T_ENVD,%a0
+        move.l  (%a0,%d0.l*4),%d1       | the MEG's depth
+        tst.b   R_DF+11(%a3)
+        beq     .LkB4
+        sub.l   (%a0),%d1               | ENVX: 3.84 (d - d(0))
+        move.l  #O3S_ENVX,%d0
+        mac.l   %d0,%d1,%acc0
+        movclr.l %acc0,%d1
+        lsl.l   #3,%d1
+.LkB4:
+        move.l  %d1,E_KDEP(%a3)
+        move.l  #O3S_ACCF,%d0
+        moveq   #0,%d1
+        move.b  R_DF+8(%a3),%d1
+        cmp.l   #2,%d1
+        bcs     .LkB5
+        add.l   %d0,%d0                 | SPD SLOW: the sweep doubled
+.LkB5:
+        move.l  %d0,E_KACCF(%a3)
+        moveq   #0,%d0
+        move.b  R_DF+2(%a3),%d0
+        beq     .LkB6
+        lea     O3T_TRK,%a0
+        mvs.w   (%a0,%d0.l*2),%d0
+        moveq   #12,%d1
+        lsl.l   %d1,%d0                 | TRCK's slope (never 0 when on: TRK[1] = 15)
+.LkB6:
+        move.l  %d0,E_KTRK(%a3)
+        moveq   #0,%d1
+        move.b  R_DF+3(%a3),%d1         | VDEC
+        lea     O3T_AV,%a0
+        move.l  (%a0,%d1.l*4),%d0
+        move.l  %d0,E_KAV(%a3)
+        move.l  #O3S_VFLOOR,%d5
+        moveq   #64,%d2
+        sub.l   %d2,%d1
+        ble     .LkB7
+        move.l  #O3S_VFK,%d2            | VDEC above 64: a sustain level
+        muls.l  %d1,%d2
+        add.l   %d2,%d5
+.LkB7:
+        move.l  %d5,E_KVFL(%a3)
+        move.l  #E_ONE,%d2
+        sub.l   %d5,%d2
+        sub.l   #O3S_VW,%d2
+        move.l  %d2,E_KK1(%a3)
+        move.l  #O3S_ACCV,%d1
+        move.l  R_ACCV(%a3),%d2
+        moveq   #64,%d3
+        cmp.l   %d3,%d2
+        beq     .LkB8
+        move.l  #O3E_ACCVH,%d1          | (ACCV x k) >> 6 in 32 bits: (ACCV >> 6) k + (((ACCV & 63) k) >> 6)
+        muls.l  %d2,%d1
+        moveq   #O3E_ACCVL,%d3
+        muls.l  %d2,%d3
+        asr.l   #6,%d3
+        add.l   %d3,%d1                 | accv, Q27
+.LkB8:
+        move.l  %d1,E_KACCV(%a3)
+        move.l  R_DEC(%a3),%d0
+        lea     O3T_AMEG,%a0
+        move.l  (%a0,%d0.l*4),%d0
+        move.l  %d0,E_KAMEG(%a3)
         rts
 
 | ---- o3e generated: tools/octa303/gen_o3e_v7.py (do not edit by hand)

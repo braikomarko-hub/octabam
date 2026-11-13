@@ -92,6 +92,10 @@ static inline double tpt(double f) { double g = M_PI * f / FS; return g / (1.0 +
 #define F_GOV  16
 #define F_DIAG 32
 #include "o3int.h"
+/* v7.1: knob changes during the render (integer path only): at the first control step at or after o3_kev_at[j], the
+   knobs (every field of the row but the note's: ACC, the accent flag, WAVE, the pitch) become o3_kev_rows[j]. */
+static const int32_t *o3_kev_at = 0, *o3_kev_rows = 0; static int o3_kev_n = 0;
+void o3_set_knob_events(const int32_t *at, const int32_t *rows, int n) { o3_kev_at = at; o3_kev_rows = rows; o3_kev_n = n; }
 #ifdef O3_TRACE
 int32_t o3_tr[8192][8], o3_troct;   /* debug: per control step G1..G4, kq, Dq, gq, inc */
 #endif
@@ -123,7 +127,8 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
     Der d; if (!csint) derive(p, &d, dt);
     IS st;                                                /* v7: the integer control step's state */
     if (csint) { st.meg = 0; st.megt = ONE; st.vc = 0; st.amp = 0; st.e1 = ONE; st.e2 = ONE; st.kgov = ONE; st.kgmin = ONE;
-                 st.pst = 0; st.ptgt = 0; is_note(&st, T, kseg); }
+                 st.pst = 0; st.ptgt = 0; is_note(&st, T, kseg, kseg); }
+    const int32_t *kcur = kseg; int ki = 0;               /* v7.1: the knobs now, the next knob event */
     int32_t mx = 0;
     double GhD = M_PI * p[P_FH] / FS; GhD = GhD / (1.0 + GhD);
     double GvD = M_PI * p[P_FV] / FS; GvD = GvD / (1.0 + GvD);
@@ -168,12 +173,17 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         if ((i % CTL) == 0) {
             /* ---- v6: events ---- */
             int32_t topen = -1;
+            if (csint) { while (ki < o3_kev_n && i >= o3_kev_at[ki]) { kcur = o3_kev_rows + ki * K_N; ki++; } st.k = kcur; }
             if (si < nseg && i >= segstart[si]) {             /* a retrig START: new segment (same knobs, its own accent) */
                 while (si < nseg && i >= segstart[si]) si++;
                 topen = segstart[si - 1];
                 p = pseg + (si - 1) * P_N;
-                if (csint) { is_note(&st, T, kseg + (si - 1) * K_N); st.megt = ONE; st.e1 = ONE; st.e2 = ONE; }
-                else { derive(p, &d, dt); megt = 1.0; e1 = 1.0; e2 = 1.0; }   /* MEG and volume decay restart; amp, vc, filter, phase kept */
+                if (csint) { is_note(&st, T, kseg + (si - 1) * K_N, kcur); st.megt = ONE; st.e1 = ONE; st.e2 = ONE;
+                             /* v7.1: a START sets the pitch to its note (a slide in progress ends here) */
+                             st.pst = st.ptgt = st.kn[K_PSTART]; inc = is_inc(&st, T, st.pst); }
+                else { derive(p, &d, dt); megt = 1.0; e1 = 1.0; e2 = 1.0;   /* MEG and volume decay restart; amp, vc, filter, phase kept */
+                       pst = ptgt = kseg ? kseg[(si - 1) * K_N + K_PSTART] / 16777216.0 : 0.0;
+                       inc = (uint32_t)floor(f0 * pow(2.0, pst / 12.0) / FS * 4294967296.0); }
             }
             while (sl < nsl && i >= slat[sl]) { ptgt = slst[sl]; st.ptgt = (int32_t)floor(slst[sl] * 16777216.0 + 0.5); sl++; }   /* input: semitones -> Q24 */
             if (!csint) {   /* slide: one pole in semitones; the increment is recomputed only when the pitch moved */

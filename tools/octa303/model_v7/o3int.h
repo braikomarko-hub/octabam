@@ -23,7 +23,9 @@ enum {
     TB_N = TB_SC + S_N
 };
 /* ---- per segment (START) knob row ---- */
-enum { K_CUT, K_RES, K_ENV, K_DEC, K_ACC, K_ACCON, K_ACCV, K_SLID, K_WAVE, K_DF0, K_POCT = K_DF0 + 12, K_INC0, K_N };
+enum { K_CUT, K_RES, K_ENV, K_DEC, K_ACC, K_ACCON, K_ACCV, K_SLID, K_WAVE, K_DF0, K_POCT = K_DF0 + 12, K_INC0,
+       K_PSTART,           /* v7.1: the START's pitch, Q24 semitones from the render's note (a START sets the pitch) */
+       K_N };
 
 #ifdef O3_DEBUG                    /* V4: every add / sub / shift / fmul of the control step checked for int32 wrap */
 long o3_dbg_wrap = 0, o3_dbg_div0 = 0, o3_dbg_line = 0;
@@ -75,21 +77,32 @@ typedef struct {
     /* state */
     int32_t meg, megt, vc, amp, e1, e2, kgov, pst, ptgt, kgmin;
     /* per note (START) */
-    int32_t A, wrs, accnet, a_meg, a_va, pitch_oct;
+    int32_t A, wrs, accnet, a_meg, a_va, pitch_oct, on;
     uint32_t inc0;
-    const int32_t *k;
+    const int32_t *k;                  /* the knobs now (v7.1: they may move during a note) */
+    const int32_t *kn;                 /* the note's row: ACC, WAVE, the pitch (latched at the START) */
 } IS;
 
-/* note-on: the per-note constants (ACC, the accent, the decay chosen by the accent, the soft attack) */
-static void is_note(IS *s, const int32_t *T, const int32_t *k) {
-    s->k = k;
-    int acc = k[K_ACC], on = k[K_ACCON];
+/* the increment at pitch np (Q24 semitones from the render's note) */
+static inline uint32_t is_inc(IS *s, const int32_t *T, int32_t np) {
+    int32_t ip; int32_t m = exp2_q30(T, MUL(np, 178956971), &ip);  /* st / 12 */
+    uint64_t v = ((uint64_t)s->inc0 * (uint32_t)m) >> 30; CM;
+    return (uint32_t)(ip >= 0 ? v << ip : v >> -ip);
+}
+
+/* note-on: the per-note constants (ACC, the accent, the decay chosen by the accent, the soft attack).  kn: the note's
+   row (ACC, the accent flag, WAVE, the pitch); k: the knobs now.  v7.1: a non-accented note's decay is DEC read at
+   every control step (a live pot, as on the 303); an accented note's is ADEC's, taken here. */
+static void is_note(IS *s, const int32_t *T, const int32_t *kn, const int32_t *k) {
+    s->k = k; s->kn = kn;
+    int acc = kn[K_ACC], on = kn[K_ACCON];
+    s->on = on;
     s->A = acc * 16909320;                                  /* acc / 127, Q31 */
     s->wrs = SHL(MUL(s->A, SUB(ONE, s->A)), 2);             /* 4 a (1 - a): the pot's source resistance, 0..1 */
     s->accnet = on && k[K_DF0 + 7] != 2;                    /* SWP SELF: no accent to filter and VCA */
-    s->a_meg = on ? T[TB_AMEGA + k[K_DF0 + 5]] : T[TB_AMEG + k[K_DEC]];
+    s->a_meg = on ? T[TB_AMEGA + k[K_DF0 + 5]] : 0;          /* not accented: DEC, live, in is_step */
     s->a_va = on ? T[TB_AVA] : T[TB_AVA + k[K_DF0 + 6]];
-    s->pitch_oct = k[K_POCT]; s->inc0 = (uint32_t)k[K_INC0];
+    s->pitch_oct = kn[K_POCT]; s->inc0 = (uint32_t)kn[K_INC0];
 }
 
 /* the control step.  In: the current knob row, the pk4 peak (SWP), glvl.  Out: G1..G4, kq, Dq, gq, inc, pqmax. */
@@ -101,15 +114,11 @@ static inline void is_step(IS *s, const int32_t *T, const int F, int32_t pk4, in
     /* slide: one pole in Q24 semitones; the increment only when the pitch moved */
     CB; if (s->pst != s->ptgt) {
         int32_t np = ADD(s->pst, MUL(SUB(s->ptgt, s->pst), T[TB_ASL + k[K_SLID]])); CT;
-        CB; if (np != s->pst) {
-            s->pst = np; int32_t ip; int32_t m = exp2_q30(T, MUL(np, 178956971), &ip);  /* st / 12 */
-            uint64_t v = ((uint64_t)s->inc0 * (uint32_t)m) >> 30; CM;
-            *inc = (uint32_t)(ip >= 0 ? v << ip : v >> -ip);
-        }
+        CB; if (np != s->pst) { s->pst = np; *inc = is_inc(s, T, np); }
     }
     /* MEG */
     s->meg = ADD(s->meg, MUL(SUB(s->megt, s->meg), S[S_AATT]));
-    s->megt = MUL(s->megt, s->a_meg);
+    s->megt = MUL(s->megt, s->on ? s->a_meg : T[TB_AMEG + k[K_DEC]]); CT;   /* v7.1: DEC live when not accented */
     int32_t mv = s->meg < s->megt ? s->meg : s->megt; CB;
     /* the accent network: VW = c1 E + c2 vc (D24 on) or c3 vc (off); the ACC dependence (the pot's source resistance
        47 + 50 a(1-a) kOhm) as a chord between the tables at 47 and 59.5 kOhm, weight wrs = 4 a (1 - a) */
@@ -140,7 +149,7 @@ static inline void is_step(IS *s, const int32_t *T, const int F, int32_t pk4, in
     oct = ADD(oct, MUL(dep, mv));
     int32_t accf = spd == 2 ? SHL(S[S_ACCF], 1) : S[S_ACCF]; CB;
     oct = ADD(oct, MUL(accf, VW));
-    CB; if (k[K_WAVE] & 4) oct = ADD(oct, S[S_RCONST]);
+    CB; if (s->kn[K_WAVE] & 4) oct = ADD(oct, S[S_RCONST]);   /* WAVE: the note's (the shell latches it at the START) */
     CB; if (df[2]) {   /* TRCK: Hz += trk x (pitch - C3) in octaves, floor 16 Hz; octave -> Hz -> octave */
         int32_t ip, o2 = oct > (int32_t)(17.9 * 16777216) ? (int32_t)(17.9 * 16777216) : oct; CB;   /* beyond the tables anyway */
         int32_t m = exp2_q30(T, o2, &ip);                                   /* Hz Q12 = m Q30 >> (18 - ip) */

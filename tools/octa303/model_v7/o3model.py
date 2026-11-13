@@ -179,7 +179,7 @@ _lib.o3_render_ex.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ct
 (D_MX, D_MXALL, D_Y4, D_KGOV, D_N) = range(5)
 DF_NEUTRAL = [25, 0, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0]   # OVDR FM TRCK VDEC SLID ADEC / SATK SWP SPD MUFF CUTX ENVX
 EV_DEFAULT = dict(freq_hz=65.62, slides=(), cut=64, res=64, env=64, dec=64, acc=0, wave=0, accv=64, slid=0, dfon=0,
-                  df=DF_NEUTRAL, gmode=1, gate_off=None, nsamp=55125, fase=0.25, retrig=(), poct=None)
+                  df=DF_NEUTRAL, gmode=1, gate_off=None, nsamp=55125, fase=0.25, retrig=(), poct=None, knobs=())
 C3_HZ = 130.8128                                        # TUNE 0 = C3, standard tuning (A4 = 440 Hz); the TRCK zero point.
                                                         # Was 131.24 (2 x the judge's 65.62 Hz); changed 13 Nov 2026 (the shell's owners)
 
@@ -227,8 +227,10 @@ def _seg_params(e, acc, df, M, accon=None):
 
 def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=None, tables=None, knee=None):
     """ev: dict of raw machine values (EV_DEFAULT for the keys and defaults).  slides: [(sample, semitones from the
-    start pitch)], the pitch target; retrig: [sample] or [(sample, acc)], a new START with the same knobs (it reopens
-    the gate); gate_off: a sample or a list of samples where the gate closes; poct: the note's pitch in octaves from C3,
+    start pitch)], the pitch target; retrig: [sample] or [(sample, acc)] or [(sample, acc, semitones from the start
+    pitch)], a new START (it reopens the gate; v7.1: it sets the pitch to its note, 0 when not given, and ends a slide);
+    knobs (v7.1, the integer path): [(sample > 0, dict of cut res env dec accv slid dfon df)], the knobs moving during
+    the render (OVDR FM SWP MUFF must stay as they start: those select the kernel's variant); gate_off: a sample or a list of samples where the gate closes; poct: the note's pitch in octaves from C3,
     Q24, as the engine computes it from R_PNOTE (None: from freq_hz; it only matters with TRCK).
     Events act at the first control step (16 samples) at or after their sample.  Returns int32 y (before o3_out);
     with want_diag also a dict of the kernel's maxima (diag=True tracks every internal state).
@@ -237,21 +239,29 @@ def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=No
     e = dict(EV_DEFAULT); e.update(ev)
     bad = [k for k in ev if k not in EV_DEFAULT]
     if bad: raise KeyError('unknown event key(s): %s' % bad)
+    KK = ('cut', 'res', 'env', 'dec', 'accv', 'slid', 'dfon', 'df')
+    kev = []                                            # v7.1: the knobs after each knob event
+    cur = {k: e[k] for k in KK}
+    for t_, kd in sorted(e['knobs'], key=lambda x: x[0]):
+        bad = [k for k in kd if k not in KK]
+        if bad or int(t_) <= 0: raise KeyError('knob event: keys %s, sample %d' % (bad, t_))
+        cur = dict(cur); cur.update(kd); kev.append((int(t_), cur))
     raw = [e[k] for k in ('cut', 'res', 'env', 'dec', 'acc', 'accv', 'slid')] + list(e['df']) + \
-          [r[1] for r in e['retrig'] if isinstance(r, (tuple, list))]
+          [r[1] for r in e['retrig'] if isinstance(r, (tuple, list))] + \
+          [k_[n] for _, k_ in kev for n in ('cut', 'res', 'env', 'dec', 'accv', 'slid')] + [v for _, k_ in kev for v in k_['df']]
     if any(not 0 <= int(v) <= 127 for v in raw):         # the machine's raw range: outside it the integer kernel
         raise ValueError('raw knob values must be 0..127: %s' % raw)   # overflows (C undefined behaviour)
     df = [int(v) for v in (e['df'] if e['dfon'] else DF_NEUTRAL)]
     for j in (7, 8, 9): df[j] = min(df[j], 2)          # the selects (MIN2)
     for j in (10, 11): df[j] = min(df[j], 1)
     nsamp = int(e['nsamp'])
-    segs = [(0, int(e['acc']))]
+    segs = [(0, int(e['acc']), 0.0)]
     for r in e['retrig']:
-        s, a = (r if isinstance(r, (tuple, list)) else (r, e['acc']))
-        segs.append((int(s), int(a)))
+        r = tuple(r) if isinstance(r, (tuple, list)) else (r, e['acc'])
+        segs.append((int(r[0]), int(r[1]), float(r[2]) if len(r) > 2 else 0.0))
     segs.sort(key=lambda t: t[0])
-    P = np.ascontiguousarray(np.concatenate([_seg_params(e, a, df, M, _accon) for _, a in segs]))
-    S = np.array([s for s, _ in segs], np.int32); S[0] = 0
+    P = np.ascontiguousarray(np.concatenate([_seg_params(e, a, df, M, _accon) for _, a, _ in segs]))
+    S = np.array([s for s, _, _ in segs], np.int32); S[0] = 0
     sl = sorted(e['slides'], key=lambda t: t[0])
     SA = np.array([int(s) for s, _ in sl] or [0], np.int32); SS = np.array([float(v) for _, v in sl] or [0.0])
     X = np.zeros(X_N)
@@ -268,13 +278,26 @@ def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=No
     if cs == 'int' and M['acc_mode'] <= 0.5: cs = 'float'
     X[X_CSINT] = 1.0 if cs == 'int' else 0.0
     f0 = float(e['freq_hz']); inc0 = int(np.floor(f0 / FS * 4294967296.0))
+    poct = int(np.floor(np.log2(f0 / C3_HZ) * 16777216.0 + 0.5)) if e['poct'] is None else int(e['poct'])
+    inc0s = int(np.array(inc0, np.uint32).view(np.int32))
+    def krow(k_, a, on, pst):
+        d_ = [int(v) for v in (k_['df'] if k_['dfon'] else DF_NEUTRAL)]
+        for j in (7, 8, 9): d_[j] = min(d_[j], 2)
+        for j in (10, 11): d_[j] = min(d_[j], 1)
+        sl_ = d_[4] if k_['dfon'] else int(k_['slid'])
+        return [k_['cut'], k_['res'], k_['env'], k_['dec'], a, int(on), k_['accv'], sl_, e['wave']] + d_ + [poct, inc0s, pst]
     Krows = []
-    for s_, a in segs:
+    for s_, a, pst in segs:
         on = (a > 0) if _accon is None else _accon
-        Krows.append([e['cut'], e['res'], e['env'], e['dec'], a, int(on), e['accv'], slid, e['wave']] + df +
-                     [int(np.floor(np.log2(f0 / C3_HZ) * 16777216.0 + 0.5)) if e['poct'] is None else int(e['poct']),
-                      int(np.array(inc0, np.uint32).view(np.int32))])
+        Krows.append(krow(e, a, on, int(np.floor(pst * 16777216.0 + 0.5))))
     KS = np.ascontiguousarray(np.array(Krows, np.int64).astype(np.int32))
+    assert KS.shape[1] == _lib.o3_k_n()
+    for _, k_ in kev:
+        d_ = k_['df'] if k_['dfon'] else DF_NEUTRAL
+        if [d_[0], d_[1], min(d_[7], 2), min(d_[9], 2)] != [df[0], df[1], df[7], df[9]]:
+            raise ValueError('knob events may not move OVDR, FM, SWP or MUFF')
+    KA = np.array([t_ for t_, _ in kev] or [0], np.int32)
+    KR = np.ascontiguousarray(np.array([krow(k_, 0, 0, 0) for _, k_ in kev] or [[0] * KS.shape[1]], np.int64).astype(np.int32))
     TB = (int_tables(M) if tables is None else np.ascontiguousarray(np.asarray(tables, np.int64).astype(np.int32))) \
         if cs == 'int' else np.zeros(1, np.int32)
     if cs == 'int': assert len(TB) == _lib.o3_tab_n()
@@ -288,8 +311,12 @@ def render_engine(ev, M=DEFAULT, want_diag=False, diag=False, cs=None, _accon=No
         X[X_DIAG] = -1.0
         return _lib.o3_render_ex(dp(P), ip(S), len(segs), dp(X), ip(SA), dp(SS), len(sl), ip(GA), len(go), ip(out), ip(KNg), ip(KPs), ip(D),
                                  dp(ct), CTN, COCT0, CSTEP, ip(KS), ip(TB))
-    _lib.o3_render_ex(dp(P), ip(S), len(segs), dp(X), ip(SA), dp(SS), len(sl), ip(GA), len(go), ip(out), ip(KNg), ip(KPs), ip(D),
-                      dp(ct), CTN, COCT0, CSTEP, ip(KS), ip(TB))
+    _lib.o3_set_knob_events(ip(KA), ip(KR), len(kev))
+    try:
+        _lib.o3_render_ex(dp(P), ip(S), len(segs), dp(X), ip(SA), dp(SS), len(sl), ip(GA), len(go), ip(out), ip(KNg), ip(KPs), ip(D),
+                          dp(ct), CTN, COCT0, CSTEP, ip(KS), ip(TB))
+    finally:
+        _lib.o3_set_knob_events(None, None, 0)
     if want_diag:
         return out, dict(maxstate=int(D[D_MX]), maxall=int(D[D_MXALL]), y4peak=int(D[D_Y4]), kgov_min=D[D_KGOV] / 1048576.0)
     return out
