@@ -178,12 +178,12 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                 double pn = pst + (ptgt - pst) * a_sl;
                 if (pn != pst) { pst = pn; inc = (uint32_t)floor(f0 * pow(2.0, pst / 12.0) / FS * 4294967296.0); }
             }
-            if (gmode) {   /* v6 gate end (Whittle p. 6): 8 ms at full level (22 steps), then 8 ms linear to 0 (22 steps) */
+            if (gmode) {   /* v6 gate end (Whittle p. 6): 8 ms at full level (22 steps), then 8 ms linear to 0 (22 steps); the count stops at 44 */
                 int32_t tclose = -1;
                 while (gk < ngat && i >= gat[gk]) { tclose = gat[gk]; gk++; }
                 if (tclose >= 0 && tclose >= topen) { if (!gclosed) { gclosed = 1; gcnt = 0; } }
                 else if (topen >= 0) { gclosed = 0; glvl = 32767; }          /* a START reopens the gate at once */
-                if (gclosed) { gcnt++; glvl = gcnt <= 22 ? 32767 : (gcnt >= 44 ? 0 : (int32_t)((32767 * (44 - gcnt)) / 22)); }
+                if (gclosed) { if (gcnt < 44) gcnt++; glvl = gcnt <= 22 ? 32767 : (gcnt >= 44 ? 0 : (int32_t)((32767 * (44 - gcnt)) / 22)); }
             }
             if (csint) {   /* ---- v7: the integer control step ---- */
                 int32_t Gx[4], gq;

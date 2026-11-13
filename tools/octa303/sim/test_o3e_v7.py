@@ -350,6 +350,16 @@ if __name__ == '__main__':
           '; '.join('%s: model %d, engine %d differ' % r for r in res))
     pool.close()
 
+    # GATE 303 closed for 3.5 s after a note: engine == model, silent from the end of the release, S_GLVL 0 and the
+    # step count held at 44 (it stops past the ramp's end, so it never wraps and reopens the note)
+    _sl = scen('gate closed 3.5 s', 4000 + int(3.5 * FS), cut=90, res=110, env=100, dec=100, acc=127, gate_off=[4000], seed=77)
+    _e = Eng('y'); _yl = model_y(_sl, C['O3E_INCC3'])[0]; _Ll = run_engine(_sl, _e)[0]
+    _nd = sum(1 for i in range(_sl['nsamp']) if _Ll[i] != _yl[i] & M32)
+    _end = 4000 + 16 * 46
+    _loud = sum(1 for v in _Ll[_end:] if v != 0)
+    check('a6_gate_closed_long', _nd == 0 and _loud == 0 and _e.r('S_GLVL') == 0 and _e.r('E_GCNT') == 44,
+          '%d samples, %d differ; %d non-zero samples after the release (from sample %d); S_GLVL %d, E_GCNT %d' % (
+              _sl['nsamp'], _nd, _loud, _end, _e.r('S_GLVL'), _e.r('E_GCNT')))
     # the instrument is not blind: builds with one constant nudged must differ from the model (the C3 increment + 1;
     # the MEG's attack coefficient + 0.1 %)
     _sab = []

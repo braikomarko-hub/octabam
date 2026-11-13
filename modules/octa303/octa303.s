@@ -2731,8 +2731,12 @@ o3e_ctl:
         clr.l   E_GCNT(%a3)
 .Lc_g1:
         move.l  E_GCNT(%a3),%d1
+        moveq   #44,%d2
+        cmp.l   %d2,%d1
+        bge     .Lc_g2                  | the count stops past the ramp's end (it never wraps)
         addq.l  #1,%d1
         move.l  %d1,E_GCNT(%a3)
+.Lc_g2:
         move.l  #32767,%d0
         moveq   #22,%d2
         cmp.l   %d2,%d1
