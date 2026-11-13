@@ -624,6 +624,8 @@ sy_render:
         bsr     o3_ctrl
         clr.l   S_P11(%a3)              | v8.2 P11: the control step may move the level's step
 .Lnoctl:
+        tst.l   S_P11(%a3)              | v8.5: closed at its fixed point since the last control step: the
+        bgt     .Lp11                   | whole voice waits (VCO, filter, FM: paused; the word is the same)
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
         move.l  S_OVCA(%a3),%d0
