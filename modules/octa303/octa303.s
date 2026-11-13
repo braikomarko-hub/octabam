@@ -362,11 +362,10 @@
         muls.l  \cof,\dst
         asr.l   #8,\dst
         .endm
-        .macro  FM411 dst, cof
+        .macro  FM411 dst, cof          | v8.4: the sample loop only, where d7 = 11 (>> 11 in one shift)
         asr.l   #4,\dst
         muls.l  \cof,\dst
-        asr.l   #8,\dst
-        asr.l   #3,\dst
+        asr.l   %d7,\dst
         .endm
         .macro  FM66 dst, cof
         asr.l   #6,\dst
@@ -611,6 +610,10 @@ sy_render:
         move.l  %d7,o3_pn               | and how many samples it renders
         moveq   #1,%d0
         move.l  %d0,o3_pflag
+        move.l  %d7,%d0                 | v8.4: the loop runs to a6 (two longs a sample), so d7 is free:
+        lsl.l   #3,%d0
+        lea     (%a1,%d0.l),%a6
+        moveq   #11,%d7                 | it holds the shift 11 (FM411, the VCO's >> 11) for the whole loop
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -667,8 +670,7 @@ sy_render:
         tst.l   S_WAVE(%a3)
         bne     .Lsq
         move.l  %d4,%d6                 | saw
-        lsr.l   #8,%d6
-        lsr.l   #3,%d6
+        lsr.l   %d7,%d6
         sub.l   #0x100000,%d6
         cmp.l   %d5,%d4                 | polyBLEP only within one increment of the wrap
         bcs     .Lsb
@@ -684,8 +686,8 @@ sy_render:
         bra     .Losc
 .Lsq:
         move.l  %d4,%d6                 | v7.6: Q8's square (o3q8.py) = its cycle's smooth part (a table, 128
-        lsr.l   #8,%d6                  | points, linear) + SQK * the saw (with its polyBLEP): the one hard edge
-        lsr.l   #3,%d6                  | is the saw's reset
+        lsr.l   %d7,%d6                 | points, linear) + SQK * the saw (with its polyBLEP): the one hard edge
+                                        | is the saw's reset
         sub.l   #0x100000,%d6
         cmp.l   %d5,%d4
         bcs     .Lqb
@@ -1022,14 +1024,14 @@ sy_render:
         lsl.l   #8,%d6
         move.l  %d6,(%a1)+
         move.l  %d6,(%a1)+
-        subq.l  #1,%d7
+        cmpa.l  %a6,%a1                 | v8.4: to the end pointer (d7 holds 11)
         bne     .Lloop
         bra     .Ldone
 .Lp11:                                  | v8.2 P11: closed, fixed point: the same word, S_OVCA unchanged
         move.l  S_P11OUT(%a3),%d6
         move.l  %d6,(%a1)+
         move.l  %d6,(%a1)+
-        subq.l  #1,%d7
+        cmpa.l  %a6,%a1                 | v8.4: to the end pointer (d7 holds 11)
         bne     .Lloop
 .Ldone:
         tst.l   o3_pflag                | stopwatch: a call that ran the sample loop adds its times to its track's row
