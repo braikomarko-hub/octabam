@@ -139,17 +139,22 @@ class Rig:
         for i, w in enumerate(words): m.w(FRAME + 2 * i, 'w', w)
         m.w(NIBBLE + track, 'b', 0x10 if startbit else 0)
         m.w(CUR, 'l', 0xABCDEF00)
+        m.w(CURSOR, 'l', CUR)                        # v8.6: each call's header at CUR (the skip advances CURSOR, as stock)
         self.feed = feed
         self.cpu.a[7] = STACK
         for v in reversed([track, 0x800000e4, start, end]): self.cpu.a[7] -= 4; m.w(self.cpu.a[7], 'l', v)
         sp0 = self.cpu.a[7]
+        n_seen = len(self.seen)
         for r in range(8): self.cpu.d[r] = 0x11110000 + r
         for r in range(7): self.cpu.a[r] = 0x22220000 + r
         self.cpu.call('sy_render')
         assert self.cpu.a[7] == sp0, 'stack not balanced'
         for r in range(2, 8): assert self.cpu.d[r] == 0x11110000 + r, 'd%d not preserved' % r
         for r in range(2, 7): assert self.cpu.a[r] == 0x22220000 + r, 'a%d not preserved' % r
-        assert self.cpu.d[0] == 0xC0DE0000 + track, 'stock return value not handed back'
+        # v8.6: a latched OCTA303 track skips the stock call (CX OSC's way) and returns 0, as CX OSC's
+        # sy_call; the frame loop discards the value (0x4000d52c: d0 is overwritten at once)
+        self.stock_called = len(self.seen) > n_seen
+        assert self.cpu.d[0] == (0xC0DE0000 + track if self.stock_called else 0), 'stock return value not handed back'
         n = end - start
         return [m.r(CUR + 16 + 8 * i, 'l') for i in range(n)], [m.r(CUR + 20 + 8 * i, 'l') for i in range(n)]
 

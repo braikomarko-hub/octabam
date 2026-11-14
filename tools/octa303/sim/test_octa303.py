@@ -220,15 +220,22 @@ rig = Rig(); rig.path(4, '/AUDIO/TB303.WAV'); rig.voice(2, True, 4); rig.machine
 rig.cpu.mem.w(RS + 4, 'l', 7)
 pos0 = rig.positions(2); w = W(5, 90, 100); rig.seen.clear()
 rig.call(2, w, 0, 16, True, SILENCE)
-_, words_seen = rig.seen[-1]
-check('neutral_ptch_rate_for_the_stock_call', words_seen[0] == 0x4000 and words_seen[3] == 0x7f00, '%04x %04x' % (words_seen[0], words_seen[3]))
+# v8.6: our track skips the stock renderer (CX OSC's sy_call): the header is what stock writes
+# (count, start, rate 1.0, the ring word) and CURSOR moves past the 16 pairs, as after stock
+m = rig.cpu.mem
+check('no_stock_call_on_our_track', not rig.seen and not rig.stock_called)
+check('header_as_stock_writes_it', [m.r(CUR + 4 * i, 'l') for i in range(4)] == [16, 0, 0x04000000, 0]
+      and m.r(CURSOR, 'l') == CUR + 16 + 8 * 16, '%08x %08x' % (m.r(CUR, 'l'), m.r(CURSOR, 'l')))
 check('ptch_rate_restored_after', [rig.cpu.mem.r(FRAME + 2 * i, 'w') for i in range(6)] == w)
 check('carrier_positions_pinned', rig.positions(2) == pos0)
 check('retrig_count_cleared_at_303_start', rig.cpu.mem.r(RS + 4, 'l') == 0)
 rig.cpu.mem.w(RS + 4, 'l', 7)
-rig.call(2, w, 0, 5, True, SILENCE)                       # a first call: nothing neutralised
-_, words_first = rig.seen[-1]
-check('first_call_not_neutralised', words_first == w)
+rig.call(2, w, 0, 5, True, SILENCE)                       # a first call: nothing neutralised, no stock call
+check('first_call_no_stock_call', not rig.stock_called and m.r(CUR, 'l') == 5 and m.r(CUR + 4, 'l') == 0
+      and m.r(CURSOR, 'l') == CUR + 16 + 8 * 5)
+check('first_call_record_untouched', [m.r(FRAME + 2 * i, 'w') for i in range(6)] == w)
+rig.call(2, w, 5, 16, False, SILENCE)                     # its second call: the ring word from start 5
+check('second_call_header', [m.r(CUR + 4 * i, 'l') for i in range(4)] == [11, 5, 0x04000000, (5 << 26) & 0xFFFFFFFF])
 check('retrig_count_kept_without_start', rig.cpu.mem.r(RS + 4, 'l') == 7)
 
 # v7.9: a TB303* sample on a plain FLEX track is a sample: the stock renderer's, byte for byte

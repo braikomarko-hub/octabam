@@ -569,12 +569,42 @@ sy_render:
         move.l  (%a0)+,(%a1)+
         moveq   #1,%d4
 .Lstock:
+        moveq   #NTRACKS-1,%d0          | v8.6: one of OUR tracks (latched): no stock call.  The stock FLEX
+        cmp.l   %d0,%d2                 | renderer would play the slot's sample under the 303 every frame
+        bhi     .Lstockcall             | (the carrier, its positions pinned: it never ends) -- ~14 us of PRE
+        tst.l   S_LATCHED(%a3)          | on a track whose slot holds a sample (13 Nov 2026, machine).  As CX
+        beq     .Lstockcall             | OSC's sy_call (sam/modules/cxosc/poly.s, PR #906): write what stock
+        move.l  64(%sp),%d0             | would -- the count, the start, rate 1.0, the ring word -- and silent
+        sub.l   60(%sp),%d0             | pairs; the 303 overwrites the pairs below.
+        move.l  %d0,(%a2)
+        move.l  60(%sp),4(%a2)
+        move.l  #0x04000000,%d1
+        move.l  %d1,8(%a2)
+        move.l  60(%sp),%d1
+        lsl.l   #8,%d1
+        lsl.l   #8,%d1
+        lsl.l   #8,%d1
+        lsl.l   #2,%d1
+        move.l  %d1,12(%a2)
+        lea     16(%a2),%a0
+        add.l   %d0,%d0
+        beq     .Lnatend
+.Lnatclr:
+        clr.l   (%a0)+
+        subq.l  #1,%d0
+        bne     .Lnatclr
+.Lnatend:
+        move.l  %a0,CURSOR
+        moveq   #0,%d0
+        bra     .Lcalled
+.Lstockcall:
         move.l  64(%sp),-(%sp)          | end
         move.l  64(%sp),-(%sp)          | start
         move.l  64(%sp),-(%sp)          | ping
         move.l  64(%sp),-(%sp)          | track
         jsr     STOCK_RENDER
         lea     16(%sp),%sp
+.Lcalled:
         move.l  %d0,44(%sp)             | the stock return value, handed back
         move.l  52(%sp),%d2
         moveq   #NTRACKS-1,%d0
