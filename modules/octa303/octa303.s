@@ -10,8 +10,10 @@
 |
 | THE CALL (Tim Hastie's poly.s 2.9, sy_render): sy_render(track, ping, start, end) replaces the
 | kind table's FLEX entry; the packer calls it once a 16-sample frame, twice when a START splits the
-| frame ([0,n) then [n,16)); the stock renderer is called every time with the four arguments and its
-| return value is handed back.  On the frame's last call (end == 16) of an OCTA303 track the record's
+| frame ([0,n) then [n,16)); the stock renderer is called with the four arguments and its return value
+| is handed back -- every time with O3_SKIP_STOCK = 0; with 1 (vFable, the default) a latched OCTA303
+| track's calls run it only on the last call of a frame with a START, and the others write the block's
+| header themselves and hand back 0 (.Lskip).  On the frame's last call (end == 16) of an OCTA303 track the record's
 | PTCH and RATE words are set to 0x4000 / 0x7f00 (rate 1.0) and the voice's sample positions are saved,
 | both restored after the stock call (the carrier never ends); at the START the packer's latched retrig
 | count is cleared.  Then the engine overwrites the samples the stock call shipped (header byte 3 = how
@@ -126,6 +128,9 @@
         .set    E_BASE,256                      | 256..1023: the engine's
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024
+        .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
+        .set    O3_SKIP_STOCK,1                 |   FLEX renderer (sy_render, .Lskip); 0 = the shell before it
+        .endif
 
 | ---- shell constants
         .set    SHIFT_OUT,       6               | o3_out: the 16-bit sample = y >> 6
@@ -271,7 +276,11 @@ sy_render:
         moveq   #0,%d4                  | 1 = PTCH/RATE and the positions are neutralised for the call
         moveq   #16,%d1
         cmp.l   64(%sp),%d1             | the frame's last call?
+        .if     O3_SKIP_STOCK
+        bne     .Lfirst                 | a first call [0,n): a latched track's is ours alone (below)
+        .else
         bne     .Lstock
+        .endif
         lea     NIBBLE,%a0
         add.l   %d2,%a0
         btst    #4,(%a0)                | a voice starts this frame: whose sample?
@@ -303,6 +312,12 @@ sy_render:
         beq     .Lstock
         bsr     o3_params               | this call's knobs, before the record is neutralised
         bsr     o3_gate                 | v7.0: SETUP's GATE (OFF: the AMP decides, as v6.5e-v6.9)
+        .if     O3_SKIP_STOCK
+        lea     NIBBLE,%a0
+        add.l   %d2,%a0
+        btst    #4,(%a0)                | a voice starts this frame: the stock call runs, neutralised, as before
+        beq     .Lskip                  | no START: the stock renderer has nothing of ours to do
+        .endif
         move.w  (%a4),%d0
         move.w  %d0,S_WPTCH+2(%a3)
         move.w  6(%a4),%d0
@@ -319,6 +334,41 @@ sy_render:
         move.l  (%a0)+,(%a1)+
         move.l  (%a0)+,(%a1)+
         moveq   #1,%d4
+        .if     O3_SKIP_STOCK
+        bra     .Lstock
+| ---- vFable: a latched OCTA303 track's call without a START does not run the stock FLEX renderer (its samples
+|      were overwritten every time; with a sample bound it read that sample every frame).  The header is the one
+|      CX OSC's sy_call writes (modules/cxosc/poly.s: count, ring start, rate 1.0 Q26, start << 26), then 2 n
+|      silent longs the engine fills, the cursor past them, and 0 handed back (sy_call's and ANALOG BD's value).
+|      PTCH, RATE and the voice's positions are not touched: nothing reads them for this call.  The frame of a
+|      START keeps the stock call exactly as it was (O3_SKIP_STOCK = 0 is the shell before this, bit for bit).
+.Lfirst:
+        tst.l   S_LATCHED(%a3)
+        beq     .Lstock                 | not an OCTA303 track (or its first note's frame): stock
+        bsr     o3_params               | a first call [0,n): this call's knobs, as .Lnorest did
+.Lskip:
+        move.l  64(%sp),%d0
+        sub.l   60(%sp),%d0             | n = end - start
+        move.l  %d0,(%a2)               | +0  the count (byte 3)
+        move.l  60(%sp),%d1
+        move.l  %d1,4(%a2)              | +4  the start in the ring
+        move.l  #0x04000000,%a0
+        move.l  %a0,8(%a2)              | +8  rate 1.0, Q26
+        moveq   #26,%d7
+        lsl.l   %d7,%d1
+        move.l  %d1,12(%a2)             | +12 the read position, Q26
+        lea     16(%a2),%a0
+        add.l   %d0,%d0                 | L and R
+        beq     .Lsk_end
+.Lsk_clr:
+        clr.l   (%a0)+
+        subq.l  #1,%d0
+        bne     .Lsk_clr
+.Lsk_end:
+        move.l  %a0,CURSOR
+        clr.l   44(%sp)                 | handed back in place of the stock return value
+        bra     .Lrender
+        .endif
 .Lstock:
         move.l  64(%sp),-(%sp)          | end
         move.l  64(%sp),-(%sp)          | start

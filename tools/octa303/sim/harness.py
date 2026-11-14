@@ -4,7 +4,9 @@ Tim Hastie's poly.s 2.9 documents it: sy_render(track, ping, start, end), one or
 (byte 0 alive, +8 the settings record, +64..+83 the sample positions), the settings records'
 paths, the packer's event byte (bit 4 = START), its render state (+4 retrig count), the DSP
 parameter record (halfwords raw<<8).  The mocked stock renderer records what it was called with,
-ships samples, advances the positions and returns a value.
+ships samples, advances the positions and returns a value.  With O3_SKIP_STOCK (octa303.s's switch, 1 by
+default) a latched track's call without a START never reaches it: Rig.call then checks the skip contract
+(the header, the silent block, the cursor, 0 handed back, nothing else written).  Code written by Claude.
 """
 import os, sys, random
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,15 +40,26 @@ def remix_inc(devilish=True):
     return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
             + ''.join('        .set    %s, 0\n' % f for f in hooks_flags()))
 
-def _unflag(s):
+LOCAL_FLAGS = {'O3_SKIP_STOCK': 1}      # octa303.s's own assembly switches (its .ifndef default), by value
+
+def _unflag(s, local=None):
     """The .if / .else / .endif blocks on a HOOKS flag resolved as OCTA303 alone builds them (every
-    flag 0): cfsim has no conditional assembly."""
+    flag 0), and those on one of the file's own switches (LOCAL_FLAGS, or `local`) by its value; an
+    .ifndef block (a switch's default) is dropped: cfsim has no conditional assembly."""
     flags, out, keep = set(hooks_flags()), [], [True]
+    loc = dict(LOCAL_FLAGS); loc.update(local or {})
     for line in s.split('\n'):
         tok = line.split('|')[0].split()
         if tok[:1] == ['.if']:
+            if tok[1:] and tok[1] in loc and len(tok) == 2:
+                keep.append(bool(loc[tok[1]]))
+                continue
             if tok[1:] and tok[1] not in flags and all(keep):    # nested in a dropped block: any symbol
                 raise ValueError('cfsim harness: .if on ' + ' '.join(tok[1:]) + ', not a HOOKS flag')
+            keep.append(False)
+        elif tok[:1] == ['.ifndef']:
+            if tok[1:] != [t for t in tok[1:] if t in loc]:
+                raise ValueError('cfsim harness: .ifndef on ' + ' '.join(tok[1:]) + ', not a local switch')
             keep.append(False)
         elif tok[:1] == ['.else']:
             keep[-1] = not keep[-1]
@@ -56,15 +69,25 @@ def _unflag(s):
             out.append(line)
     return '\n'.join(out)
 
-def source(devilish=True):
+def source(devilish=True, local=None):
     s = open(SRC_PATH).read()
     assert s.count('.include "remix.inc"') == 1
-    return _unflag(s.replace('        .include "remix.inc"', remix_inc(devilish).rstrip('\n'), 1))
+    return _unflag(s.replace('        .include "remix.inc"', remix_inc(devilish).rstrip('\n'), 1), local)
+
+class LogMem(Mem):
+    """cfsim's memory with a write log: (address, size) of every write while `log` is a list"""
+    log = None
+    def w(self, a, sz, v):
+        if self.log is not None: self.log.append((a & M32, sz))
+        Mem.w(self, a, sz, v)
+
+SZB = {'b': 1, 'w': 2, 'l': 4}
 
 class Rig:
     def __init__(self, src=None):
-        self.cpu = CPU(src or source(), hooks={STOCK: self._stock})
+        self.cpu = CPU(src or source(), mem=LogMem(), hooks={STOCK: self._stock})
         m = self.cpu.mem
+        self.last = None          # the last call: {'stock': ran, 'd0': handed back, 'steps': cfsim steps, 'writes': [...]}
         m.w(CURSOR, 'l', CUR); m.w(FP_PTR, 'l', FRAME); m.w(RS_PTR, 'l', RS)
         self.seen = []; self.feed = None; self.slots = {}
         self.ping = 0; self.vover = {}
@@ -88,6 +111,7 @@ class Rig:
         self.seen.append((args, words))
         t, n = args[0], args[3] - args[2]
         m.w(CUR + 3, 'b', n)
+        m.w(CURSOR, 'l', CUR + 16 + 8 * n)              # past the block, as the packer expects
         for i in range(n):
             v = self.feed(i); m.w(CUR + 16 + 8 * i, 'l', v); m.w(CUR + 20 + 8 * i, 'l', v)
         for i in range(5):                           # the stock renderer advances the positions
@@ -138,20 +162,49 @@ class Rig:
         if seq is not None: self.seq(track, seq)
         for i, w in enumerate(words): m.w(FRAME + 2 * i, 'w', w)
         m.w(NIBBLE + track, 'b', 0x10 if startbit else 0)
-        m.w(CUR, 'l', 0xABCDEF00)
+        m.w(CUR, 'l', 0xABCDEF00); m.w(CURSOR, 'l', CUR)           # each call's header at CUR
         self.feed = feed
         self.cpu.a[7] = STACK
         for v in reversed([track, 0x800000e4, start, end]): self.cpu.a[7] -= 4; m.w(self.cpu.a[7], 'l', v)
         sp0 = self.cpu.a[7]
         for r in range(8): self.cpu.d[r] = 0x11110000 + r
         for r in range(7): self.cpu.a[r] = 0x22220000 + r
-        self.cpu.call('sy_render')
+        nseen = len(self.seen)
+        fp0 = [m.r(FRAME + 2 * i, 'w') for i in range(6)]; pos0 = self.positions(track); rs0 = m.r(RS + 4, 'l')
+        m.log = []
+        try:
+            steps = self.cpu.call('sy_render')
+        finally:
+            writes, m.log = m.log, None
         assert self.cpu.a[7] == sp0, 'stack not balanced'
         for r in range(2, 8): assert self.cpu.d[r] == 0x11110000 + r, 'd%d not preserved' % r
         for r in range(2, 7): assert self.cpu.a[r] == 0x22220000 + r, 'a%d not preserved' % r
-        assert self.cpu.d[0] == 0xC0DE0000 + track, 'stock return value not handed back'
         n = end - start
+        ran = len(self.seen) > nseen
+        assert len(self.seen) <= nseen + 1, 'stock renderer called twice'
+        self.last = {'stock': ran, 'd0': self.cpu.d[0], 'steps': steps, 'writes': writes}
+        if ran:
+            assert self.cpu.d[0] == 0xC0DE0000 + track, 'stock return value not handed back'
+        else:
+            self._skip_contract(track, start, end, sp0, fp0, pos0, rs0, writes)
         return [m.r(CUR + 16 + 8 * i, 'l') for i in range(n)], [m.r(CUR + 20 + 8 * i, 'l') for i in range(n)]
+
+    def _skip_contract(self, track, start, end, sp0, fp0, pos0, rs0, writes):
+        """a call the stock renderer did not see (O3_SKIP_STOCK, .Lskip): what CX OSC's sy_call writes"""
+        m, c = self.cpu.mem, self.cpu.consts; n = end - start
+        assert self.cpu.d[0] == 0, 'skipped call: d0 = %#x, not 0' % self.cpu.d[0]
+        hdr = [m.r(CUR + 4 * i, 'l') for i in range(4)]
+        assert hdr[0] == n and hdr[1] == start and hdr[2] == 0x04000000 and hdr[3] == (start << 26) & M32, \
+            'skipped call: header %s for [%d,%d)' % ([hex(x) for x in hdr], start, end)
+        assert m.r(CURSOR, 'l') == CUR + 16 + 8 * n, 'skipped call: cursor %#x' % m.r(CURSOR, 'l')
+        assert [m.r(FRAME + 2 * i, 'w') for i in range(6)] == fp0, 'skipped call: the PTCH/RATE record written'
+        assert self.positions(track) == pos0, 'skipped call: the positions moved'
+        assert m.r(RS + 4, 'l') == rs0, 'skipped call: the retrig count written'
+        st = c['o3_state'] + c['ST_SIZE'] * track; prof = c['O3_PROF'] + 32 * track
+        ok = [(CUR, CUR + 16 + 8 * n), (CURSOR, CURSOR + 4), (st, st + c['ST_SIZE']), (prof, prof + 32),
+              (sp0 - 0x1000, sp0)] + [(c[k], c[k] + 4) for k in ('o3_pt0', 'o3_pt1', 'o3_pn', 'o3_pflag')]
+        stray = sorted({a for a, sz in writes if not any(lo <= a and a + SZB[sz] <= hi for lo, hi in ok)})
+        assert not stray, 'skipped call: writes outside the block and the track state: %s' % [hex(a) for a in stray[:8]]
 
 def sample_feed(seed):
     tab = [(random.Random(seed * 1000 + i).randrange(-30000, 30000) << 16) & M32 for i in range(16)]

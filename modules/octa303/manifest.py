@@ -39,7 +39,11 @@ def remix_inc(modules, remix=None):
 
     The build calls include(modules, remix) (schema.Linked.include); the remix is not needed here."""
     from remix import hooks_flags
+    skip = os.environ.get("O3_SKIP_STOCK")          # vFable: 0 builds the shell that calls the stock FLEX renderer
+    if skip not in (None, "0", "1"):                # on every call (the A/B image); unset = octa303.s's default (1)
+        raise ValueError("O3_SKIP_STOCK must be 0 or 1, not %r" % skip)
     return ("        .set    DEVIL_ID, 0x%x\n" % (DEVIL_ID if "DEVILISH" in modules else 0x100)
+            + ("" if skip is None else "        .set    O3_SKIP_STOCK, %s\n" % skip)
             + hooks_flags.inc("OCTA303", modules))
 
 
