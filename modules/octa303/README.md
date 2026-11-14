@@ -83,9 +83,11 @@ A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 ## How it works
 
 - **Audio.** The FLEX entry of the renderer kind table (`0x400d6438`) points at `sy_render`. On an
-  OCTA303 track it lets the stock renderer write the header (PTCH/RATE neutralised, the carrier's
-  positions pinned) and then writes the 303's samples into it; every other track is stock. AMP, FX1
-  and FX2 stay stock, after the voice.
+  OCTA303 track it writes the header the stock renderer would (the count, the start, rate 1.0, the
+  ring word) and the 303's samples into it, without calling the stock renderer (v8.6, CX OSC's way:
+  a sample left in the track's slot is not rendered under the 303); a call before the track is
+  latched (the first call of the frame its first note starts in) is still the stock renderer's.
+  Every other track is stock. AMP, FX1 and FX2 stay stock, after the voice.
 - **The engine** (per sample, Q-format integer): PolyBLEP saw, the square from Q8's circuit (v7.6), 4-pole
   diode ladder with the 303's unequal first stage, one high-pass after it shared by the feedback and
   the output (v7.5, the circuit's), resonance law `k = K(f) × law(RES) − decay(RES) × KD(f)` solved
