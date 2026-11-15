@@ -11,7 +11,7 @@ import os, sys, re, json, math, hashlib, shutil, subprocess, importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 MODEL = os.environ.get('O3_MODEL_V7') or os.path.join(HERE, 'model_v7')
-LAWS = os.path.join(MODEL, 'leggi_A_v5.json')
+LAWS = os.path.join(MODEL, 'leggi_A_v8.json')   # the v8 candidate (= model_v8/leggi_v8_cut32.json: cut node 1, CUT 32, moved); leggi_A_v5.json kept beside it
 SOURCES = ('o3k.c', 'o3int.h')
 CFLAGS = ['-O2', '-ffp-contract=off', '-shared', '-fPIC']     # no fused multiply-add on any target
 
