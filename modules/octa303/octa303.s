@@ -574,6 +574,14 @@ sy_render:
         bhi     .Lstockcall             | (the carrier, its positions pinned: it never ends) -- ~14 us of PRE
         tst.l   S_LATCHED(%a3)          | on a track whose slot holds a sample (13 Nov 2026, machine).  As CX
         beq     .Lstockcall             | OSC's sy_call (sam/modules/cxosc/poly.s, PR #906): write what stock
+        moveq   #16,%d0                 | v8.7 (vFable's hybrid, f0898424): the LAST call of a frame with a
+        cmp.l   64(%sp),%d0             | START still runs the stock renderer, neutralised as before v8.6.
+        bne     .Lnatskip               | v8.6 skipped it too, and a track set back from OCTA-303 to FLEX
+        lea     NIBBLE,%a0              | stayed silent on the unit (Marko, 15 Nov, T5 and T6); ACIDF04,
+        add.l   %d2,%a0                 | which keeps this call, plays the FLEX (its test 8).  A START is
+        btst    #4,(%a0)                | ~1 frame in 280: the skip keeps nearly all of its saving.
+        bne     .Lstockcall
+.Lnatskip:
         move.l  64(%sp),%d0             | would -- the count, the start, rate 1.0, the ring word -- and silent
         sub.l   60(%sp),%d0             | pairs; the 303 overwrites the pairs below.
         move.l  %d0,(%a2)

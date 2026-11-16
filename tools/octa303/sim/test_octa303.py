@@ -220,15 +220,22 @@ rig = Rig(); rig.path(4, '/AUDIO/TB303.WAV'); rig.voice(2, True, 4); rig.machine
 rig.cpu.mem.w(RS + 4, 'l', 7)
 pos0 = rig.positions(2); w = W(5, 90, 100); rig.seen.clear()
 rig.call(2, w, 0, 16, True, SILENCE)
-# v8.6: our track skips the stock renderer (CX OSC's sy_call): the header is what stock writes
-# (count, start, rate 1.0, the ring word) and CURSOR moves past the 16 pairs, as after stock
+# v8.7: the last call of a START frame still runs the stock renderer, neutralised (vFable's hybrid)
 m = rig.cpu.mem
-check('no_stock_call_on_our_track', not rig.seen and not rig.stock_called)
-check('header_as_stock_writes_it', [m.r(CUR + 4 * i, 'l') for i in range(4)] == [16, 0, 0x04000000, 0]
-      and m.r(CURSOR, 'l') == CUR + 16 + 8 * 16, '%08x %08x' % (m.r(CUR, 'l'), m.r(CURSOR, 'l')))
+_, words_seen = rig.seen[-1]
+check('start_frame_keeps_the_stock_call', rig.stock_called)
+check('neutral_ptch_rate_for_the_stock_call', words_seen[0] == 0x4000 and words_seen[3] == 0x7f00, '%04x %04x' % (words_seen[0], words_seen[3]))
 check('ptch_rate_restored_after', [rig.cpu.mem.r(FRAME + 2 * i, 'w') for i in range(6)] == w)
 check('carrier_positions_pinned', rig.positions(2) == pos0)
 check('retrig_count_cleared_at_303_start', rig.cpu.mem.r(RS + 4, 'l') == 0)
+rig.seen.clear()
+rig.call(2, w, 0, 16, False, SILENCE)
+# v8.6/v8.7: a latched track's call without a START skips the stock renderer (CX OSC's sy_call): the header
+# is what stock writes (count, start, rate 1.0, the ring word) and CURSOR moves past the 16 pairs
+check('no_stock_call_without_start', not rig.seen and not rig.stock_called)
+check('header_as_stock_writes_it', [m.r(CUR + 4 * i, 'l') for i in range(4)] == [16, 0, 0x04000000, 0]
+      and m.r(CURSOR, 'l') == CUR + 16 + 8 * 16, '%08x %08x' % (m.r(CUR, 'l'), m.r(CURSOR, 'l')))
+check('skip_record_untouched', [m.r(FRAME + 2 * i, 'w') for i in range(6)] == w and rig.positions(2) == pos0)
 rig.cpu.mem.w(RS + 4, 'l', 7)
 rig.call(2, w, 0, 5, True, SILENCE)                       # a first call: nothing neutralised, no stock call
 check('first_call_no_stock_call', not rig.stock_called and m.r(CUR, 'l') == 5 and m.r(CUR + 4, 'l') == 0
