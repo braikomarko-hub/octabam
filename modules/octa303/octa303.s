@@ -2511,13 +2511,13 @@ O3_DRV_TH:
         add.l   %d0,%d6                 | x
         .endm
         .macro  E_VOICE                 | d6 = x -> d6 = y: the ladder, the high-passes, the VCA, the ceiling.
-        E_VFAST                         | The neutral loops: the same arithmetic as E_VZU / E_VPOLES / E_VREST (stage
+        E_VFAST 0                       | The neutral loops: the same arithmetic as E_VZU / E_VPOLES / E_VREST (stage
         .endm                           | B's loops keep those), reordered for the EMAC's read stall
         | ---- E_VFAST (16 Nov 2026).  An accumulator read straight after its MAC waits 3 cycles (MCF54455RM table 3-18,
         | section 5.3.3); every independent instruction between the two takes one off.  Here the loads, the stores of the
         | states already computed and the VCA gain's step sit in those gaps.  Every value and every rounding is the one
         | of the three macros above (test_o3e_v7 compares the samples with the model, bit for bit).  d0-d6, a0 clobbered.
-        .macro  E_VFAST
+        .macro  E_VFAST h               | h = 1: with stage B's two hooks (E_HU1, E_HP1)
         | ---- the zero-input pass: z = what the four poles give with no input
         move.l  E_S1(%a3),%d5
         mac.l   %a2,%d5,%acc0
@@ -2550,6 +2550,7 @@ O3_DRV_TH:
         mac.l   %a0,%d6,%acc0
         move.l  E_S1(%a3),%d3
         movclr.l %acc0,%d6              | u
+        E_HU\h
         | ---- pole 1: v = (u - s1) G1, y1 = s1 + v, s1 = y1 + v
         sub.l   %d3,%d6
         mac.l   %a2,%d6,%acc0
@@ -2584,6 +2585,7 @@ O3_DRV_TH:
         movclr.l %acc0,%d1
         add.l   %d1,%d2                 | y4
         add.l   %d2,%d1                 | the new s4
+        E_HP\h
         | ---- the loop's high-pass: lo = lp + (y4 - lp) GH, hp = y4 - lo
         move.l  %d2,%d6
         sub.l   %d4,%d6
@@ -2637,12 +2639,37 @@ O3_DRV_TH:
 .Lo\@:
         move.l  %d5,%d6
         .endm
-        .macro  E_VOICEX                | the same, with stage B's two hooks (the ladder input's soft clip, |y4|'s peak)
-        E_VZU
-        E_UCLIP
-        E_VPOLES
-        E_PEAK4
-        E_VREST
+        .macro  E_VOICEX                | the same, with stage B's two hooks (the ladder input's soft clip, |y4|'s peak):
+        E_VFAST 1                       | 16 Nov 2026, E_VFAST with the hooks; E_VZU / E_VPOLES / E_VREST stay below as
+        .endm                           | the plain statement of the arithmetic (no loop expands them now)
+        .macro  E_HU0
+        .endm
+        .macro  E_HP0
+        .endm
+        .macro  E_HU1                   | E_UCLIP inside E_VFAST: d6 = u.  The clip clobbers d0-d3, which there hold s2,
+        tst.l   E_UCL(%a3)              | s3, s4 and s1: none is stored yet, so they are read again
+        beq     .Lu\@
+        move.l  #O3E_KUCV,%d0
+        move.l  #O3E_KUCH,%d1
+        move.l  #O3E_KUCL,%d2
+        E_SCLIP O3E_SO2
+        move.l  E_S2(%a3),%d0
+        move.l  E_S3(%a3),%d1
+        move.l  E_S4(%a3),%d2
+        move.l  E_S1(%a3),%d3
+.Lu\@:
+        .endm
+        .macro  E_HP1                   | E_PEAK4 inside E_VFAST: d2 = y4, d6 free there
+        tst.l   E_SWP(%a3)
+        beq     .Lp\@
+        move.l  %d2,%d6
+        bpl     .Lp1\@
+        neg.l   %d6
+.Lp1\@:
+        cmp.l   E_PK4(%a3),%d6
+        ble     .Lp\@
+        move.l  %d6,E_PK4(%a3)
+.Lp\@:
         .endm
         .macro  E_VZU                   | d6 = x -> d6 = u (the ladder's input); clobbers d0, d5
         | ---- the zero-input pass: z = what the four poles give with no input
@@ -2798,11 +2825,11 @@ O3_DRV_TH:
         bge     .Lb\@
         move.l  %d0,%d6
 .Lb\@:
+        mac.l   %d6,%d2,%acc0           | (the muls and the constant sit between the MAC and its read: the read stall)
         muls.l  %d6,%d1
-        mac.l   %d6,%d2,%acc0
+        move.l  #O3E_SQ2,%d0
         movclr.l %acc0,%d2
         add.l   %d2,%d1                 | q
-        move.l  #O3E_SQ2,%d0
         cmp.l   %d0,%d1
         ble     .Lc\@
         move.l  %d0,%d1
@@ -2824,12 +2851,13 @@ O3_DRV_TH:
         add.l   %d0,%d0
         move.l  E_FMC(%a3),%d1
         mac.l   %d0,%d1,%acc0
+        move.l  E_PQMAX(%a3),%d1
+        lea     O3T_FM,%a0
         movclr.l %acc0,%d0              | (yprev fmcq) >> 16
         add.l   #0x200000,%d0           | pq = 32 << 16 + that
         bpl     .Lg1\@
         moveq   #0,%d0
 .Lg1\@:
-        move.l  E_PQMAX(%a3),%d1
         cmp.l   %d1,%d0
         ble     .Lg2\@
         move.l  %d1,%d0
@@ -2840,7 +2868,6 @@ O3_DRV_TH:
         lsl.l   #7,%d2                  | the fraction << 15
         moveq   #16,%d1
         lsr.l   %d1,%d0                 | the entry
-        lea     O3T_FM,%a0
         lea     (%a0,%d0.l*4),%a0
         move.l  (%a0)+,%d3
         move.l  (%a0),%d1
@@ -2861,9 +2888,9 @@ O3_DRV_TH:
         .endm
         .macro  E_FMP gs, gr            | one pole's coefficient x m: d4 = m >> 26, d3 = the rest << 5
         move.l  \gs(%a3),%d0
+        mac.l   %d0,%d3,%acc0
         move.l  %d0,%d1
         muls.l  %d4,%d1
-        mac.l   %d0,%d3,%acc0
         movclr.l %acc0,%d0
         add.l   %d1,%d0
         move.l  %d0,\gr
