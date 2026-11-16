@@ -45,7 +45,6 @@ overtakes the write head.
 | SETUP, C | FBMD | AUTO, RCYC, POST, PING, REP, R1/2, R1/4, RPCT (AUTO) | The feedback mode (below). Moving between RCYC and the others clears the slot: 62 calls of dry, about 22 ms. |
 | SETUP, D | SPRD | 0–127 (0) | Random stereo spread of the grains. |
 | SETUP, E | SYNC | FREE / SYNC | SYNC: CHOP and TIME are divisions of the Octatrack's tempo, and an attack in the input (a fast envelope over twice a slow one) restarts the grain and the REP slot. |
-| SETUP, F | V1 | 0–127 (0) | Reserved for the FV-1's memory colour; does nothing yet. |
 
 ## Feedback modes (FBMD)
 
@@ -192,5 +191,7 @@ the reference, not the pedal.
   audio while the block arrives.
 - **T8's FX2.** AtoMizer is silent there in `test/atomizer` (above). A toast
   like the loader's `NEEDS Tn FX2 FREE` would say why; not done.
-- Not yet: the V1 colour (the FV-1's 1s3e10m memory and 32 kHz band limit),
-  the LFO restart at the pattern start (the Particle's TAP), a smoothed MIX.
+- Not yet: the LFO restart at the pattern start (the Particle's TAP), a smoothed MIX.
+- The V1 knob (SETUP, F) is gone (16 Nov 2026): it was reserved for the FV-1's memory
+  colour and never read. The slot is undrawn; a part saved with it keeps a byte nothing reads.
+  A slot's count changed, so TRAPS' rule applies: `stamp-defaults` on the card before play.
