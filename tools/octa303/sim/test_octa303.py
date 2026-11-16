@@ -260,7 +260,14 @@ def skip0_source():
     inc = lambda t: gen_out(t).replace('        .include "remix.inc"', remix_inc(True).rstrip('\n'), 1)
     # 16 Nov 2026: the engine's state grew by E_FG1..4 (FM held for 4 samples): those .set lines and E_END's are the
     # engine's layout, not the shell's
-    eng = lambda l: l.lstrip().startswith(('.set    E_FG', '.set    E_END,'))
+    eng = lambda l: l.lstrip().startswith(('.set    E_FG', '.set    E_END,', '.set    E_OVS2,', '.set    E_OVB,'))
+    def kc_out(t):
+        # 16 Nov 2026: OVDR's level correction in the engine's o3e_kC (its table after the label, its code before .LkC2)
+        for a_, b_ in (('o3e_kC:\n', '.LkC0:\n'), ('        move.l  %d3,E_OVVC(%a3)\n', '.LkC2:')):
+            if b_ == '.LkC0:\n' and b_ not in t: continue
+            i_ = t.index(a_) + len(a_); j_ = t.index(b_, i_) + (len(b_) if b_ == '.LkC0:\n' else 0)
+            t = t[:i_] + t[j_:]
+        return t
     code = lambda t: [l.split('|')[0].rstrip() for l in t.split('\n') if l.split('|')[0].strip() and not eng(l)]
     def voice_out(t):
         # 16 Nov 2026: the neutral voice macro (E_VOICE, with E_VFAST since the reorder for the EMAC read stall) is
@@ -269,7 +276,7 @@ def skip0_source():
         # loops, E_SCLIP, E_FMG, E_FMP; then down to E_EXP2, for the renamed labels of E_PEAK4 and E_POST)
         a, b = t.index('        .macro  E_VOICE '), t.index('        .macro  E_EXP2 ')
         return t[:a] + t[b:]
-    a, b = code(_unflag(inc(voice_out(new)), {'O3_SKIP_STOCK': 0})), code(_unflag(inc(voice_out(base))))
+    a, b = code(_unflag(inc(kc_out(voice_out(new))), {'O3_SKIP_STOCK': 0})), code(_unflag(inc(kc_out(voice_out(base)))))
     if a == b: return True, 'the working file vs %s: the code lines are identical (%d lines)' % (OLD_SHELL[:8], len(a))
     import difflib
     d = [l for l in difflib.unified_diff(b, a, lineterm='', n=0) if l[:1] in '+-' and l[:3] not in ('+++', '---')]
