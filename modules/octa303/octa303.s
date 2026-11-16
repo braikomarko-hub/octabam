@@ -2672,9 +2672,9 @@ O3_DRV_TH:
         tst.l   E_SWP(%a3)
         beq     .Lp\@
         move.l  %d2,%d6
-        bpl     .Lp1\@
+        bpl     .Lpn\@
         neg.l   %d6
-.Lp1\@:
+.Lpn\@:
         cmp.l   E_PK4(%a3),%d6
         ble     .Lp\@
         move.l  %d6,E_PK4(%a3)
@@ -2875,13 +2875,13 @@ O3_DRV_TH:
         lea     O3T_FM,%a0
         movclr.l %acc0,%d0              | (yprev fmcq) >> 16
         add.l   #0x200000,%d0           | pq = 32 << 16 + that
-        bpl     .Lg1\@
+        bpl     .Lgn\@
         moveq   #0,%d0
-.Lg1\@:
+.Lgn\@:
         cmp.l   %d1,%d0
-        ble     .Lg2\@
+        ble     .Lgx\@
         move.l  %d1,%d0
-.Lg2\@:
+.Lgx\@:
         move.l  %d0,%d2
         and.l   #0xffff,%d2
         lsl.l   #8,%d2
@@ -2945,9 +2945,9 @@ O3_DRV_TH:
         tst.l   E_SWP(%a3)
         beq     .Lp\@
         move.l  %d6,%d0
-        bpl     .Lp1\@
+        bpl     .Lpn\@
         neg.l   %d0
-.Lp1\@:
+.Lpn\@:
         cmp.l   E_PK4(%a3),%d0
         ble     .Lp\@
         move.l  %d0,E_PK4(%a3)
@@ -2955,7 +2955,7 @@ O3_DRV_TH:
         .endm
         .macro  E_POST                  | d6 = y after the ceiling: MUFF, the FM source, +D
         move.l  E_MUFF(%a3),%d0         | ---- MUFF: split at 150 Hz, the high part clipped at 314,572
-        beq     .Lm\@
+        beq     .Lmz\@
         move.l  %d6,%d4
         move.l  #O3E_GM,%d0
         E_POLE_A E_SM,%d0               | low
@@ -2974,7 +2974,7 @@ O3_DRV_TH:
         CLAMP   %d6,-314572,314572      | HARD
 .Lmy\@:
         add.l   %d5,%d6                 | y = low + h
-.Lm\@:
+.Lmz\@:
         tst.l   E_FMON(%a3)             | ---- the FM source: AC coupled, one-pole high-pass at 5 Hz
         beq     .Lf\@
         move.l  %d6,%d4

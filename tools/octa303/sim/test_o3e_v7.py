@@ -628,6 +628,15 @@ if __name__ == '__main__':
     bad += [k for k, v in o3m7.derived(SCAL).items() if (C.get(k) & M32) != (v & M32)]
     check('tables_eq_committed', not bad, '%d tables, %d O3S, %d O3E: %s' % (len(LAYOUT) - 1, len(SCAL), len(o3m7.derived(SCAL)),
           'equal to model_v7/o3tab.h and o3m7.derived' if not bad else 'DIFFER: %s' % bad))
+    # 16 Nov 2026: cfsim keeps labels in a dict, so a label defined twice is taken silently (the later one wins) where
+    # GNU as stops.  A macro's ".Lp1\\@" and ".Lp\\@" met as ".Lp178" (invocations 78 and 178) and the SWP loops jumped
+    # into the wrong place.  Every label of the expanded source must be defined once.
+    import collections as _co, cfsim
+    _asm = [c for c in vars(cfsim).values() if isinstance(c, type) and hasattr(c, '_expand')][0]
+    _lab = _co.Counter(m_.group(1) for m_ in (re.match(r'\s*([.\w$]+):', l_) for l_ in
+                                             _asm.__new__(_asm)._expand(SRC_REAL.split('\n'))) if m_)
+    _dup = sorted(k for k, v in _lab.items() if v > 1)
+    check('no_label_defined_twice', not _dup, '%d labels after the macros are expanded; defined twice: %s' % (len(_lab), _dup or 'none'))
     check('engine_state_fits', C['E_END'] - C['E_BASE'] <= C['ST_SIZE'] - C['E_BASE'],
           '%d of %d bytes' % (C['E_END'] - C['E_BASE'], C['ST_SIZE'] - C['E_BASE']))
 
