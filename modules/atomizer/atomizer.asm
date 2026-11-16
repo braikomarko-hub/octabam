@@ -7,7 +7,7 @@
 ;
 ; Knobs: CHOP r6+0, TIME r6+1, PARA r6+2, FDBK r6+3, FREZ r6+4, MIX r6+5;
 ; MODE r6+$c hi (slot 6), TONE r6+$c lo (7), FBMD r6+$d hi (8), SPRD r6+$d
-; lo (9), SYNC r6+$e hi (10), V1 r6+$e lo (11). Tempo24 at r6+$13.
+; lo (9), SYNC r6+$e hi (10); r6+$e lo (11) is not read. Tempo24 at r6+$13.
 ;
 ; Y: the allocator's FX2 slot, up to +$3DA2 (15,779 words, DARK REV's extent: above it,
 ; in the T7 and T8 slots, are the demand loader's entries, DLCOPY and LOAD METER's DSP

@@ -81,8 +81,7 @@ MODULE = Module(
               doc="random stereo spread of the grains"),
         Param(b"SYNC", 0, 2, active=True, formatter=Formatter.STEPPED, labels=("FREE", "SYNC"),
               doc="SYNC: CHOP and TIME are divisions of the tempo, grains restart on the input's attacks"),
-        Param(b"V1", 0, 128, active=True, formatter=_P,
-              doc="reserved: the FV-1's memory colour (not yet read)"),
+        Param(b"", 0),                # an undrawn slot (V1, reserved and never read, removed 16 Nov 2026)
     ),
     mode_slot=6,
     mode_views=tuple(ModeView(mode=m, names=n) for m, n in _NAMES.items()),
