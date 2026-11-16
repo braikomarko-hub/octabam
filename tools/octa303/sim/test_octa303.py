@@ -266,8 +266,8 @@ def skip0_source():
         # 16 Nov 2026: the neutral voice macro (E_VOICE, with E_VFAST since the reorder for the EMAC read stall) is
         # the engine, not the shell: test_o3e_v7.py compares its samples with the model bit for bit
         # (and, since E_VFAST went into the stage-B loops, the sample macros down to E_OVD: E_VOICEX, the hooks, the
-        # loops, E_SCLIP, E_FMG, E_FMP)
-        a, b = t.index('        .macro  E_VOICE '), t.index('        .macro  E_OVD ')
+        # loops, E_SCLIP, E_FMG, E_FMP; then down to E_EXP2, for the renamed labels of E_PEAK4 and E_POST)
+        a, b = t.index('        .macro  E_VOICE '), t.index('        .macro  E_EXP2 ')
         return t[:a] + t[b:]
     a, b = code(_unflag(inc(voice_out(new)), {'O3_SKIP_STOCK': 0})), code(_unflag(inc(voice_out(base))))
     if a == b: return True, 'the working file vs %s: the code lines are identical (%d lines)' % (OLD_SHELL[:8], len(a))
