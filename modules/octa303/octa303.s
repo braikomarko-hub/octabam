@@ -2374,7 +2374,9 @@ O3_DRV_TH:
         .set    E_FG2,   E_BASE+352
         .set    E_FG3,   E_BASE+356
         .set    E_FG4,   E_BASE+360
-        .set    E_END,   E_BASE+364     | 364 of the engine's 768 bytes
+        .set    E_OVS2,  E_BASE+364     | OVDR above 25: the clip's output scale x 2 and its ceiling, both with the level
+        .set    E_OVB,   E_BASE+368     | correction a(raw) (16 Nov 2026; o3k.c ov_level)
+        .set    E_END,   E_BASE+372     | 372 of the engine's 768 bytes
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
         .set    E_ONE,   0x7fffffff
@@ -2824,8 +2826,8 @@ O3_DRV_TH:
         movclr.l %acc0,%d2              | x^3 / 6, Q30
         sub.l   %d2,%d1
         .endm
-        .macro  E_HCLIP s2              | OVDR above 25 (16 Nov 2026): d6 = v -> (v kin S) >> 46 under a plain ceiling at
-        cmp.l   %d0,%d6                 | +-4 x 2^20; d0 = vc, d1 = kh, d2 = kl as for E_SCLIP (past vc the product is past
+        .macro  E_HCLIP                 | OVDR above 25 (16 Nov 2026): d6 = v -> (v kin s2) >> 47 under the ceiling E_OVB
+        cmp.l   %d0,%d6                 | (E_OVS2, E_OVB: o3e_kC); d0 = vc, d1 = kh, d2 = kl as for E_SCLIP (past vc the product is past
         ble     .Lha\@                  | the ceiling in the model too).  Clobbers d0-d2.
         move.l  %d0,%d6
 .Lha\@:
@@ -2836,12 +2838,21 @@ O3_DRV_TH:
 .Lhb\@:
         mac.l   %d6,%d2,%acc0
         muls.l  %d6,%d1
-        move.l  #\s2,%d0
+        move.l  E_OVS2(%a3),%d0
         movclr.l %acc0,%d2
         add.l   %d2,%d1                 | q = (v kin) >> 16
         mac.l   %d1,%d0,%acc0
-        movclr.l %acc0,%d6              | (q S) >> 30
-        CLAMP   %d6,-4194304,4194304
+        move.l  E_OVB(%a3),%d0
+        movclr.l %acc0,%d6              | (q s2) >> 31
+        cmp.l   %d0,%d6
+        ble     .Lhc\@
+        move.l  %d0,%d6
+.Lhc\@:
+        neg.l   %d0
+        cmp.l   %d0,%d6
+        bge     .Lhd\@
+        move.l  %d0,%d6
+.Lhd\@:
         .endm
         .macro  E_SCLIP s2              | o3k.c sclip_s(v, kin, S): d6 = v -> d6, with d0 = vc, d1 = kh, d2 = kl: kin =
         cmp.l   %d0,%d6                 | kh 2^16 + (kl >> 15), vc = the bound on |v| past which the clip is flat
@@ -2948,7 +2959,7 @@ O3_DRV_TH:
         move.l  E_OVVC(%a3),%d0
         move.l  E_OVKH(%a3),%d1
         move.l  E_OVKL(%a3),%d2
-        E_HCLIP O3E_SO2
+        E_HCLIP
 .Lo\@:
         .endm
         .macro  E_UCLIP                 | FM or SWP: the ladder input u (d6) saturates at +-4 x 2^20 (gain 1)
@@ -3962,6 +3973,15 @@ o3e_kB:
 |      note's WAVE), the class (any of them not neutral: the stage-B loops) and the loops (o3e_lsel).  Run when any
 |      knob moved and at a START.  Clobbers d0-d3, d5, a0.
 o3e_kC:
+        bra     .LkC0
+        .align  4
+o3e_ova:                                | {raw, a at raw (Q24), the step down per raw value}: o3k.c o3_ova
+        .long   100, 4214246, 8731
+        .long   64, 4674336, 12780
+        .long   45, 8604386, 206844
+        .long   35, 12294755, 369036
+        .long   25, 16777216, 448246
+.LkC0:
         moveq   #0,%d5                  | the class
         clr.l   E_OVK(%a3)
         moveq   #0,%d0
@@ -3998,6 +4018,26 @@ o3e_kC:
         divu.l  %d2,%d3
         addq.l  #1,%d3
         move.l  %d3,E_OVVC(%a3)
+        lea     o3e_ova,%a0             | the level correction a(raw), Q24 (o3k.c ov_level): the first row at or below
+.LkCa:                                  | raw (the last row is 25)
+        cmp.l   (%a0),%d0
+        bhs     .LkCb
+        lea     12(%a0),%a0
+        bra     .LkCa
+.LkCb:
+        sub.l   (%a0),%d0
+        move.l  8(%a0),%d3
+        muls.l  %d0,%d3
+        move.l  4(%a0),%d2
+        sub.l   %d3,%d2                 | a
+        move.l  %d2,%d3
+        asr.l   #2,%d3
+        move.l  %d3,E_OVB(%a3)          | 4 x 2^20 x a
+        lsl.l   #7,%d2
+        move.l  #O3E_SO2,%d3
+        mac.l   %d3,%d2,%acc0
+        movclr.l %acc0,%d2
+        move.l  %d2,E_OVS2(%a3)         | (2 So a) >> 24
 .LkC2:
         move.l  %d1,E_OVM(%a3)
         or.l    %d1,%d5

@@ -69,6 +69,17 @@ static inline int32_t sclip_s(int32_t v, int64_t kin, int32_t S) {
     if (q > SQ2_Q30) q = SQ2_Q30; if (q < -SQ2_Q30) q = -SQ2_Q30;
     return (int32_t)(((int64_t)sclip30((int32_t)q) * S) >> 30);
 }
+/* OVDR above 25 (16 Nov 2026, Marko's choice by ear): the level correction a(raw), applied to the clip's output and
+   ceiling (before the filter).  Piecewise linear in amplitude, Q24, from the A-weighted level of 192 notes of the
+   model (the target: +3 dB at 127 over OVDR 25): -2.7, -5.8, -11.1, -12.0, -12.5 dB at 35, 45, 64, 100, 127.
+   Rows from the top: {raw, a at raw, the step down per raw value}. */
+static const int32_t o3_ova[5][3] = {{100, 4214246, 8731}, {64, 4674336, 12780}, {45, 8604386, 206844}, {35, 12294755, 369036}, {25, 16777216, 448246}};
+static inline void ov_level(int raw, int32_t So, int32_t *s2, int32_t *b) {
+    int32_t a = 16777216;
+    for (int i = 0; i < 5; i++) if (raw >= o3_ova[i][0]) { a = o3_ova[i][1] - (raw - o3_ova[i][0]) * o3_ova[i][2]; break; }
+    if (raw <= 25) { *s2 = 2 * So; *b = 4194304; return; }   /* not used: the clip runs above 25 only */
+    *s2 = fmul(2 * So, shl32(a, 7)); *b = a >> 2;             /* (2 So a) >> 24; 4 x 2^20 x a */
+}
 /* +D: softclip(5 o + 0.12), 1.0 = 2^20 */
 static inline int32_t dp_clip(int32_t y) {
     int32_t X = 5 * y + 125829;                      /* 0.12 x 2^20 */
@@ -179,6 +190,8 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
     /* v7.2: the per-sample features' settings in force (the float path: X's, for the whole render) */
     int r_ov = (F & F_OV) ? ovmode : 0, r_fm = X[X_FM] > 0.0, r_gov = X[X_SWP] > 0.5, r_muff = muff;
     int32_t r_ovq = ovq, r_fmc = fmcq; int64_t r_kov = kov;
+    int32_t r_ovs2, r_ovb;   /* OVDR above 25: the clip's output scale (x 2) and ceiling, with the level correction */
+    ov_level(OG > 1.0 ? (int)floor(25.0 + 102.0 * log(OG) / log(66.6) + 0.5) : 25, So, &r_ovs2, &r_ovb);   /* the float path: the raw value back from G */
 
     for (int i = 0; i < n; i++) {
         if ((i % CTL) == 0) {
@@ -213,7 +226,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                 Gv = T[TB_GV + st.k[K_RES]] << 9;          /* int16 table, Q31 >> 9 */
                 {   /* v7.2: the stage-B knobs now (MIN2 already applied to the selects by the row) */
                     const int32_t *df = st.k + K_DF0;
-                    r_ov = df[0] < 25 ? 1 : (df[0] > 25 ? 2 : 0); r_ovq = T[TB_OVQ + df[0]]; r_kov = T[TB_KOV + df[0]];
+                    r_ov = df[0] < 25 ? 1 : (df[0] > 25 ? 2 : 0); r_ovq = T[TB_OVQ + df[0]]; r_kov = T[TB_KOV + df[0]]; ov_level(df[0], So, &r_ovs2, &r_ovb);
                     r_fm = df[1] > 0; r_fmc = T[TB_FMC + df[1]]; r_gov = df[7] > 0; r_muff = df[9];
                 }
                 is_step(&st, T, F & ~((r_fm ? 0 : F_FM) | (r_gov ? 0 : F_GOV)), pk4, glvl, Gx, &kq, &Dq, &gq, &inc, &pqmax);
@@ -316,9 +329,9 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         }
         if ((F & F_OV) && r_ov) {   /* v6 OVDR: G < 1 scales; G > 1 amplifies into a soft clip at +-4 x 2^20 */
             if (r_ov == 1) x = fmul(x, r_ovq);
-            else {   /* 16 Nov 2026 (Marko's choice by ear): the gain into a plain ceiling at +-4 x 2^20, in place of the soft clip */
-                int64_t o = ((((int64_t)x * r_kov) >> 16) * So) >> 30;
-                x = o > 4194304 ? 4194304 : o < -4194304 ? -4194304 : (int32_t)o;
+            else {   /* 16 Nov 2026 (Marko's choice by ear): the gain into a plain ceiling (4 x 2^20 x the level correction), in place of the soft clip */
+                int64_t o = ((((int64_t)x * r_kov) >> 16) * r_ovs2) >> 31;   /* with the level correction: ov_level */
+                x = o > r_ovb ? r_ovb : o < -r_ovb ? -r_ovb : (int32_t)o;
             }
         }
         /* ---- filter: 4 one-poles (TPT), linear loop solved with no delay ---- */
