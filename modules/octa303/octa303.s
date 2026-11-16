@@ -2370,7 +2370,11 @@ O3_DRV_TH:
         .set    E_SM,    E_BASE+336     | MUFF: the 150 Hz split's state
         .set    E_SD6,   E_BASE+340     | +D: the 6 kHz low-pass and the 8 Hz DC blocker (from the pedal's rest value
         .set    E_SDC,   E_BASE+344     |   at the first START)
-        .set    E_END,   E_BASE+348     | 348 of the engine's 768 bytes
+        .set    E_FG1,   E_BASE+348     | FM: the four coefficients x m, computed every 4th sample and held (16 Nov 2026)
+        .set    E_FG2,   E_BASE+352
+        .set    E_FG3,   E_BASE+356
+        .set    E_FG4,   E_BASE+360
+        .set    E_END,   E_BASE+364     | 364 of the engine's 768 bytes
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
         .set    E_ONE,   0x7fffffff
@@ -2847,6 +2851,17 @@ O3_DRV_TH:
         .macro  E_FMG                   | FM: the four coefficients of this sample, from the last output (o3k.c core():
         tst.l   E_FMON(%a3)             | pq, the table's m Q26, g = (G m) >> 26 = G (m >> 26) + fmul(G, (m & 2^26-1) << 5))
         beq     .Lg\@
+        moveq   #3,%d1                  | every 4th sample (E_CNT = 15, 11, 7, 3: the control step's sample is one);
+        move.l  E_CNT(%a3),%d0          | between them the four held coefficients, from the state (a call may begin
+        and.l   %d1,%d0                 | anywhere in the four)
+        cmp.l   %d1,%d0
+        beq     .Lgc\@
+        move.l  E_FG1(%a3),%a2
+        move.l  E_FG2(%a3),%a4
+        move.l  E_FG3(%a3),%a5
+        move.l  E_FG4(%a3),%a6
+        bra     .Lg\@
+.Lgc\@:
         move.l  E_YPREV(%a3),%d0
         add.l   %d0,%d0
         move.l  E_FMC(%a3),%d1
@@ -2880,13 +2895,13 @@ O3_DRV_TH:
         asr.l   %d1,%d4                 | m >> 26
         and.l   #0x3ffffff,%d3
         lsl.l   #5,%d3                  | (m & 2^26-1) << 5
-        E_FMP   E_G1,%a2
-        E_FMP   E_G2,%a4
-        E_FMP   E_G3,%a5
-        E_FMP   E_G4,%a6
+        E_FMP   E_G1,%a2,E_FG1
+        E_FMP   E_G2,%a4,E_FG2
+        E_FMP   E_G3,%a5,E_FG3
+        E_FMP   E_G4,%a6,E_FG4
 .Lg\@:
         .endm
-        .macro  E_FMP gs, gr            | one pole's coefficient x m: d4 = m >> 26, d3 = the rest << 5
+        .macro  E_FMP gs, gr, fs        | one pole's coefficient x m: d4 = m >> 26, d3 = the rest << 5
         move.l  \gs(%a3),%d0
         mac.l   %d0,%d3,%acc0
         move.l  %d0,%d1
@@ -2894,6 +2909,7 @@ O3_DRV_TH:
         movclr.l %acc0,%d0
         add.l   %d1,%d0
         move.l  %d0,\gr
+        move.l  %d0,\fs(%a3)
         .endm
         .macro  E_OVD                   | OVDR: d6 = x: below 25 x G, above 25 the soft clip at +-4 x 2^20 (gain G)
         move.l  E_OVM(%a3),%d0

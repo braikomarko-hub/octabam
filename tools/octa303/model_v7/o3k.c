@@ -162,6 +162,8 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
     if (F & F_FM) { for (int j = 0; j < 65; j++) fmtab[j] = (int32_t)floor(pow(2.0, (j * 1.5 - 48.0) / 12.0) * 67108864.0 + 0.5); fmtab[65] = fmtab[64]; }
     const int32_t *fmt = csint ? T + TB_FM : fmtab;      /* v7.2: the integer path takes the committed table (equal) */
     int32_t yprev = 0, shp = 0;                           /* FM source and its 5 Hz high-pass state */
+    int32_t hg1 = 0, hg2 = 0, hg3 = 0, hg4 = 0;           /* FM (16 Nov 2026, Marko's choice by ear): the modulated coefficients are
+                                                             computed every 4th sample (i % 4 == 0: the control step's sample is one) and held */
     const int32_t Gf5 = q31(tpt(5.0));
     int64_t pqmax = (64 << 16) - 1;   /* FM: the table position's ceiling, from the control step */
     /* MUFF */
@@ -319,12 +321,15 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         /* ---- filter: 4 one-poles (TPT), linear loop solved with no delay ---- */
         int32_t g1 = G1, g2 = G2, g3 = G3, g4 = G4;
         if ((F & F_FM) && r_fm) {   /* v6 FM: the previous output (after MUFF) moves the four pole coefficients; Dq is the control step's */
+          if ((i & 3) == 0) {
             int64_t pq = (32 << 16) + (((int64_t)yprev * r_fmc) >> 16);
             if (pq < 0) pq = 0; if (pq > pqmax) pq = pqmax;
             int32_t ix = (int32_t)(pq >> 16), fr = (int32_t)(pq & 65535);
             int32_t m = fmt[ix] + (int32_t)(((int64_t)(fmt[ix + 1] - fmt[ix]) * fr) >> 16);   /* Q26 */
             int64_t t1 = ((int64_t)G1 * m) >> 26, t2 = ((int64_t)G2 * m) >> 26, t3 = ((int64_t)G3 * m) >> 26, t4 = ((int64_t)G4 * m) >> 26;
-            g1 = (int32_t)t1; g2 = (int32_t)t2; g3 = (int32_t)t3; g4 = (int32_t)t4;   /* m <= pqmax's: every g <= 0.98 (+ the interpolation's 0.1 %) */
+            hg1 = (int32_t)t1; hg2 = (int32_t)t2; hg3 = (int32_t)t3; hg4 = (int32_t)t4;   /* m <= pqmax's: every g <= 0.98 (+ the interpolation's 0.1 %) */
+          }
+            g1 = hg1; g2 = hg2; g3 = hg3; g4 = hg4;
         }
         int32_t z = s1 - fmul(s1, g1);              /* zero-input pass: what the ladder gives with u = 0 */
         z = s2 + fmul(z - s2, g2);
