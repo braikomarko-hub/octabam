@@ -125,6 +125,32 @@ feedback mode; MIX 0's loop is 53. The manifest declares `max_per_core = 1`
 (one instance per core: in acidtrack four AtoMizer beside four DISTORX on FX1
 priced 3,552 at 599); the unit does not enforce it, so a remix README states it.
 
+Lighter again (16 Nov 2026; the code was written by Claude (Anthropic)), the same samples
+bit for bit: the two voices are inline and walk their record with post-increments, with the
+block's constants in registers (n3 the slot's base, n1 N, r1 Kf); a grain whose
+position has no fraction (unity, reversed, an octave up) reads one sample instead of
+interpolating two; the tempo division runs only with SYNC on, the slot's fade division only
+in the REP modes; and the knob decode (three divisions among it) is skipped while the ten
+page words are the ones last decoded. `cycle_count.py`: 517 (was 547). Code: 1,744 words
+(was 1,602 by the same count), so the donor run and the window need 142 more.
+
+Proven old against new, not on a unit: a standalone bench on the vendored emulator (init and
+proc called with the dispatcher's ABI, the M registers linear, 16-bit garbage in r1..r5 and
+n1..n5 and full garbage in a, b, x, y and the r7 block, different for the two), 0 differing samples and the same Y slot over every MODE x
+FBMD x FREZ {0, 60, 127} x SYNC (384 cases, 0.25 s each), 13 knob sets x 5 signals of 0.5 s,
+14 runs with every knob (MODE, FBMD, MIX 0, the tempo) moving every 23 blocks with and
+without a trig split, 40 runs alternating two or three fixed knob sets (scenes: the page
+words come back exactly as last decoded, a MIX 0 scene among them), and three other slot
+bases (one an FX1 base, which only takes the dry guard path); a sentinel over the rest of Y
+shows no write outside the slot; the bench's
+render of the code before and after equals `atomizer_ref.py` on the four sets tried. Executed
+instructions a 16-sample block there, before -> after: the defaults 3,290 -> 2,724 mean and
+5,131 -> 4,199 worst; over the 384 cases 4,135 -> 3,435 mean; PDTN 4,241 -> 3,594. Not
+counted: the displaced r7 reads that became register moves (CHIP.md: 4 cycles against 2).
+The cache helps with the knobs still: a knob an LFO moves every block misses it every block
+and pays the compare (about 30 instructions) on top of the decode.
+`verify_atomizer.py` needs the stock image and was NOT run for this change.
+
 What is not heard is not computed (27 Oct 2026): a finished grain (its window
 at 0) skips its voice until the next start; FREZ 0 and 127 are decided once a
 block; the envelopes run only for SYNC or FREZ 1..126; MIX 0 rests. With the

@@ -28,8 +28,9 @@
 ; ---- r7 slots ($00..$5f; the OS allows $00..$83) --------------------------
 ;   $00 Y base   $01 clear calls left   $02 layout   $03 LCG seed
 ;   $04 ring write index   $05 samples to the next grain   $06 next voice
+;   $07 the knob cache is valid   $08..$0d, $28..$2b the ten page words it was decoded from
 ;   $0e LFO phase (0 .. 2^22)
-;   $10..$15 voice 0: pos (Q9) inc (Q9) u du gl gr      $18..$1d voice 1
+;   $10..$15 voice 0: du u pos (Q9) inc (Q9) gl gr      $18..$1d voice 1   (walked in this order)
 ;   $20 $21 record A: Dsafe inc   $22 du  $23 gl  $24 gr  $25 IOI  $26 Kf  $27 shift
 ;   $2c FDBK   $2d TONE coefficient   $2e tone state
 ;   $31 mix g   $32 mix k   $33 FREZ: 0 off, 1 threshold, 2 held   $34 FBMD (resolved)
@@ -38,6 +39,7 @@
 ;   $3d L   $3e D   $3f semitones Q8   $40..$42 wet L, R, mono (per sample)
 ;   $43 SYNC   $44 draw 1   $45 the mono input   $46 the P table's address   $47 draw 2
 ;   $48 $49 record B: Dsafe inc (voice 1 in PDTN)   $4a draw 3   $4b PARA   $4c LFO triangle
+;   $4d the aux's base (the slot's + $2000)
 ;   $4e frozen (a block's for FREZ 0 / 127, a sample's for 1..126)   $4f $5f scratch
 ;   $50 aux write index   $51 post time   $52 aux length   $53 slot sample
 ;   $54 slot plays the capture   $55 repeats left   $56 slot length   $57 2^23 / fade
@@ -53,6 +55,17 @@
 ; Same sound with the knobs still: the old model and this one agree on every MODE x FBMD x
 ; FREZ x SYNC (384 cases); they differ only right after SYNC / FREZ 1..126 come on (the
 ; envelopes start from where they stopped) and on leaving MIX 0 (a fresh grain).
+;
+; Lighter again (16 Nov 2026), the same samples bit for bit:
+;   - the voices are inline, their record walked by r4 with post-increments, and the block's
+;     constants sit in registers through the loop: n3 the slot's base (the ring is read and
+;     written as y:(r3+n3)), n1 N, r1 Kf (n2 is left alone); r5 walks the three wet slots
+;   - a grain whose position has no fraction (unity, reversed, an octave up: every sample of
+;     it) reads one sample: the interpolation would add (s1 - s0) x 0
+;   - the tempo division runs only with SYNC on; the slot, its fade's division and the
+;     REP values only in the REP feedback modes
+;   - the knob decode (N, L, D, du, the semitones, FDBK, TONE, MIX, FREZ, the aux and the slot,
+;     three divisions among them) is skipped while the ten page words are the ones last decoded
 ; dsp_asm traps met here: `bls` is written with an absolute target, and a negative
 ; short displacement is refused -- every branch is a forward blt/bgt/beq/bne/bge/bra.
 ; Multiplies use only the canonical operand pairs (dsp_asm encodes the
@@ -177,13 +190,15 @@ amrun:
         tst     a
         bne     amwork
         move    #>$7fffff,x0
-        move    x0,x:(r7+$12)           ; voice 0: u = 1
-        move    x0,x:(r7+$1a)           ; voice 1
+        move    x0,x:(r7+$11)           ; voice 0: u = 1
+        move    x0,x:(r7+$19)           ; voice 1
         move    #>$1,x0
         move    x0,x:(r7+$05)           ; a grain at once
         clr     a
         move    a,x:(r7+$53)            ; the slot restarts
         move    a,x:(r7+$55)            ; live, and captured
+        move    a,x:(r7+$07)            ; the knob cache: not valid (this path rewrites N, the aux's
+                                        ; length and its index from the knobs it sees)
         move    x:(r6+4),a
         and     #>$7f0000,a
         move    #>$7f0000,x0
@@ -266,7 +281,85 @@ amrsdone:
 amwork:
         move    #>$fab1e0,x0            ; the P table (the build's one literal)
         move    x0,x:(r7+$46)
-; ---- samples per MIDI tick, Q4, from stock's tempo24 (BusDelay's idiom) ---
+; ---- the knob cache (16 Nov 2026): everything from here to amkhit follows from the ten page
+;      words (the six knobs, the three page-2 words, the tempo) and the layout, which follows
+;      from them. While they are the words the last decode read ($08..$0d, $28..$2b; $07 = 1
+;      when valid: the slot's clear zeroes it) the decode is skipped. Whole words are compared,
+;      LFO fractions included. The draws, the pan, the LFO and the grain record run every block.
+        move    x:(r7+$07),a
+        tst     a
+        beq     amkdec
+        move    x:(r6+0),a
+        move    x:(r7+$08),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+1),a
+        move    x:(r7+$09),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+2),a
+        move    x:(r7+$0a),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+3),a
+        move    x:(r7+$0b),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+4),a
+        move    x:(r7+$0c),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+5),a
+        move    x:(r7+$0d),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+$c),a
+        move    x:(r7+$28),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+$d),a
+        move    x:(r7+$29),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+$e),a
+        move    x:(r7+$2a),x0
+        cmp     x0,a
+        bne     amkdec
+        move    x:(r6+$13),a
+        move    x:(r7+$2b),x0
+        cmp     x0,a
+        beq     amkhit
+amkdec:
+        move    x:(r6+0),x0
+        move    x0,x:(r7+$08)
+        move    x:(r6+1),x0
+        move    x0,x:(r7+$09)
+        move    x:(r6+2),x0
+        move    x0,x:(r7+$0a)
+        move    x:(r6+3),x0
+        move    x0,x:(r7+$0b)
+        move    x:(r6+4),x0
+        move    x0,x:(r7+$0c)
+        move    x:(r6+5),x0
+        move    x0,x:(r7+$0d)
+        move    x:(r6+$c),x0
+        move    x0,x:(r7+$28)
+        move    x:(r6+$d),x0
+        move    x0,x:(r7+$29)
+        move    x:(r6+$e),x0
+        move    x0,x:(r7+$2a)
+        move    x:(r6+$13),x0
+        move    x0,x:(r7+$2b)
+        move    #>$1,x0
+        move    x0,x:(r7+$07)
+; ---- SYNC; samples per MIDI tick, Q4, from stock's tempo24 (BusDelay's idiom): read only
+;      by SYNC's CHOP and TIME, so computed only with SYNC on --------------------------
+        move    x:(r6+$e),a
+        and     #>$010000,a
+        move    a1,x0
+        move    x0,x:(r7+$43)
+        tst     a
+        beq     amsyoff
         move    x:(r6+$13),a
         and     #>$ffff00,a
         asr     #$8,a,a
@@ -285,11 +378,8 @@ amdv1:
 amtk:
         move    b1,x0
         move    x0,x:(r7+$3c)
-; ---- SYNC; the ring --------------------------------------------------------
-        move    x:(r6+$e),a
-        and     #>$010000,a
-        move    a1,x0
-        move    x0,x:(r7+$43)
+amsyoff:
+; ---- the ring --------------------------------------------------------------
         move    #>15779,a
         move    x:(r7+$02),b
         tst     b
@@ -384,6 +474,170 @@ amdhalf:
 amdset:
         move    b1,x0
         move    x0,x:(r7+$3e)           ; D
+; ---- du = 2^23 / L ------------------------------------------------------------
+        move    x:(r7+$3d),x0
+        bsr     amdivl                  ; a0 = 2^23 / L
+        move    a0,x0
+        move    x0,x:(r7+$22)           ; du
+; ---- semitones Q8 from TIME: -12 .. +12 ---------------------------------------------
+        move    x:(r6+1),a
+        and     #>$7f0000,a
+        asr     #$10,a,a
+        move    a1,x0                   ; TIME
+        move    #>24,y0
+        mpy     y0,x0,a
+        asr     a
+        move    a0,b                    ; 24 TIME
+        add     #>64,b
+        asr     #$7,b,b
+        move    b1,x0
+        move    x0,b
+        sub     #>12,b
+        asl     #$8,b,b
+        move    b1,x0
+        move    x0,x:(r7+$3f)           ; s, Q8
+; ---- FDBK, TONE, MIX ----------------------------------------------------------
+        move    x:(r6+3),a
+        and     #>$7f0000,a
+        move    a1,x0
+        move    #>$79999a,y0            ; 0.95
+        mpy     y0,x0,a
+        move    a,x0
+        move    x0,x:(r7+$2c)           ; fb
+        move    x:(r6+$c),a
+        and     #>$007f00,a
+        asr     #$8,a,a
+        move    a1,x0                   ; TONE 0..127
+        add     #>$2,a
+        move    a1,y0
+        mpy     y0,x0,a                 ; 2 T (T + 2)
+        asl     #$8,a,a                 ; T (T + 2) << 9
+        move    a0,b
+        add     #>$1ff,b                ; .. + $1ff: 127 -> $7fffff
+        move    #>$028f5c,x0            ; the floor, 0.02
+        cmp     x0,b
+        tlt     x0,b
+        move    b1,x0
+        move    x0,x:(r7+$2d)
+        move    x:(r6+5),a
+        and     #>$7f0000,a
+        move    #>$7f0000,x0
+        cmp     x0,a
+        bne     ammix
+        move    #>$7fffff,a
+ammix:
+        asl     a
+        move    a,y0                    ; g = min(1, 2m)
+        move    #>$400000,x0
+        sub     x0,a
+        sub     x0,a                    ; 2m - 1
+        move    #0,x0
+        tst     a
+        tlt     x0,a
+        move    a,y1                    ; k = max(0, 2m - 1)
+        move    y0,x:(r7+$31)
+        move    y1,x:(r7+$32)
+; ---- FREZ, the feedback modes' block values ----------------------------------------
+        move    x:(r6+4),a
+        and     #>$7f0000,a
+        move    a1,x0
+        mpy     x0,x0,a
+        move    a1,b
+        asr     #$2,b,b
+        move    b1,x0
+        move    x0,x:(r7+$5c)           ; the threshold: (FREZ/128)^2 / 4
+        move    x:(r6+4),a
+        and     #>$7f0000,a
+        clr     b
+        move    #>$1,x0
+        tst     a
+        tne     x0,b                    ; 1..126: frozen while quiet
+        move    #>$7f0000,x0
+        cmp     x0,a
+        move    #>$2,x0
+        teq     x0,b                    ; 127: frozen
+        move    b1,x0
+        move    x0,x:(r7+$33)
+        move    x0,b                    ; 0, 1, 2
+        clr     a
+        move    #>$1,y0
+        move    #>$2,x1
+        cmp     x1,b
+        teq     y0,a                    ; 127: frozen the whole block
+        move    a1,x1
+        move    x1,x:(r7+$4e)           ; 0 for 1..126: each sample rewrites it
+        clr     a
+        cmp     y0,b
+        teq     y0,a                    ; 1..126 reads the slow envelope,
+        move    x:(r7+$43),b
+        tst     b
+        tne     y0,a                    ; SYNC both
+        move    a1,x1
+        move    x1,x:(r7+$35)           ; the envelopes run
+        move    #>7587,a                ; the aux: 7,587 words, PING two of 3,793
+        move    x:(r7+$34),b
+        move    #>$020000,x0
+        cmp     x0,b
+        move    #>3793,x0
+        teq     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$52)
+        move    x:(r7+$50),a            ; POST -> PING shortens the aux: the write index
+        cmp     x0,a                    ; restarts, so no write lands past the slot
+        move    #0,x1
+        tge     x1,a
+        move    a1,x1
+        move    x1,x:(r7+$50)
+        move    x:(r7+$3d),b
+        asl     b
+        move    b1,x0                   ; 2L
+        move    x:(r7+$3e),a            ; D
+        move    x:(r7+$38),b
+        move    #>$050000,y0
+        cmp     y0,b
+        tge     x0,a                    ; the pitched modes: 2L
+        move    #>64,x0
+        cmp     x0,a
+        tlt     x0,a
+        move    x:(r7+$52),b
+        sub     #>$2,b
+        move    b1,x0
+        cmp     x0,a
+        tgt     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$51)           ; the post time
+        move    x:(r7+$34),a            ; the slot, its fade and the repeats: read only by REP .. RPCT
+        move    #>$030000,x0
+        cmp     x0,a
+        blt     amnorep
+        move    x:(r7+$3d),a
+        move    #>7552,x0
+        cmp     x0,a
+        tgt     x0,a
+        move    a1,x0
+        move    x0,x:(r7+$56)           ; the slot: L, at most 7,552
+        move    x0,a
+        asr     #$2,a,a
+        move    #>128,x0
+        cmp     x0,a
+        tgt     x0,a
+        move    a1,x0                   ; its fades: min(128, slot/4)
+        bsr     amdivl
+        move    a0,x0
+        move    x0,x:(r7+$57)           ; 2^23 / fade
+        move    x:(r6+3),a
+        and     #>$7f0000,a
+        move    a1,x0
+        move    x0,x:(r7+$5e)           ; RPCT's probability
+        asr     #$10,a,a
+        move    a1,x0
+        move    #>9,y0
+        mpy     y0,x0,a
+        asr     #$8,a,a
+        move    a0,x0
+        move    x0,x:(r7+$5d)           ; REP's repeats: 0..8
+amnorep:
+amkhit:
 ; ---- three draws: 1 the choice, 2 the amount, 3 the pan ---------------------
         bsr     amrand
         move    x0,x:(r7+$44)           ; draw 1
@@ -392,10 +646,6 @@ amdset:
         bsr     amrand
         move    x0,x:(r7+$4a)           ; draw 3
         move    x0,y1
-        move    x:(r7+$3d),x0
-        bsr     amdivl                  ; a0 = 2^23 / L
-        move    a0,x0
-        move    x0,x:(r7+$22)           ; du
         move    x:(r6+$d),a
         and     #>$007f00,a
         asl     #$8,a,a
@@ -451,23 +701,6 @@ amdset:
         tlt     x0,b
         move    b1,x0
         move    x0,x:(r7+$4c)           ; tri, 0 .. 1
-; ---- semitones Q8 from TIME: -12 .. +12 ---------------------------------------------
-        move    x:(r6+1),a
-        and     #>$7f0000,a
-        asr     #$10,a,a
-        move    a1,x0                   ; TIME
-        move    #>24,y0
-        mpy     y0,x0,a
-        asr     a
-        move    a0,b                    ; 24 TIME
-        add     #>64,b
-        asr     #$7,b,b
-        move    b1,x0
-        move    x0,b
-        sub     #>12,b
-        asl     #$8,b,b
-        move    b1,x0
-        move    x0,x:(r7+$3f)           ; s, Q8
 ; ---- the grain record: A (and B: voice 1 in PDTN) ------------------------------
         move    x:(r7+$3e),x0
         move    x0,x:(r7+$20)           ; D_A
@@ -597,142 +830,6 @@ amqpair:
         nop
         nop
         bsr     amsafe
-; ---- FDBK, TONE, MIX ----------------------------------------------------------
-        move    x:(r6+3),a
-        and     #>$7f0000,a
-        move    a1,x0
-        move    #>$79999a,y0            ; 0.95
-        mpy     y0,x0,a
-        move    a,x0
-        move    x0,x:(r7+$2c)           ; fb
-        move    x:(r6+$c),a
-        and     #>$007f00,a
-        asr     #$8,a,a
-        move    a1,x0                   ; TONE 0..127
-        add     #>$2,a
-        move    a1,y0
-        mpy     y0,x0,a                 ; 2 T (T + 2)
-        asl     #$8,a,a                 ; T (T + 2) << 9
-        move    a0,b
-        add     #>$1ff,b                ; .. + $1ff: 127 -> $7fffff
-        move    #>$028f5c,x0            ; the floor, 0.02
-        cmp     x0,b
-        tlt     x0,b
-        move    b1,x0
-        move    x0,x:(r7+$2d)
-        move    x:(r6+5),a
-        and     #>$7f0000,a
-        move    #>$7f0000,x0
-        cmp     x0,a
-        bne     ammix
-        move    #>$7fffff,a
-ammix:
-        asl     a
-        move    a,y0                    ; g = min(1, 2m)
-        move    #>$400000,x0
-        sub     x0,a
-        sub     x0,a                    ; 2m - 1
-        move    #0,x0
-        tst     a
-        tlt     x0,a
-        move    a,y1                    ; k = max(0, 2m - 1)
-        move    y0,x:(r7+$31)
-        move    y1,x:(r7+$32)
-; ---- FREZ, the feedback modes' block values ----------------------------------------
-        move    x:(r6+4),a
-        and     #>$7f0000,a
-        move    a1,x0
-        mpy     x0,x0,a
-        move    a1,b
-        asr     #$2,b,b
-        move    b1,x0
-        move    x0,x:(r7+$5c)           ; the threshold: (FREZ/128)^2 / 4
-        move    x:(r6+4),a
-        and     #>$7f0000,a
-        clr     b
-        move    #>$1,x0
-        tst     a
-        tne     x0,b                    ; 1..126: frozen while quiet
-        move    #>$7f0000,x0
-        cmp     x0,a
-        move    #>$2,x0
-        teq     x0,b                    ; 127: frozen
-        move    b1,x0
-        move    x0,x:(r7+$33)
-        move    x0,b                    ; 0, 1, 2
-        clr     a
-        move    #>$1,y0
-        move    #>$2,x1
-        cmp     x1,b
-        teq     y0,a                    ; 127: frozen the whole block
-        move    a1,x1
-        move    x1,x:(r7+$4e)           ; 0 for 1..126: each sample rewrites it
-        clr     a
-        cmp     y0,b
-        teq     y0,a                    ; 1..126 reads the slow envelope,
-        move    x:(r7+$43),b
-        tst     b
-        tne     y0,a                    ; SYNC both
-        move    a1,x1
-        move    x1,x:(r7+$35)           ; the envelopes run
-        move    #>7587,a                ; the aux: 7,587 words, PING two of 3,793
-        move    x:(r7+$34),b
-        move    #>$020000,x0
-        cmp     x0,b
-        move    #>3793,x0
-        teq     x0,a
-        move    a1,x0
-        move    x0,x:(r7+$52)
-        move    x:(r7+$50),a            ; POST -> PING shortens the aux: the write index
-        cmp     x0,a                    ; restarts, so no write lands past the slot
-        move    #0,x1
-        tge     x1,a
-        move    a1,x1
-        move    x1,x:(r7+$50)
-        move    x:(r7+$3d),b
-        asl     b
-        move    b1,x0                   ; 2L
-        move    x:(r7+$3e),a            ; D
-        move    x:(r7+$38),b
-        move    #>$050000,y0
-        cmp     y0,b
-        tge     x0,a                    ; the pitched modes: 2L
-        move    #>64,x0
-        cmp     x0,a
-        tlt     x0,a
-        move    x:(r7+$52),b
-        sub     #>$2,b
-        move    b1,x0
-        cmp     x0,a
-        tgt     x0,a
-        move    a1,x0
-        move    x0,x:(r7+$51)           ; the post time
-        move    x:(r7+$3d),a
-        move    #>7552,x0
-        cmp     x0,a
-        tgt     x0,a
-        move    a1,x0
-        move    x0,x:(r7+$56)           ; the slot: L, at most 7,552
-        move    x0,a
-        asr     #$2,a,a
-        move    #>128,x0
-        cmp     x0,a
-        tgt     x0,a
-        move    a1,x0                   ; its fades: min(128, slot/4)
-        bsr     amdivl
-        move    a0,x0
-        move    x0,x:(r7+$57)           ; 2^23 / fade
-        move    x:(r6+3),a
-        and     #>$7f0000,a
-        move    a1,x0
-        move    x0,x:(r7+$5e)           ; RPCT's probability
-        asr     #$10,a,a
-        move    a1,x0
-        move    #>9,y0
-        mpy     y0,x0,a
-        asr     #$8,a,a
-        move    a0,x0
-        move    x0,x:(r7+$5d)           ; REP's repeats: 0..8
 ; ---- the sample loop ---------------------------------------------------------
 ; r2 = r7 + $40: the per-sample slots $40..$5f in a one-word short displacement (x:(r7+$4x)
 ; and x:(r7+$5x) are two-word moves: $40 is past the 7-bit range). Comments keep the r7 names.
@@ -740,18 +837,29 @@ ammix:
         add     #>$40,a
         move    a1,r2
         move    #>$1,n0
+        move    x:(r7+$00),x0
+        move    x0,n3                   ; the slot's base: the ring is y:(r3+n3)
+        move    x0,a
+        add     #>$2000,a
+        move    a1,x0
+        move    x0,x:(r2+$0d)           ; the aux's base
+        move    x:(r7+$39),x0
+        move    x0,n1                   ; N
+        move    x:(r7+$26),x0
+        move    x0,r1                   ; Kf
         do      n7,>amend
 ; mono in
         move    x:(r0),a
         move    x:(r0+n0),x0
         add     x0,a
         asr     a
+        move    r2,r5                   ; (two moves between writing r5 and using it: MODULES.md)
         move    a,x0
         move    x0,x:(r2+$05)
         clr     a
-        move    a,x:(r2+$00)
-        move    a,x:(r2+$01)
-        move    a,x:(r2+$02)
+        move    a,x:(r5)+               ; wet L
+        move    a,x:(r5)+               ; wet R
+        move    a,x:(r5)                ; wet mono
 ; envelopes: fast 1/32, slow 1/1024 a sample -- only while something reads them (SYNC, or
 ; FREZ 1..126: the block's $35). Off, they and the SYNC hold-off stand still.
         move    x:(r7+$35),a
@@ -826,23 +934,149 @@ amfzset:
 amnostart:
 ; the voices: a finished grain (u = 1) has a zero window -- it adds nothing, and the next
 ; start rewrites its record -- so it is skipped (culling: what is not heard is not computed)
-        move    #>$7fffff,x1
-        move    x:(r7+$12),a            ; voice 0's u
-        cmp     x1,a
-        beq     amv0off
+; ---- voice 0 (r4 walks du u pos inc gl gr; r5 the wet slots L R mono) ---------------------
         lua     (r7+$10),r4
-        nop
-        nop
-        bsr     amvoice
+        move    r2,r5
+        move    x:(r7+$11),x0           ; u
+        move    #>$7fffff,a
+        cmp     x0,a
+        beq     amv0off                 ; u = 1: a finished grain, a zero window
+        move    x:(r4)+,b               ; du
+        add     x0,b
+        move    b,x:(r4)+               ; u += du (the move stops it at 1)
+        sub     x0,a                    ; 1 - u
+        cmp     x0,a
+        tge     x0,a                    ; m = min(u, 1 - u)
+        move    a,y1
+        move    r1,x1                   ; Kf
+        mpy     y1,x1,a
+        move    x:(r7+$27),x0
+        asl     x0,a,a                  ; m Kf << shift
+        move    a,x1                    ; w (the move limits at 1)
+        move    x:(r4),a                ; pos
+        asr     #$9,a,a                 ; idx, 0 .. N-1
+        move    a1,r3
+        move    a1,b
+        move    x:(r4)+,a
+        and     #>$1ff,a                ; the fraction
+        move    y:(r3+n3),x0            ; s0 = ring[idx]
+        beq     amv0int                 ; no fraction: v = s0
+        add     #>$1,b
+        move    n1,y1
+        cmp     y1,b
+        move    #0,y1
+        tge     y1,b                    ; idx + 1 wraps to 0
+        move    b1,r3
+        asl     #$e,a,a
+        move    a1,y0                   ; frac, Q23
+        move    x0,a                    ; s0 (two moves between writing r3 and using it)
+        move    y:(r3+n3),b             ; s1 = ring[idx + 1]
+        sub     a,b                     ; s1 - s0
+        move    b,x0
+        mpy     y0,x0,b
+        add     a,b                     ; s0 + frac (s1 - s0)
+        move    b,x0
+amv0int:
+        mpy     x1,x0,a                 ; s = v w
+        move    a,x1                    ; s (limited)
+        move    x:(r4)-,x0              ; inc
+        move    x:(r4),a                ; pos
+        add     x0,a                    ; pos + inc: -(N<<9) .. 2(N<<9)
+        move    x:(r7+$3a),x0           ; N << 9
+        move    a,b
+        sub     x0,b
+        move    b1,y0
+        tst     b
+        tge     y0,a                    ; past the end: back by N
+        move    a,b
+        add     x0,b
+        move    b1,y0
+        tst     a
+        tlt     y0,a                    ; before the start (reverse): on by N
+        move    a1,x0
+        move    x0,x:(r4)+              ; pos += inc, wrapped
+        move    x:(r4)+,x0              ; (past inc)
+        move    x:(r4)+,y0              ; gl
+        mpy     x1,y0,a
+        move    a,x:(r5)+               ; wet L (the slots are zero: this voice is the first)
+        move    x:(r4),y0               ; gr
+        mpy     x1,y0,a
+        move    a,x:(r5)+               ; wet R
+        move    x1,x:(r5)               ; wet mono
 amv0off:
-        move    #>$7fffff,x1
-        move    x:(r7+$1a),a            ; voice 1's u
-        cmp     x1,a
-        beq     amv1off
+; ---- voice 1 (r4 walks du u pos inc gl gr; r5 the wet slots L R mono) ---------------------
         lua     (r7+$18),r4
-        nop
-        nop
-        bsr     amvoice
+        move    r2,r5
+        move    x:(r7+$19),x0           ; u
+        move    #>$7fffff,a
+        cmp     x0,a
+        beq     amv1off                 ; u = 1: a finished grain, a zero window
+        move    x:(r4)+,b               ; du
+        add     x0,b
+        move    b,x:(r4)+               ; u += du (the move stops it at 1)
+        sub     x0,a                    ; 1 - u
+        cmp     x0,a
+        tge     x0,a                    ; m = min(u, 1 - u)
+        move    a,y1
+        move    r1,x1                   ; Kf
+        mpy     y1,x1,a
+        move    x:(r7+$27),x0
+        asl     x0,a,a                  ; m Kf << shift
+        move    a,x1                    ; w (the move limits at 1)
+        move    x:(r4),a                ; pos
+        asr     #$9,a,a                 ; idx, 0 .. N-1
+        move    a1,r3
+        move    a1,b
+        move    x:(r4)+,a
+        and     #>$1ff,a                ; the fraction
+        move    y:(r3+n3),x0            ; s0 = ring[idx]
+        beq     amv1int                 ; no fraction: v = s0
+        add     #>$1,b
+        move    n1,y1
+        cmp     y1,b
+        move    #0,y1
+        tge     y1,b                    ; idx + 1 wraps to 0
+        move    b1,r3
+        asl     #$e,a,a
+        move    a1,y0                   ; frac, Q23
+        move    x0,a                    ; s0 (two moves between writing r3 and using it)
+        move    y:(r3+n3),b             ; s1 = ring[idx + 1]
+        sub     a,b                     ; s1 - s0
+        move    b,x0
+        mpy     y0,x0,b
+        add     a,b                     ; s0 + frac (s1 - s0)
+        move    b,x0
+amv1int:
+        mpy     x1,x0,a                 ; s = v w
+        move    a,x1                    ; s (limited)
+        move    x:(r4)-,x0              ; inc
+        move    x:(r4),a                ; pos
+        add     x0,a                    ; pos + inc: -(N<<9) .. 2(N<<9)
+        move    x:(r7+$3a),x0           ; N << 9
+        move    a,b
+        sub     x0,b
+        move    b1,y0
+        tst     b
+        tge     y0,a                    ; past the end: back by N
+        move    a,b
+        add     x0,b
+        move    b1,y0
+        tst     a
+        tlt     y0,a                    ; before the start (reverse): on by N
+        move    a1,x0
+        move    x0,x:(r4)+              ; pos += inc, wrapped
+        move    x:(r4)+,x0              ; (past inc)
+        move    x:(r4)+,y0              ; gl
+        move    x:(r5),a
+        mac     x1,y0,a
+        move    a,x:(r5)+               ; wet L
+        move    x:(r4),y0               ; gr
+        move    x:(r5),a
+        mac     x1,y0,a
+        move    a,x:(r5)+               ; wet R
+        move    x:(r5),a
+        add     x1,a
+        move    a,x:(r5)                ; wet mono
 amv1off:
 ; the feedback modes: one runs per sample (cycle_count prices dispatch + the worst)
 ; MODEFORK_BEGIN
@@ -1040,18 +1274,13 @@ amfbend:
         tst     a
         bne     amrsk                   ; frozen: the ring keeps what it has
         move    x:(r7+$04),a
-        move    x:(r7+$00),x1
-        add     x1,a
-        move    a1,r4
-        nop
-        nop
-        move    x0,y:(r4)
-        move    x:(r7+$04),a
+        move    a1,r3
         add     #>$1,a
-        move    x:(r7+$39),x0
-        cmp     x0,a
-        move    #0,x0
-        tge     x0,a                    ; the write index wraps at N
+        move    n1,x1
+        cmp     x1,a
+        move    #0,x1
+        tge     x1,a                    ; the write index wraps at N
+        move    x0,y:(r3+n3)            ; the ring takes the sample
         move    a1,x0
         move    x0,x:(r7+$04)
 amrsk:
@@ -1112,90 +1341,17 @@ amstart:
         tlt     x0,a                    ; wrapped: Dsafe < N
         asl     #$9,a,a
         move    a1,x0
+        move    x:(r7+$22),x1
+        move    x1,x:(r4)+              ; du
+        clr     b
+        move    b,x:(r4)+               ; u = 0
         move    x0,x:(r4)+              ; pos
         move    x:(r5+1),x0
         move    x0,x:(r4)+              ; inc
-        clr     a
-        move    a,x:(r4)+               ; u = 0
-        move    x:(r7+$22),x0
-        move    x0,x:(r4)+              ; du
         move    x:(r7+$23),x0
         move    x0,x:(r4)+              ; gl
         move    x:(r7+$24),x0
         move    x0,x:(r4)+              ; gr
-        rts
-
-; ---- one voice: r4 -> pos inc u du gl gr. No control transfer. ------------------
-amvoice:
-        move    x:(r4+2),x0             ; u
-        move    #>$7fffff,a
-        sub     x0,a                    ; 1 - u
-        cmp     x0,a
-        tge     x0,a                    ; m = min(u, 1 - u)
-        move    a,y1
-        move    x:(r7+$26),x1           ; Kf
-        mpy     y1,x1,a
-        move    x:(r7+$27),x0
-        asl     x0,a,a                  ; m Kf << shift
-        move    a,x1                    ; w (the move limits at 1)
-        move    x:(r4),a                ; pos
-        asr     #$9,a,a                 ; idx, 0 .. N-1
-        move    a1,b
-        move    x:(r7+$00),y0
-        add     y0,a
-        move    a1,r5                   ; y:(r5) = ring[idx]
-        add     #>$1,b
-        move    x:(r7+$39),y0
-        cmp     y0,b
-        move    #0,x0
-        tge     x0,b                    ; idx + 1 wraps to 0
-        move    x:(r7+$00),y0
-        add     y0,b
-        move    b1,r3                   ; y:(r3) = ring[idx + 1]
-        move    x:(r4),a
-        and     #>$1ff,a
-        asl     #$e,a,a
-        move    a1,y0                   ; frac, Q23
-        move    y:(r5),a                ; s0
-        move    y:(r3),b                ; s1
-        sub     a,b                     ; s1 - s0
-        move    b,x0
-        mpy     y0,x0,b
-        add     a,b                     ; s0 + frac (s1 - s0)
-        move    b,x0
-        mpy     x1,x0,a                 ; s = v w
-        move    a,x0
-        move    x:(r2+$02),a
-        add     x0,a
-        move    a,x:(r2+$02)            ; wet mono
-        move    x:(r4+4),y0
-        move    x:(r2+$00),a
-        mac     y0,x0,a
-        move    a,x:(r2+$00)            ; wet L
-        move    x:(r4+5),y0
-        move    x:(r2+$01),a
-        mac     y0,x0,a
-        move    a,x:(r2+$01)            ; wet R
-        move    x:(r4),a
-        move    x:(r4+1),x0
-        add     x0,a                    ; pos + inc: -(N<<9) .. 2(N<<9)
-        move    x:(r7+$3a),x0
-        move    a,b
-        sub     x0,b
-        move    b1,y0
-        tst     b
-        tge     y0,a                    ; past the end: back by N
-        move    a,b
-        add     x0,b
-        move    b1,y0
-        tst     a
-        tlt     y0,a                    ; before the start (reverse): on by N
-        move    a1,x0
-        move    x0,x:(r4)               ; pos += inc, wrapped
-        move    x:(r4+2),a
-        move    x:(r4+3),x0
-        add     x0,a
-        move    a,x:(r4+2)              ; u += du (the move stops it at 1)
         rts
 
 ; ---- the feedback modes' helpers (per sample) ------------------------------------
@@ -1232,14 +1388,11 @@ amaux:
         move    b1,x0
         tst     a
         tlt     x0,a
-        move    x:(r7+$00),x0
+        move    x:(r2+$0d),x0           ; the aux's base
         add     x0,a
-        add     #>$2000,a
         move    a1,r4
         move    x:(r2+$10),a
-        move    x:(r7+$00),x0
         add     x0,a
-        add     #>$2000,a
         move    a1,r5
         nop
         nop
