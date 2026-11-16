@@ -3,7 +3,7 @@
 
 modules/octa303/octa303.s carries, between its "o3e generated" markers, the data of the v7 voice:
   * the integer control step's tables: tools/octa303/model_v7/o3tab.s (committed; gen_tables.py made it from
-    the laws file o3m7.LAWS names, model_v7/leggi_A_v8.json), turned into this file's form (.align 4 + label + .long / .short in the text);
+    model_v7/leggi_A_v5.json), turned into this file's form (.align 4 + label + .long / .short in the text);
   * the scalars of model_v7/o3tab.h (O3S_*) as .set constants, and the derived ones (O3E_*, o3m7.derived);
   * the BA662A ceiling's two knee tables, kept as they are in octa303.s (with --regen: from o3model.KNEG / KPOS).
 
@@ -44,7 +44,7 @@ def block(regen=False):
     tab = open(os.path.join(o3m7.MODEL, 'o3tab.s')).read().split('\n')
     _, sc, _, _ = o3m7.committed()
     out = [BEGIN,
-           '| From tools/octa303/model_v7: o3tab.s / o3tab.h (gen_tables.py from %s); code written by' % os.path.basename(o3m7.LAWS),
+           '| From tools/octa303/model_v7: o3tab.s / o3tab.h (gen_tables.py from leggi_A_v5.json); code written by',
            '| Claude (Anthropic).  Layout and Q formats: model_v7/o3int.h.']
     for k, v in sc.items():
         out.append('        .set    %s, %d' % (k, v))
