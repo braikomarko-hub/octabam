@@ -1,3 +1,4 @@
+; CYCLES_FORWARD_BRANCHES
 ; ---------------------------------------------------------------------------
 ; FET76 -- the UREI / Universal Audio 1176LN FET limiting amplifier (1967),
 ; a per-track insert.
@@ -28,13 +29,30 @@
 ;   $03 GOUT count  $04 ka  $05 kr  $06 MIX  $07 YT  $08 IS4  $09 SW  $0a T64
 ;   $0b EPS  $0c ABI shift  $0d GOUT count, the part past 7 bits
 ; persistent: $10 uA8  $11 uB8  $12 g2 (G/2, 0.5 at init)  $13 DC L  $14 DC R
-; per sample scratch: $18 A  $19 aL  $1a aR  $1b yG  $1c t  $1d lam / num hi
-;   $1e num lo  $1f count  $20 DZ2  $21 wet L  $22 wet R
+; per sample scratch: $19 aL  $1a aR  $1d lam / num hi  $1e num lo  $1f count  $20 DZ2
+;   $25 f76_chan's z
 ;   $23 f76_exp's count, then (per block, after INPT/OUTP) the ALL flag
-;   $24 f76_chan's a  $25 f76_chan's z
+; the knob cache (16 Nov 2026): $26..$2c the seven page words the last decode read
+;   (r6+0..5, r6+$c), $2d = 1 when they are valid (init clears it)
+; registers through the sample loop (loaded once a block; the dispatcher reloads its own
+; after proc; these are the ones DISTORX v9, BBD and the reverb server already clobber on
+; the unit; n2 is left alone): n1 GIN mantissa  n3 kr
+;   r1 GOUT mantissa  r2 GOUT count  r3 its part past 7 bits  r4 MIX  r5 EPS
+;   n4 f76_chan's a (parked, a word each way instead of an r7 slot; z stays in $25: it is
+;   loaded into an accumulator, signed)
+;   y0 uA8 from the capacitors to the FET's residue; x1 A to the charge test
 ;
-; Every mpy and mac is x0,y1 / -x0,y1 / x0,x0 (the signed encodings). Every
-; Tcc reads the cmp directly above it with only moves between.
+; Every mpy and mac is x0,y1 / -x0,y1 / x0,x0 (the signed encodings), and y1,x1 / x1,y0
+; (signed too: DISTORX v10 and AtoMizer run them). Every Tcc reads the cmp directly above
+; it with only moves between.
+;
+; Lighter (16 Nov 2026), the same samples bit for bit:
+;   - the knob decode is skipped while the seven page words are the ones last decoded
+;   - the charge (w, lam, the division, u', the rail) is computed only when the diode
+;     conducts: its only use was the `tgt` that takes u' then
+;   - uA8 = 0 (no limiting, or released to zero): G/2 is $400000 and DZ 0, written
+;     without the division and the four multiplies
+;   - uA8 lives in y0, A in x1, the block constants in address registers
 ; ---------------------------------------------------------------------------
 
 init:
@@ -43,6 +61,7 @@ init:
         move    a,x:(r7+$11)            ; C22 empty
         move    a,x:(r7+$13)
         move    a,x:(r7+$14)
+        move    a,x:(r7+$2d)            ; the knob cache: not valid
         move    #>$400000,a
         move    a,x:(r7+$12)            ; G = 1
         rts
@@ -53,6 +72,56 @@ proc:
 ; ===========================================================================
 ; PER BLOCK
 ; ===========================================================================
+; ---- the knob cache: the same seven page words, the same decode -- skip it.
+; The words are compared whole, LFO fractions included.
+        move    x:(r7+$2d),a
+        tst     a
+        beq     f76_dec
+        move    x:(r6+$0),a
+        move    x:(r7+$26),x0
+        cmp     x0,a
+        bne     f76_dec
+        move    x:(r6+$1),a
+        move    x:(r7+$27),x0
+        cmp     x0,a
+        bne     f76_dec
+        move    x:(r6+$2),a
+        move    x:(r7+$28),x0
+        cmp     x0,a
+        bne     f76_dec
+        move    x:(r6+$3),a
+        move    x:(r7+$29),x0
+        cmp     x0,a
+        bne     f76_dec
+        move    x:(r6+$4),a
+        move    x:(r7+$2a),x0
+        cmp     x0,a
+        bne     f76_dec
+        move    x:(r6+$5),a
+        move    x:(r7+$2b),x0
+        cmp     x0,a
+        bne     f76_dec
+        move    x:(r6+$c),a
+        move    x:(r7+$2c),x0
+        cmp     x0,a
+        beq     f76_go
+f76_dec:
+        move    x:(r6+$0),x0
+        move    x0,x:(r7+$26)
+        move    x:(r6+$1),x0
+        move    x0,x:(r7+$27)
+        move    x:(r6+$2),x0
+        move    x0,x:(r7+$28)
+        move    x:(r6+$3),x0
+        move    x0,x:(r7+$29)
+        move    x:(r6+$4),x0
+        move    x0,x:(r7+$2a)
+        move    x:(r6+$5),x0
+        move    x0,x:(r7+$2b)
+        move    x:(r6+$c),x0
+        move    x0,x:(r7+$2c)
+        move    #>$000001,x0
+        move    x0,x:(r7+$2d)
 ; ---- INPT: GIN/32 = 2^g, g = (w - 1/2) GK - 5/32 --------------------------------
         move    x:(r6+$0),a
         and     #>$7fffff,a
@@ -158,14 +227,47 @@ proc:
         move    #>$7fffff,x0
         teq     x0,a
         move    a1,x:(r7+$06)
+f76_go:
         move    #$1,n0
+; ---- the block constants the loop reads, in registers ------------------------------
+        move    x:(r7+$00),x0
+        move    x0,n1                   ; GIN mantissa
+        move    x:(r7+$05),x0
+        move    x0,n3                   ; kr
+        move    x:(r7+$02),x0
+        move    x0,r1                   ; GOUT mantissa
+        move    x:(r7+$03),x0
+        move    x0,r2                   ; GOUT count
+        move    x:(r7+$0d),x0
+        move    x0,r3                   ; its part past 7 bits
+        move    x:(r7+$06),x0
+        move    x0,r4                   ; MIX
+        move    x:(r7+$0b),x0
+        move    x0,r5                   ; EPS
 ; ===========================================================================
 ; THE SAMPLE LOOP
 ; ===========================================================================
         do      n7,>f76_end
-; ---- INPUT: a = x GIN/32, both channels; A = the larger --------------------------
-        move    x:(r7+$00),y1
-        move    x:(r7+$01),b
+; ---- C27 <-> C22, C22 released (uA8 in y0, uB8 in x1) ------------------------------
+        move    x:(r7+$10),y0           ; uA
+        move    x:(r7+$11),x1           ; uB
+        move    y0,a
+        sub     x1,a                    ; d = uA - uB
+        move    a,x0
+        move    #>@KXA@,y1
+        move    y0,a
+        mac     -x0,y1,a                ; uA - d KXA
+        move    a,y0                    ; uA8 (limited, as the store was)
+        move    #>@KXB@,y1
+        move    x1,a
+        mac     x0,y1,a                 ; uB + d KXB
+        move    x1,x0
+        move    n3,y1
+        mac     -x0,y1,a                ; - uB kr
+        move    a,x:(r7+$11)
+; ---- INPUT: a = x GIN/32, both channels; A = the larger (in x1) --------------------
+        move    n1,y1
+        move    x:(r7+$01),b            ; GIN count
         move    x:(r0),x0
         mpy     x0,y1,a
         normf   b1,a
@@ -180,34 +282,21 @@ proc:
         abs     b
         cmp     a,b
         tlt     a,b                     ; the larger
-        move    b,x:(r7+$18)            ; A
-; ---- C27 <-> C22, C22 released ------------------------------------------------------
-        move    x:(r7+$10),a
-        move    x:(r7+$11),x0
-        sub     x0,a                    ; d = uA - uB
-        move    a,x0
-        move    #>@KXA@,y1
-        move    x:(r7+$10),a
-        mac     -x0,y1,a                ; uA - d KXA
-        move    a,x:(r7+$10)
-        move    #>@KXB@,y1
-        move    x:(r7+$11),a
-        mac     x0,y1,a                 ; uB + d KXB
-        move    x:(r7+$11),x0
-        move    x:(r7+$05),y1
-        mac     -x0,y1,a                ; - uB kr
-        move    a,x:(r7+$11)
+        move    b,x1                    ; A (limited)
 ; ---- the charge test: t = A G0 - YT against uA/(4S) ---------------------------------
-        move    x:(r7+$18),x0
         move    x:(r7+$12),y1           ; G0/2
-        mpy     x0,y1,a
+        mpy     y1,x1,a
         asl     #$1,a,a                 ; A G0
-        move    a,x:(r7+$1b)            ; yG
-        move    x:(r7+$07),x0
-        sub     x0,a
-        move    a,x:(r7+$1c)            ; t
-; ---- w/16384 = ka A G0^2 S/512, lam = w/(1 + w) -------------------------------------
-        move    x:(r7+$1b),x0
+        move    a,x0                    ; yG
+        move    x:(r7+$07),x1
+        sub     x1,a
+        move    a,x1                    ; t (limited)
+        move    x1,b
+        move    x:(r7+$08),x1           ; 1/(4S)
+        mpy     x1,y0,a                 ; uA/(32 S)
+        cmp     a,b                     ; t - uA/(32 S)
+        ble     f76_nochg               ; the diode does not conduct: uA stays
+; ---- the diode conducts. w/16384 = ka A G0^2 S/512, lam = w/(1 + w) ------------------
         mpy     x0,y1,a
         asl     #$1,a,a                 ; A G0^2
         move    a,x0
@@ -237,9 +326,9 @@ f76_dv1:
         move    a0,y1
         move    y1,x:(r7+$1d)           ; lam
 ; ---- u' = (1 - lam) c0 + lam (1 + 2 uA), in u/8 ---------------------------------
-        move    x:(r7+$10),x0
+        move    y0,x0
         move    x:(r7+$04),y1           ; ka
-        move    x:(r7+$10),a
+        move    y0,a
         mac     -x0,y1,a                ; (1 - ka) uA8
         asr     #$2,a,a                 ; /4
         move    x:(r7+$0a),x0           ; T64
@@ -251,12 +340,12 @@ f76_dv1:
         mac     -x0,y1,a                ; (1 - lam) c32
         asl     #$2,a,a
         tfr     a,b                     ; (1 - lam) c0/8
-        move    x:(r7+$10),a
+        move    y0,a
         add     #>$080000,a             ; (1 + 2 uA)/16
         move    a,x0
         mac     x0,y1,b
         mac     x0,y1,b                 ; + lam (1 + 2 uA)/8: u'/8
-        move    x:(r7+$10),x0
+        move    y0,x0
         move    x:(r7+$04),y1
         move    x0,a
         mac     -x0,y1,a
@@ -264,19 +353,22 @@ f76_dv1:
         mac     x0,y1,a                 ; the rail: (1 - ka) uA8 + ka EMAX/8
         cmp     a,b
         tgt     a,b
-        move    x:(r7+$10),a
+        move    y0,a
         cmp     a,b
         tlt     a,b                     ; never below uA
-        move    b,x1                    ; u'/8
-        move    x:(r7+$10),x0
-        move    x:(r7+$08),y1           ; 1/(4S)
-        mpy     x0,y1,b                 ; uA/(32 S)
-        move    x:(r7+$1c),a            ; t
-        cmp     b,a                     ; t - uA/(32 S)
-        move    x:(r7+$10),a
-        tgt     x1,a                    ; the diode conducts: C27 charges
-        move    a,x:(r7+$10)
-; ---- G/2 = (1/16)/(1/8 + uA8) -----------------------------------------------------
+        move    b,y0                    ; u'/8: C27 charges
+f76_nochg:
+        move    y0,x:(r7+$10)
+; ---- G/2 = (1/16)/(1/8 + uA8); DZ/2 = 512 eps uA8 g2^3. At uA8 = 0 they are
+; $400000 and 0: written, not computed -----------------------------------------------
+        move    y0,a
+        tst     a
+        bne     f76_gdiv
+        move    #>$400000,x0
+        move    x0,x:(r7+$12)           ; g2
+        move    a,x:(r7+$20)            ; DZ/2 = 0
+        beq     f76_gdone               ; always: the moves left Z as the tst set it
+f76_gdiv:
         add     #>$100000,a
         move    a,x0
         move    #>$080000,a
@@ -286,34 +378,28 @@ f76_dv1:
 f76_dv2:
         move    a0,y1
         move    y1,x:(r7+$12)           ; g2
-; ---- DZ/2 = 512 eps uA8 g2^3 ------------------------------------------------------
         move    y1,x0
         mpy     x0,x0,a                 ; g2^2
         move    a,x0
         mpy     x0,y1,a                 ; g2^3
         move    a,x0
-        move    x:(r7+$10),y1
+        move    y0,y1
         mpy     x0,y1,a                 ; uA8 g2^3
         move    a,x0
-        move    x:(r7+$0b),y1
+        move    r5,y1
         mpy     x0,y1,a                 ; eps uA8 g2^3
         asl     #$9,a,a
         move    a,x:(r7+$20)            ; DZ/2
-; ---- the gain cell, the residue, OUTPUT, the class-A stage: L ---------------------
+f76_gdone:
+; ---- the gain cell, the residue, OUTPUT, the class-A stage, MIX: L, then R ----------
         move    x:(r7+$19),x0
         move    x:(r7+$13),y0
         bsr     f76_chan
         move    y0,x:(r7+$13)
-        move    a,x:(r7+$21)            ; wet L
-        move    x:(r7+$1a),x0
-        move    x:(r7+$14),y0
-        bsr     f76_chan
-        move    y0,x:(r7+$14)
-        move    a,x:(r7+$22)            ; wet R
-; ---- MIX, per channel -------------------------------------------------------------
-        move    x:(r7+$06),y1
+        move    a,x0                    ; wet L (limited)
+        move    x0,a
+        move    r4,y1                   ; MIX
         move    x:(r0),b                ; dry L
-        move    x:(r7+$21),a
         sub     b,a
         asr     #$1,a,a
         move    a,x0
@@ -321,8 +407,14 @@ f76_dv2:
         asl     #$1,a,a
         add     b,a
         move    a,x:(r0)+
+        move    x:(r7+$1a),x0
+        move    x:(r7+$14),y0
+        bsr     f76_chan
+        move    y0,x:(r7+$14)
+        move    a,x0                    ; wet R (limited)
+        move    x0,a
+        move    r4,y1
         move    x:(r0),b                ; dry R
-        move    x:(r7+$22),a
         sub     b,a
         asr     #$1,a,a
         move    a,x0
@@ -337,10 +429,10 @@ f76_end:
 ; ---------------------------------------------------------------------------
 ; f76_chan -- one channel: in x0 = a (the signal /32), y0 = its DC state;
 ; out a = the channel after OUTPUT and the class-A stage, y0 = the new DC
-; state. Branchless.
+; state. Branchless. Reads r1 r2 r3 (OUTPUT), parks a in n4.
 ; ---------------------------------------------------------------------------
 f76_chan:
-        move    x0,x:(r7+$24)           ; a
+        move    x0,n4                   ; a
         mpy     x0,x0,a                 ; a^2
         move    a,x0
         move    x:(r7+$20),y1
@@ -356,18 +448,18 @@ f76_chan:
         move    a,y0                    ; the new DC state
         move    x1,a
         sub     y0,a                    ; e - m
-        move    x:(r7+$24),x0
+        move    n4,x0
         move    x:(r7+$12),y1
         mac     x0,y1,a
         mac     x0,y1,a                 ; v = a G + e - m
         move    a,x0
-        move    x:(r7+$02),y1
+        move    r1,y1
         mpy     x0,y1,a
-        move    x:(r7+$03),b
+        move    r2,b
         normf   b1,a                    ; z = v x 32 GOUT: up to 7 bits, in the guard bits
         move    a,x0                    ; limited
         move    x0,a
-        move    x:(r7+$0d),b
+        move    r3,b
         normf   b1,a                    ; the rest, at most x 16 of a limited word
         move    a,x0                    ; limited to full scale
         move    x0,x:(r7+$25)

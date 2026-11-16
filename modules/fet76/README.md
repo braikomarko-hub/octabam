@@ -47,10 +47,27 @@ Stereo-linked as the 1176 SA: the larger of |L| and |R| drives one gain.
 
 ## DSP
 
-No buffer and nothing outside its r7 block: 143 words of P table, 406 of
-code, 311 cycles per sample (cycle_count). Two 24-step divisions per sample
-(the loop's linearised solve and the FET's 1/(1 + u)); everything else
-branchless. The fixed-point model is `fet76_ref.fixed()`; the float model
+No buffer and nothing outside its r7 block: 143 words of P table, 486 of
+code (406 until 16 Nov 2026), 320 cycles per sample at worst (cycle_count; 311
+before: the count prices every word of the loop, the skips included). Two
+24-step divisions per sample at worst (the loop's linearised solve and the
+FET's 1/(1 + u)).
+
+Lighter (16 Nov 2026), the same samples bit for bit: the charge (w, lam, its
+division, u', the rail) is computed only on a sample where the diode conducts
+(its only use was the `tgt` that takes u' then); at uA = 0 (no limiting, or
+released to zero) G/2 and the residue are written, not computed; the knob
+decode is skipped while the seven page words are the ones last decoded; uA and
+the block constants live in registers (r1..r5, n1, n3, n4 are clobbered across
+proc, as other modules' are on the unit; n2 is left alone). Old against new on the vendored emulator, standalone
+(the dispatcher's ABI, the M registers linear, garbage in the scratch registers and the r7 block): 0
+differing samples over 24 knob sets x 6 signals of 0.25 s and 10 runs with every
+knob moving every 23 blocks, dirty page words and trig splits; the code before
+and after equals `fixed()` there on the three sets tried. Executed instructions a 16-sample block, before ->
+after: 4,680 -> 2,627 with no limiting (silence, ATK OFF), 3,342 on an acid
+line at the defaults, 4,547 on a full-scale square (limiting on most samples);
+the worst block 4,680 -> 4,729 (the cache's compare). `verify_fet76.py` needs
+the stock image and was NOT run for this change. The fixed-point model is `fet76_ref.fixed()`; the float model
 `fet76_ref.FET76` (the same file) is what the numbers below were measured on.
 
 ## Gates
