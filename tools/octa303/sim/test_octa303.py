@@ -258,7 +258,10 @@ def skip0_source():
         a, b = t.index('| ---- o3e generated: tools/'), t.index('| ---- o3e generated: end')
         return t[:a] + t[b:]
     inc = lambda t: gen_out(t).replace('        .include "remix.inc"', remix_inc(True).rstrip('\n'), 1)
-    code = lambda t: [l.split('|')[0].rstrip() for l in t.split('\n') if l.split('|')[0].strip()]
+    # 16 Nov 2026: the engine's state grew by E_FG1..4 (FM held for 4 samples): those .set lines and E_END's are the
+    # engine's layout, not the shell's
+    eng = lambda l: l.lstrip().startswith(('.set    E_FG', '.set    E_END,'))
+    code = lambda t: [l.split('|')[0].rstrip() for l in t.split('\n') if l.split('|')[0].strip() and not eng(l)]
     def voice_out(t):
         # 16 Nov 2026: the neutral voice macro (E_VOICE, with E_VFAST since the reorder for the EMAC read stall) is
         # the engine, not the shell: test_o3e_v7.py compares its samples with the model bit for bit
