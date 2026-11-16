@@ -532,7 +532,7 @@ sod_stage:
 ; ---- HP 10.8 Hz, the output DC blocker, with a 48-bit state ----------------
         move    x:(r7+$2e),a            ; S, high word (a0 cleared)
         move    x:(r7+$3c),a0           ; S, low word
-        move    x:(r7+$2e),x0
+        move    a1,x0                   ; (v11)
         move    #>$003282,y1             ; 1 - p
         mac     -x0,y1,a
         move    x:(r7+$2d),x0           ; o2[n-1]
@@ -822,7 +822,7 @@ dtx_rstage:
 ; ---- HP 7.2 Hz (C1, R2), a 48-bit state: S' = S - (1-p) hi(S) + c (vin - vin1) --
         move    x:(r7+$35),a            ; S, high word (a0 cleared)
         move    x:(r7+$36),a0           ; S, low word
-        move    x:(r7+$35),x0
+        move    a1,x0                   ; the high word again, from the register (v11)
         move    #>$0021c2,y1             ; 1 - p
         mac     -x0,y1,a
         move    x:(r7+$34),x0           ; vin[n-1]
@@ -889,10 +889,10 @@ dtx_rstage:
         move    a,x:(r7+$1f)            ; d1
 ; ---- C5, C6: vh += K (v- - vh), 48 bits -------------------------------------------
         move    b,a
-        move    x:(r7+$28),x0
-        sub     x0,a
+        move    x:(r7+$28),y0           ; vh5, read once (v11: y0 is free, z is dead)
+        sub     y0,a
         move    a,x0
-        move    x:(r7+$28),a
+        move    y0,a
         move    x:(r7+$29),a0
         move    n1,y1                   ; RK5
         mac     x0,y1,a
@@ -998,10 +998,10 @@ dtx_rstage:
         move    a0,x:(r7+$2d)
 ; ---- C9 into R8: g = GR8 (vX - vh9); vh9 += K9 (vX - vh9) -------------------------
         move    x1,a
-        move    x:(r7+$32),x0
-        sub     x0,a
+        move    x:(r7+$32),y0           ; vh9, read once (v11: y0 is free here)
+        sub     y0,a
         move    a,x0                    ; vX - vh9
-        move    x:(r7+$32),a
+        move    y0,a
         move    x:(r7+$33),a0
         move    n4,y1                   ; RK9
         mac     x0,y1,a
@@ -1013,7 +1013,7 @@ dtx_rstage:
 ; ---- HP 1.6 Hz (C10 into VOLUME), 48-bit state: S = o/2 + 1/2 LSB ----------------
         move    x:(r7+$37),a            ; S, high word (a0 cleared)
         move    x:(r7+$38),a0           ; S, low word
-        move    x:(r7+$37),x0
+        move    a1,x0                   ; (v11)
         move    #>$00076e,y1             ; 1 - p
         mac     -x0,y1,a
         move    x:(r7+$3a),x0           ; g[n-1]

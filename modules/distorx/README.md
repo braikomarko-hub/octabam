@@ -367,6 +367,18 @@ v9: `lsl #n,a` (the load meter runs `lsr #n,a`), `tpl`, `mac -y0,x0,a`,
 the ones with no stock site. n1, n2 and n4 are clobbered across `proc`, as BBD's
 n4 and the reverb server's n1 and n4 already are.
 
+## v11 (16 Nov 2026): five reads from a register
+
+Bit for bit v10 (old against new on the vendored emulator, standalone: 225 knob
+and MODE sets x signals and 10 runs with the knobs and MODE moving, dirty page
+words and trig splits, 0 differing samples). Five state words that the stage
+read from the r7 block twice in a row are read once and copied from the
+register: the three 48-bit HP states' high words (`move a1,x0`), vh5 and vh9
+(through y0, free there). The same words and instructions; 2 cycles each on the
+unit by CHIP.md's per-form costs (a displaced read 4, a register move 2), about
+2 % of the stage. `make cycles` reads 267 as before. Not on a unit;
+`verify_distorx.py` was not run for this change (no stock image there).
+
 ## Open
 
 - v10 has not been flashed. To count: the image, then `COST-B`'s read with `dear` (MIX 126), the settled
