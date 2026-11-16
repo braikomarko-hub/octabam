@@ -2510,10 +2510,132 @@ O3_DRV_TH:
         movclr.l %acc0,%d0
         add.l   %d0,%d6                 | x
         .endm
-        .macro  E_VOICE                 | d6 = x -> d6 = y: the ladder, the high-passes, the VCA, the ceiling
-        E_VZU
-        E_VPOLES
-        E_VREST
+        .macro  E_VOICE                 | d6 = x -> d6 = y: the ladder, the high-passes, the VCA, the ceiling.
+        E_VFAST                         | The neutral loops: the same arithmetic as E_VZU / E_VPOLES / E_VREST (stage
+        .endm                           | B's loops keep those), reordered for the EMAC's read stall
+        | ---- E_VFAST (16 Nov 2026).  An accumulator read straight after its MAC waits 3 cycles (MCF54455RM table 3-18,
+        | section 5.3.3); every independent instruction between the two takes one off.  Here the loads, the stores of the
+        | states already computed and the VCA gain's step sit in those gaps.  Every value and every rounding is the one
+        | of the three macros above (test_o3e_v7 compares the samples with the model, bit for bit).  d0-d6, a0 clobbered.
+        .macro  E_VFAST
+        | ---- the zero-input pass: z = what the four poles give with no input
+        move.l  E_S1(%a3),%d5
+        mac.l   %a2,%d5,%acc0
+        move.l  E_S2(%a3),%d0           | s2, s3, s4: kept in d0, d1, d2 down to their poles
+        move.l  E_S3(%a3),%d1
+        move.l  E_S4(%a3),%d2
+        movclr.l %acc0,%d3
+        sub.l   %d3,%d5
+        sub.l   %d0,%d5
+        mac.l   %a4,%d5,%acc0
+        move.l  E_LP(%a3),%d4           | lp: kept in d4 down to its high-pass
+        move.l  E_KQ(%a3),%d3
+        move.l  E_DQ(%a3),%a0
+        movclr.l %acc0,%d5
+        add.l   %d0,%d5
+        sub.l   %d1,%d5
+        mac.l   %a5,%d5,%acc0
+        movclr.l %acc0,%d5
+        add.l   %d1,%d5
+        sub.l   %d2,%d5
+        mac.l   %a6,%d5,%acc0
+        movclr.l %acc0,%d5
+        add.l   %d2,%d5                 | z
+        | ---- the loop, solved with no delay: u = (x - (k (z - lp) << 7)) D   (kh Q24)
+        sub.l   %d4,%d5
+        mac.l   %d3,%d5,%acc0
+        movclr.l %acc0,%d5
+        lsl.l   #7,%d5
+        sub.l   %d5,%d6
+        mac.l   %a0,%d6,%acc0
+        move.l  E_S1(%a3),%d3
+        movclr.l %acc0,%d6              | u
+        | ---- pole 1: v = (u - s1) G1, y1 = s1 + v, s1 = y1 + v
+        sub.l   %d3,%d6
+        mac.l   %a2,%d6,%acc0
+        move.l  E_GAIN(%a3),%d5         | the VCA gain's step, here: d5 = the gain of this sample
+        add.l   E_DGAIN(%a3),%d5
+        move.l  %d5,E_GAIN(%a3)
+        movclr.l %acc0,%d6
+        add.l   %d6,%d3                 | y1
+        add.l   %d3,%d6                 | the new s1
+        | ---- pole 2
+        sub.l   %d0,%d3
+        mac.l   %a4,%d3,%acc0
+        move.l  %d6,E_S1(%a3)
+        move.l  E_GV(%a3),%a0
+        movclr.l %acc0,%d3
+        add.l   %d3,%d0                 | y2
+        add.l   %d0,%d3                 | the new s2
+        | ---- pole 3
+        move.l  %d0,%d6
+        sub.l   %d1,%d6
+        mac.l   %a5,%d6,%acc0
+        move.l  %d3,E_S2(%a3)
+        move.l  #O3E_GH,%d3
+        move.l  E_LP2(%a3),%d0          | lp2: kept in d0 down to its high-pass
+        movclr.l %acc0,%d6
+        add.l   %d6,%d1                 | y3
+        add.l   %d1,%d6                 | the new s3
+        | ---- pole 4
+        sub.l   %d2,%d1
+        mac.l   %a6,%d1,%acc0
+        move.l  %d6,E_S3(%a3)
+        movclr.l %acc0,%d1
+        add.l   %d1,%d2                 | y4
+        add.l   %d2,%d1                 | the new s4
+        | ---- the loop's high-pass: lo = lp + (y4 - lp) GH, hp = y4 - lo
+        move.l  %d2,%d6
+        sub.l   %d4,%d6
+        mac.l   %d3,%d6,%acc0
+        move.l  %d1,E_S4(%a3)
+        movclr.l %acc0,%d6
+        add.l   %d6,%d4                 | lo
+        add.l   %d4,%d6                 | the new lp
+        sub.l   %d4,%d2                 | hp
+        | ---- the VCA input's high-pass: v = hp - lo2
+        move.l  %d2,%d1
+        sub.l   %d0,%d1
+        mac.l   %a0,%d1,%acc0
+        move.l  %d6,E_LP(%a3)
+        lea     o3e_kpos,%a0
+        movclr.l %acc0,%d1
+        add.l   %d1,%d0                 | lo2
+        add.l   %d0,%d1                 | the new lp2
+        sub.l   %d0,%d2                 | v
+        | ---- the VCA
+        mac.l   %d5,%d2,%acc0
+        move.l  %d1,E_LP2(%a3)
+        movclr.l %acc0,%d6
+        lsl.l   #3,%d6                  | y
+        | ---- the BA662A's ceiling: a table per sign, step 2^14, linear between the entries (a0 = o3e_kpos)
+        move.l  %d6,%d0
+        bpl     .Lk\@
+        neg.l   %d0
+        lea     o3e_kneg,%a0
+.Lk\@:
+        move.l  %d0,%d1
+        moveq   #14,%d2
+        lsr.l   %d2,%d1                 | the entry
+        cmp.l   #E_KN-2,%d1
+        bls     .Li\@
+        move.l  E_KLAST(%a0),%d5     | past the table: its last value
+        bra     .Ls\@
+.Li\@:
+        and.l   #16383,%d0              | the fraction, Q14
+        lea     (%a0,%d1.l*4),%a0
+        move.l  (%a0)+,%d5
+        move.l  (%a0),%d1
+        sub.l   %d5,%d1                 | < 2^14: the product stays inside 32 bits
+        muls.l  %d0,%d1
+        asr.l   %d2,%d1
+        add.l   %d1,%d5
+.Ls\@:
+        tst.l   %d6
+        bpl     .Lo\@
+        neg.l   %d5
+.Lo\@:
+        move.l  %d5,%d6
         .endm
         .macro  E_VOICEX                | the same, with stage B's two hooks (the ladder input's soft clip, |y4|'s peak)
         E_VZU

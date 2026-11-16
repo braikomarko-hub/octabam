@@ -798,7 +798,7 @@ if __name__ == '__main__':
               % (nm, s_wo / 16, s_w - s_wo, (s_w - s_wo) / 16, s_w / 16, n_on, s_st - s_w, s_rb - s_st))
         _cnt[nm] = (s_wo / 16, s_w - s_wo)
     _n = _cnt['SAW, knobs 64, DRIV 0']
-    check('e_neutral_path_not_slower', _n == (123.25, 319), 'SAW, knobs 64, DRIV 0: %.2f a sample, the control step %d '
-          '(stage A, 05e3bd0: 123.25 and 319; with the zero-state guard and the knob clamps)' % _n)
+    check('e_neutral_path_not_slower', _n == (121.25, 319), 'SAW, knobs 64, DRIV 0: %.2f a sample, the control step %d '
+          '(stage A, 05e3bd0: 123.25 and 319; E_VFAST, 16 Nov 2026: 121.25 and 319)' % _n)
     print('\n%d/%d PASS' % (sum(results), len(results)))
     sys.exit(0 if all(results) else 1)

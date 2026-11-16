@@ -249,7 +249,8 @@ OLD_SHELL = '03a9f90f47dc94c50b2b84f2ca4cd26d0a2b9508'    # the last commit befo
 def skip0_source():
     """octa303.s (the working file) resolved with O3_SKIP_STOCK = 0 == the file of OLD_SHELL resolved as cfsim always
     did it (no local switch): the same instructions and data line for line, comments and blank lines apart, outside the
-    "o3e generated" block (the engine's tables follow the laws file: test_o3e_v7.py checks them against the model)"""
+    "o3e generated" block (the engine's tables follow the laws file: test_o3e_v7.py checks them against the model) and
+    outside the E_VOICE macro (see voice_out below)"""
     rel = os.path.relpath(SRC_PATH, ROOT)
     new, base = open(SRC_PATH).read(), _git('show', OLD_SHELL + ':' + rel).stdout
     if not base or 'O3_SKIP_STOCK' in base: return False, 'commit %s is not in this clone' % OLD_SHELL[:8]
@@ -258,7 +259,12 @@ def skip0_source():
         return t[:a] + t[b:]
     inc = lambda t: gen_out(t).replace('        .include "remix.inc"', remix_inc(True).rstrip('\n'), 1)
     code = lambda t: [l.split('|')[0].rstrip() for l in t.split('\n') if l.split('|')[0].strip()]
-    a, b = code(_unflag(inc(new), {'O3_SKIP_STOCK': 0})), code(_unflag(inc(base)))
+    def voice_out(t):
+        # 16 Nov 2026: the neutral voice macro (E_VOICE, with E_VFAST since the reorder for the EMAC read stall) is
+        # the engine, not the shell: test_o3e_v7.py compares its samples with the model bit for bit
+        a, b = t.index('        .macro  E_VOICE '), t.index('        .macro  E_VOICEX')
+        return t[:a] + t[b:]
+    a, b = code(_unflag(inc(voice_out(new)), {'O3_SKIP_STOCK': 0})), code(_unflag(inc(voice_out(base))))
     if a == b: return True, 'the working file vs %s: the code lines are identical (%d lines)' % (OLD_SHELL[:8], len(a))
     import difflib
     d = [l for l in difflib.unified_diff(b, a, lineterm='', n=0) if l[:1] in '+-' and l[:3] not in ('+++', '---')]
