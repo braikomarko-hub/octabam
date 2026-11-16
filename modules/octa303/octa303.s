@@ -2653,6 +2653,11 @@ O3_DRV_TH:
         .macro  E_HU1                   | E_UCLIP inside E_VFAST: d6 = u.  The clip clobbers d0-d3, which there hold s2,
         tst.l   E_UCL(%a3)              | s3, s4 and s1: none is stored yet, so they are read again
         beq     .Lu\@
+        tst.l   E_SWP(%a3)              | 16 Nov 2026: FM alone, a plain ceiling at +-4 x 2^20 (nothing clobbered);
+        bne     .Lus\@                  | SWP keeps the soft clip
+        CLAMP   %d6,-4194304,4194304
+        bra     .Lu\@
+.Lus\@:
         move.l  #O3E_KUCV,%d0
         move.l  #O3E_KUCH,%d1
         move.l  #O3E_KUCL,%d2

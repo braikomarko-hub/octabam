@@ -336,7 +336,10 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         z = s3 + fmul(z - s3, g3);
         z = s4 + fmul(z - s4, g4);
         int32_t u = fmul(x - shl32(fmul(z - lp, kq), 7), Dq);   /* with FM: Dq stays the control step's (see the report) */
-        if (((F & F_FM) && r_fm) || ((F & F_GOV) && r_gov)) u = sclip_s(u, kuc, So);   /* v6 FM, SWP: the ladder input saturates at +-4 x 2^20 (the linear loop under audio-rate FM, or above critical k, outruns the governor) */
+        /* 16 Nov 2026 (Marko's choice by ear): with FM alone the ladder input meets a plain ceiling at +-4 x 2^20; SWP keeps the soft clip (its shape is the self-oscillation's tone) */
+        if ((F & F_GOV) && r_gov) u = sclip_s(u, kuc, So);
+        else if ((F & F_FM) && r_fm) { if (u > 4194304) u = 4194304; if (u < -4194304) u = -4194304; }
+        /* v6 FM, SWP: the ladder input saturates at +-4 x 2^20 (the linear loop under audio-rate FM, or above critical k, outruns the governor) */
         int32_t y1 = s1 + fmul(u - s1, g1);  s1 = 2 * y1 - s1;
         int32_t y2 = s2 + fmul(y1 - s2, g2); s2 = 2 * y2 - s2;
         int32_t y3 = s3 + fmul(y2 - s3, g3); s3 = 2 * y3 - s3;
