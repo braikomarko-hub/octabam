@@ -2824,6 +2824,25 @@ O3_DRV_TH:
         movclr.l %acc0,%d2              | x^3 / 6, Q30
         sub.l   %d2,%d1
         .endm
+        .macro  E_HCLIP s2              | OVDR above 25 (16 Nov 2026): d6 = v -> (v kin S) >> 46 under a plain ceiling at
+        cmp.l   %d0,%d6                 | +-4 x 2^20; d0 = vc, d1 = kh, d2 = kl as for E_SCLIP (past vc the product is past
+        ble     .Lha\@                  | the ceiling in the model too).  Clobbers d0-d2.
+        move.l  %d0,%d6
+.Lha\@:
+        neg.l   %d0
+        cmp.l   %d0,%d6
+        bge     .Lhb\@
+        move.l  %d0,%d6
+.Lhb\@:
+        mac.l   %d6,%d2,%acc0
+        muls.l  %d6,%d1
+        move.l  #\s2,%d0
+        movclr.l %acc0,%d2
+        add.l   %d2,%d1                 | q = (v kin) >> 16
+        mac.l   %d1,%d0,%acc0
+        movclr.l %acc0,%d6              | (q S) >> 30
+        CLAMP   %d6,-4194304,4194304
+        .endm
         .macro  E_SCLIP s2              | o3k.c sclip_s(v, kin, S): d6 = v -> d6, with d0 = vc, d1 = kh, d2 = kl: kin =
         cmp.l   %d0,%d6                 | kh 2^16 + (kl >> 15), vc = the bound on |v| past which the clip is flat
         ble     .La\@                   | (O3E_SQ2 / kh + 1), s2 = 2 S.  |v| <= vc: q = (v kin) >> 16 = v kh + fmul(v, kl)
@@ -2929,7 +2948,7 @@ O3_DRV_TH:
         move.l  E_OVVC(%a3),%d0
         move.l  E_OVKH(%a3),%d1
         move.l  E_OVKL(%a3),%d2
-        E_SCLIP O3E_SO2
+        E_HCLIP O3E_SO2
 .Lo\@:
         .endm
         .macro  E_UCLIP                 | FM or SWP: the ladder input u (d6) saturates at +-4 x 2^20 (gain 1)

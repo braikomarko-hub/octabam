@@ -316,7 +316,10 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
         }
         if ((F & F_OV) && r_ov) {   /* v6 OVDR: G < 1 scales; G > 1 amplifies into a soft clip at +-4 x 2^20 */
             if (r_ov == 1) x = fmul(x, r_ovq);
-            else x = sclip_s(x, r_kov, So);
+            else {   /* 16 Nov 2026 (Marko's choice by ear): the gain into a plain ceiling at +-4 x 2^20, in place of the soft clip */
+                int64_t o = ((((int64_t)x * r_kov) >> 16) * So) >> 30;
+                x = o > 4194304 ? 4194304 : o < -4194304 ? -4194304 : (int32_t)o;
+            }
         }
         /* ---- filter: 4 one-poles (TPT), linear loop solved with no delay ---- */
         int32_t g1 = G1, g2 = G2, g3 = G3, g4 = G4;
