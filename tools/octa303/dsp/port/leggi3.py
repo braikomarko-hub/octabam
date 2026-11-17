@@ -19,11 +19,12 @@ def main(path):
     D = json.load(open(path))
     fam = {k: {int(f): v for f, v in D[k].items()} for k in D}
     frames = sorted(set(fam['voce']) & set(fam['audio']))
+    if not frames: print('nessun frame nel file: la corsa non vale'); return 1
     ip = lambda a: a.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
     L.o3d_new.restype = ctypes.c_void_p
     st = ctypes.c_void_p(L.o3d_new())
     kn = np.ascontiguousarray(m.KNEG, np.int32); kp = np.ascontiguousarray(m.KPOS, np.int32)
-    cnt = collections.Counter(); first = {}; rows = []
+    cnt = collections.Counter(); first = {}; rows = []; vols = collections.Counter(); nzL = nzO = nzY = 0; pk = 0
     for f in frames:
         (ram, hw), = fam['voce'][f][:1]; (_, au), = fam['audio'][f][:1]
         rb = fam['rilettura'].get(f + 2)
@@ -34,7 +35,7 @@ def main(path):
         sig = hw[7] == 0x3a5c and hw[8] == 0x6517
         if not sig:
             cnt['senza firma'] += 1; rows.append((f, 'nofirma', 0)); continue
-        rec_ok = hw[:5] == [0, 0x7f00, 0x7f00, 0x7f00, 0x4000]
+        rec_ok = hw[:5] == [0, 0x7f00, 0x7f00, 0x7f00, 0x4000]; vols[hw[9]] += 1
         cnt['foglietto giusto' if rec_ok else 'foglietto SBAGLIATO'] += 1
         p = [dec(gain(v)) for v in Rr]
         ok = p[0] == 0x7fff and (sum(p[1:15]) & 0x7fff) == p[15] and all(not (p[k] & 0x7f00) for k in range(2, 15, 2))
@@ -49,6 +50,7 @@ def main(path):
         L.o3d_frame(st, ip(C), ip(X), ip(y), ip(kn), ip(kp))
         dl = int(sum(1 for i in range(16) if oL[i] != int(y[i]))); dr = int(sum(1 for i in range(16) if oR[i] != int(y[i])))
         mx = max(abs(oL[i] - int(y[i])) for i in range(16))
+        nzL += sum(1 for v in Lr if v); nzO += sum(1 for v in oL if v); nzY += int(np.count_nonzero(y)); pk = max(pk, max(abs(v) for v in oL))
         cnt['frame validi'] += 1; cnt['campioni validi'] += 16; cnt['campioni diversi (sinistro)'] += dl; cnt['campioni diversi (destro)'] += dr
         if zero and any(y): cnt['frame validi in cui il DSP tace'] += 1
         if dl or dr:
@@ -64,6 +66,19 @@ def main(path):
         q = val[len(val) // 4:]
         print('ultimi tre quarti dei frame validi (dal %d): frame con differenze %d su %d' % (q[0][0], sum(1 for r in q if r[2]), len(q)))
         nz = sum(1 for r in val if r[2] == 0)
-        print('volume di picco della rilettura nei frame validi: vedi sopra; frame validi identici: %d su %d' % (nz, len(val)))
+        print('frame validi identici: %d su %d' % (nz, len(val)))
+        print('campioni non nulli nei frame validi: oscillatore (sinistro mandato) %d, uscita del DSP %d, riferimento %d; picco dell uscita %d' % (nzL, nzO, nzY, pk))
+    print('VOL vero nella casella 9 (valore: frame):', dict(vols))
     if 'diff' in first: print('prima differenza: frame %d, DSP %s, riferimento %s' % first['diff'])
-if __name__ == '__main__': main(sys.argv[1])
+    # le soglie di soglie_SONDA3.md
+    sig = [r for r in rows if r[1] != 'nofirma']
+    late_bad = [r for r in sig[20:] if r[1] == 'nonvalido']
+    q = val[len(val) // 4:] if val else []
+    T = [('2 foglietto giusto in tutti i frame con la firma', cnt['foglietto SBAGLIATO'] == 0 and cnt['foglietto giusto'] > 0 and len(vols) == 1),
+         ('3 numeri validi a regime (dopo i primi 20 frame con la firma)', bool(val) and not late_bad),
+         ('4 nei frame non validi il DSP tace', cnt['  ... ma il DSP NON tace'] == 0),
+         ('5 ultimi tre quarti dei frame validi: 0 campioni diversi', bool(q) and not any(r[2] for r in q) and cnt['frame validi in cui il DSP tace'] == 0),
+         ('6 l uscita non e silenzio', nzL > 1000 and nzO > 1000 and nzY > 1000)]
+    for n, ok in T: print('  [%s] soglia %s' % ('PASS' if ok else 'FAIL', n))
+    return 0 if all(ok for _, ok in T) else 1
+if __name__ == '__main__': sys.exit(main(sys.argv[1]))
