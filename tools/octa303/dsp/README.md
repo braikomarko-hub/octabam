@@ -26,8 +26,10 @@ python3 tools/octa303/dsp/voice/prova3.py       # phase 3
 - Phase 2, 288 cases: total error at worst 54.9 dB below the signal; per 2048-sample window never above
   max(40 dB under the window's signal, 80 dB under the case's loudest window); 0 saturations.
 - Phase 3: 976,896 samples of 12 cases and 256,000 samples of four stress runs (random coefficients, full-scale
-  input, about 225,000 limiting moves): 0 samples differ from the reference. A frame whose mark or checksum is
-  wrong is silenced. 145.6 instructions a sample including the per-frame prologue (an emulator count, not chip cycles).
+  input, about 225,000 limiting moves): 0 samples differ from the reference. Without the engine's signature in the
+  voice record the audio passes untouched (a track that is not an OCTA-303); with it, a frame whose mark, checksum
+  or low bytes are wrong is silenced. About 148 instructions a sample including the per-frame prologue (an emulator
+  count, not chip cycles).
 
 ## What the bench cannot see
 

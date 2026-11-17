@@ -32,7 +32,7 @@ def frames(C,X,mark=0x7fff):
         for c in (g1,g2,g3,g4,kq,dq,gt): assert 0<=c<(1<<23); pay+=[c>>8,c&0xff]
         pay.append(sum(pay[1:])&0x7fff)
         assert gv%2==0 and gv<(1<<16)
-        F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8
+        F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700
     return F
 def run_host(F,proc,init):
     kp=np.concatenate([m.KPOS,[m.KPOS[-1]],m.KNEG,[m.KNEG[-1]]]).astype(np.int32); kp.tofile(WORK+'/ytab.bin')
@@ -86,5 +86,7 @@ if __name__=='__main__':
     F3=F.copy(); F3[300,4]=send(0x0100|int(C[300][0]&0xff)); F3[300,31]=send((sum(int(v) for v in [C[300][k]>>8 for k in range(7)])+sum(int(C[300][k]&0xff) for k in range(7))+0x100)&0x7fff)
     o3,_,_=run_host(F3,PROC,ORG)
     print('byte basso sporco (somma giusta) rifiutato:',bool((o3[300]==0).all()),'| ripartenza dopo il silenzio: primo campione del frame 203 =',int(o[203,0]),', del frame 204 =',int(o[204,0]),'(senza interruzione:',int(y[203*16]),int(y[204*16]),')')
+    F5=F.copy(); F5[400:410,33]=0x3a0000; F5[410:420,34]=0x650000; o5,_,_=run_host(F5,PROC,ORG)
+    print('senza la firma del motore (traccia non OCTA-303): 20 frame lasciati intatti:',bool((o5[400:420]==F5[400:420,:32]).all()),'| frame 399 calcolato:',bool((o5[399]!=F5[399,:32]).any()))
     F4=F.copy(); F4[:,32]|=0x7f; o4,_,_=run_host(F4,PROC,ORG)
     print('byte basso della parola del foglietto sporco: campioni diversi',int((o4[:,0::2].reshape(-1)!=y[:o4.shape[0]*16]).sum()))

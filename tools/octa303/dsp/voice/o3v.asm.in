@@ -5,6 +5,8 @@
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
 ;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
+;      x:(r6+1), x:(r6+2) = $3a5c00, $651700: the engine's signature in the voice record.  Without it the track is not
+;      an OCTA-303: the audio is left exactly as it came (Marko, 17 Nov 2026).
 ;      A frame is taken only if the mark, the sum and the seven low-byte payloads (nothing above bit 7) all agree.
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
@@ -29,6 +31,16 @@ proc:
         move    #>$ffffff,m3
         move    #>$ffffff,m4
         move    #>$ffffff,m5
+        move    r6,r1
+        move    (r1)+
+        move    x:(r1)+,a
+        move    #>$3a5c00,x0
+        cmp     x0,a
+        bne     o3v_pass                        ; not an OCTA-303 track: nothing is touched
+        move    x:(r1),a
+        move    #>$651700,x0
+        cmp     x0,a
+        bne     o3v_pass
 ; ---- the sixteen payloads: p = (y + y * 672 * 2^-23) >> 8 ----------------------------------------------------
         move    r0,r1
         move    r7,r2
@@ -259,6 +271,7 @@ o3v_sgn:
         move    x0,x:(r0)+
         move    x0,x:(r0)+
 o3v_end:
+o3v_pass:
         rts
 o3v_bad:
         clr     a
