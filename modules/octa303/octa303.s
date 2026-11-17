@@ -2057,8 +2057,9 @@ o3_vrec:
         move.w  %d0,36(%a1)
         addq.l  #1,%d0
         move.w  %d0,38(%a1)
-        addq.l  #1,%d0
-        move.w  %d0,40(%a1)
+        moveq   #0,%d0                  | SONDA 1B: the ninth word is dEVILish's first knob AS READ IN THIS CALL (OVDR,
+        move.b  S_DFK(%a3),%d0          | 25 by default): if the frame builder did not rewrite the record every frame,
+        move.w  %d0,40(%a1)             | this would be the probe's own V >> 8 (82..120 and moving), not 25
         lea     S_DFK(%a3),%a0
         movem.l (%sp),%d3/%a1-%a2
         lea     12(%sp),%sp
