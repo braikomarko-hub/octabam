@@ -122,7 +122,7 @@ int32_t o3_tr[8192][8], o3_troct;   /* debug: per control step G1..G4, kq, Dq, g
 /* ---- PHASE 2 (17 Nov 2026, Claude): the neutral voice as the DSP would compute it.  REFERENCE for the DSP code:
    every line below is one or two DSP56300 instructions on a 56-bit accumulator (here an int64 in units of a0's LSB),
    24-bit registers, fractional multiply ((x*y)<<1), `move a,x0` = a1 with saturation and no rounding. ---- */
-typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32_t g[4], kq, dq, gh, gv;
+typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32_t g[4], kq, dq, gh, gv, vol;
                  long long sat, big; } o3d_t;
 static int o3_dref = 0, o3_dbits[5] = {24, 24, 24, 24, 24};   /* bits kept: G, kq, Dq, gain, Gv */
 static long long o3_dsat = 0, o3_dbig = 0;
@@ -133,6 +133,8 @@ static inline int32_t o3d_q(int32_t v24, int nb) {
     if (nb >= 24) return v24;
     if (nb < 0) { int top = 0; while ((v24 >> top) > 1) top++; int cut = top + 1 + nb; return cut <= 0 ? v24 : (int32_t)(v24 & ~((1 << cut) - 1)); }   /* -nb significant bits */
     return (int32_t)(v24 & ~((1 << (24 - nb)) - 1)); }
+static int32_t o3_dvol = 0;                 /* the VOL word of the renders through core(): 0 = the voice's y alone */
+void o3_set_dvol(int32_t v) { o3_dvol = v; }
 static int32_t *o3_dtr_c = 0, *o3_dtr_x = 0;   /* phase 3: [step][9] g1..g4 kq dq gt gv gh; [sample] the L sample */
 void o3_set_dtrace(int32_t *c, int32_t *x) { o3_dtr_c = c; o3_dtr_x = x; }
 static int o3_geq = 1;
@@ -141,6 +143,7 @@ static inline int32_t o3d_out(o3d_t *d, int64_t a) {      /* move a,x0: a1, limi
     int64_t v = a >> 24; int64_t m = v < 0 ? -v : v; if (m > d->big) d->big = m;
     if (v > 8388607) { v = 8388607; d->sat++; } if (v < -8388608) { v = -8388608; d->sat++; }
     return (int32_t)v; }
+#define O3D_CV 4260619                      /* (32768 / 32512)^2 / 2, Q23 */
 #define O3D_LD(x) ((int64_t)(x) << 24)
 #define O3D_MPY(x, y) (((int64_t)(x) * (int64_t)(y)) << 1)
 static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, const int32_t *kpos) {
@@ -171,15 +174,22 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
     const int32_t *T = neg ? kneg : kpos;
     int32_t t0 = T[ix], t1 = ix >= KN - 1 ? t0 : T[ix + 1];
     a = O3D_MPY(fr, t1 - t0) + O3D_LD(t0);
-    return o3d_out(d, neg ? -a : a);
+    int32_t r = o3d_out(d, neg ? -a : a);
+    if (!d->vol) return r;                       /* vol 0: the voice's y alone (the grids against today's model) */
+    /* the output for FX2 / AMP: y x 4 (today's y >> 6 as a 16-bit sample) x (VOL / 0x7f00)^2, the law of the gain the
+       stock applies ahead of FX1 (SONDA 2: 0.25393 at 64, 0.06348 at 32, 0.99992 at 127).  vol = the AMP VOL halfword << 8 */
+    a = O3D_MPY(d->vol, d->vol); int32_t g = o3d_out(d, a);
+    a = O3D_MPY(r, g); a <<= 3; x0 = o3d_out(d, a);
+    a = O3D_MPY(x0, O3D_CV);
+    return o3d_out(d, a);
 }
-/* the reference on its own (phase 3's stress tests): nf frames of 9 coefficients (g1..g4 kq dq gt gv gh) and 16 L samples */
+/* the reference on its own (phase 3's stress tests): nf frames of 10 numbers (g1..g4 kq dq gt gv gh vol) and 16 L samples */
 long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
     o3d_t d; memset(&d, 0, sizeof d);
     for (int f = 0; f < nf; f++) {
-        const int32_t *c = C + 9 * f;
+        const int32_t *c = C + 10 * f;
         for (int j = 0; j < 4; j++) d.g[j] = c[j];
-        d.kq = c[4]; d.dq = c[5]; d.gv = c[7]; d.gh = c[8];
+        d.kq = c[4]; d.dq = c[5]; d.gv = c[7]; d.gh = c[8]; d.vol = c[9];
         d.dgain48 = (O3D_LD(c[6]) - d.gain48) >> 4;
         for (int i = 0; i < 16; i++) out[16 * f + i] = o3d_sample(&d, ((int64_t)X[16 * f + i] << 24) >> 2, kneg, kpos);
     }
@@ -214,7 +224,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                  st.pst = 0; st.ptgt = 0; is_note(&st, T, kseg, kseg); }
     const int32_t *kcur = kseg; int ki = 0;               /* v7.1: the knobs now, the next knob event */
     int32_t mx = 0;
-    o3d_t ds; memset(&ds, 0, sizeof ds);
+    o3d_t ds; memset(&ds, 0, sizeof ds); ds.vol = o3_dvol;
     double GhD = M_PI * p[P_FH] / FS; GhD = GhD / (1.0 + GhD);
     double GvD = M_PI * p[P_FV] / FS; GvD = GvD / (1.0 + GvD);
     Gh = q31(GhD); Gv = q31(GvD);

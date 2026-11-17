@@ -30,9 +30,9 @@ def reference(s, incc3):
               knobs=[(t, dict(kd)) for t, kd in s['knobs']])
     n = s['nsamp']; C = np.zeros((n // 16 + 1, 9), np.int32); X = np.zeros(n, np.int32)
     ip = lambda a: a.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
-    LD.o3_set_dtrace(ip(C), ip(X)); LD.o3_set_dref(1, (ctypes.c_int * 5)(24, 24, 24, 24, 24), 0)
+    LD.o3_set_dtrace(ip(C), ip(X)); LD.o3_set_dref(1, (ctypes.c_int * 5)(24, 24, 24, 24, 24), 0); LD.o3_set_dvol(P3.VOL)
     try: y = MD.render_engine(ev, T7.M7, tables=T7.BLOB, knee=T7.KNEE)
-    finally: rc = LD.o3_last_rc(); LD.o3_set_dref(0, None, 0); LD.o3_set_dtrace(None, None)
+    finally: rc = LD.o3_last_rc(); LD.o3_set_dref(0, None, 0); LD.o3_set_dtrace(None, None); LD.o3_set_dvol(0)
     assert rc == 0, rc
     return [int(v) for v in y], C[:n // 16], X
 
@@ -99,7 +99,7 @@ def check(s, e, built):
     F = np.zeros((nf, 52), np.int32)
     for f in range(nf):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
-        F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700
+        F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700; F[f, 35] = P3.VOL
     if not built:
         lst, _ = P3.build(int(C[0][8])); ls = [l for l in lst.splitlines() if l[6:7] == ':']
         k = [i for i, l in enumerate(ls) if ' rts' in l][0]; built.append(int(ls[k + 1][:6], 16))

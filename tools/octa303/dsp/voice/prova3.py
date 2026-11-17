@@ -5,17 +5,17 @@ from grid import *
 WORK=OUT
 DA=os.environ.get('O3_DSP_ASM') or os.path.join(os.environ.get('O3_DSP56300', os.path.join(ROOT,'vendor','dsp56300')),'build','source','dsp_host','dsp_asm')
 HOST=os.path.join(OUT,'o3host')
-G=8387936; KN=97; PTP=0x1800; PTN=PTP+KN+1; ORG=0x1000
+G=8387936; KN=97; PTP=0x1800; ORG=0x1000; CV=4260619; VOL=0x400000      # the AMP VOL word of the tests: 64
 def ref(e):
-    n=e['nsamp']; C=np.zeros((n//16+1,9),np.int32); X=np.zeros(n,np.int32)
+    n=e['nsamp']; C=np.zeros((n//16+1,9),np.int32); X=np.zeros(n,np.int32); L.o3_set_dvol(VOL)
     L.o3_set_dtrace(C.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), X.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)))
     L.o3_set_dref(1,(ctypes.c_int*5)(24,24,24,24,24),0)
-    y=m.render_engine(e,M); rc=L.o3_last_rc(); L.o3_set_dref(0,None,0); L.o3_set_dtrace(None,None); assert rc==0
+    y=m.render_engine(e,M); rc=L.o3_last_rc(); L.o3_set_dref(0,None,0); L.o3_set_dtrace(None,None); L.o3_set_dvol(0); assert rc==0
     return y,C[:n//16],X
 def send(p):                      # a 15-bit payload through the gain ahead of FX1
     assert 0<=p<32768; return (((p<<8)|0x80)*G+(1<<22))>>23
 def build(gh):
-    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PTP@',str(PTP)).replace('@PTN@',str(PTN))
+    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PT@',str(PTP)).replace('@CV@',str(CV))
     open(WORK+'/o3v.asm','w').write(src)
     r=subprocess.run([DA,'-in',WORK+'/o3v.asm','-org','%x'%ORG,'-out',WORK+'/o3v.bin','-list'],capture_output=True,text=True)
     open(WORK+'/o3v.lst','w').write(r.stdout+r.stderr)
@@ -27,12 +27,12 @@ def build(gh):
 def frames(C,X,mark=0x7fff):
     n=len(C); F=np.zeros((n,52),np.int32)
     for f in range(n):
-        g1,g2,g3,g4,kq,dq,gt,gv,gh=[int(v) for v in C[f]]
+        g1,g2,g3,g4,kq,dq,gt,gv,gh=[int(v) for v in C[f][:9]]
         pay=[mark]
         for c in (g1,g2,g3,g4,kq,dq,gt): assert 0<=c<(1<<23); pay+=[c>>8,c&0xff]
         pay.append(sum(pay[1:])&0x7fff)
         assert gv%2==0 and gv<(1<<16)
-        F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700
+        F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700; F[f,35]=int(C[f][9]) if len(C[f])>9 else VOL
     return F
 def run_host(F,proc,init):
     kp=np.concatenate([m.KPOS,[m.KPOS[-1]],m.KNEG,[m.KNEG[-1]]]).astype(np.int32); kp.tofile(WORK+'/ytab.bin')
@@ -44,7 +44,7 @@ def run_host(F,proc,init):
 def stress(seed, nf=4000, loud=True):
     """random coefficients and (loud) full-scale L samples: the limiting moves and the table's end are exercised"""
     r=np.random.default_rng(seed); gh=GH
-    C=np.zeros((nf,9),np.int32)
+    C=np.zeros((nf,10),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
     C[:,0:4]=r.integers(1,int(0.98*2**23),(nf,4)); C[:,4]=r.integers(0,120*65536,nf); C[:,5]=r.integers(1,2**23,nf)
     C[:,6]=r.integers(0,2**23,nf); C[:,7]=r.integers(0,2**15,nf)*2; C[:,8]=gh
     hold=r.integers(1,40,nf); k=0                       # coefficients held for a few frames at a time
