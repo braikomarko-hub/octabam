@@ -195,6 +195,18 @@ long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, cons
     }
     return d.sat;
 }
+/* the reference frame by frame, with its state kept by the caller (SONDA 3: the insert as it ran under the port) */
+#include <stdlib.h>
+void *o3d_new(void) { return calloc(1, sizeof(o3d_t)); }
+void o3d_free(void *p) { free(p); }
+void o3d_bad(void *p) { o3d_t *d = p; d->gain48 = 0; d->dgain48 = 0; }          /* a refused frame: the gain restarts */
+void o3d_frame(void *p, const int32_t *c, const int32_t *x, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
+    o3d_t *d = p;
+    for (int j = 0; j < 4; j++) d->g[j] = c[j];
+    d->kq = c[4]; d->dq = c[5]; d->gv = c[7]; d->gh = c[8]; d->vol = c[9];
+    d->dgain48 = (O3D_LD(c[6]) - d->gain48) >> 4;
+    for (int i = 0; i < 16; i++) out[i] = o3d_sample(d, ((int64_t)x[i] << 24) >> 2, kneg, kpos);
+}
 /* pseg: nseg parameter vectors of P_N doubles (segment 0 = the START, then one per retrig START);
    segstart[j]: the sample where segment j begins (segstart[0] = 0); slat/slst: nsl slide events (sample, target in
    semitones relative to the start pitch).  Events act at the first control step at or after their sample. */
