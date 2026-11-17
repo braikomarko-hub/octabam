@@ -413,7 +413,20 @@ sy_render:
         moveq   #1,%d0
         move.l  %d0,o3_pflag
 
+        .if     O3_DSP
+        move.l  60(%sp),%d0             | the call's first sample in its frame
+        move.l  %d0,E_FS(%a3)
+        .endif
+
         bsr     o3e_render              | THE ENGINE: n = d7 samples into (a1)+, a3 = the track's state
+
+        .if     O3_DSP
+        tst.l   E_DSPW(%a3)
+        beq     .Lno_dw
+        move.l  52(%sp),%d2
+        bsr     o3_dwrite
+.Lno_dw:
+        .endif
 
 .Ldone:
         tst.l   o3_pflag                | stopwatch: a call that ran the sample loop adds its times to its track's row
@@ -2035,9 +2048,71 @@ o3_vrec:
         lea     12(%sp),%sp
         rts
 
+        .if     O3_DSP
+| ---- o3_drec (O3_DSP; d2 = track, a3 = state): the insert is on FX1.  The track's own AMP VOL is taken from the
+|      voice record while the record is the frame builder's (it rewrites it every frame); a record that already
+|      carries the engine's signature is this frame's, written by an earlier call: nothing is read from it.
+|      Clobbers d0, d1, a1.
+o3_drec:
+        bsr     o3_drbase
+        moveq   #0,%d0
+        move.w  14(%a1),%d0
+        cmp.l   #0x3a5c,%d0
+        bne     .Ldr_new
+        moveq   #0,%d0
+        move.w  16(%a1),%d0
+        cmp.l   #0x6517,%d0
+        beq     .Ldr_old
+.Ldr_new:
+        moveq   #0,%d0
+        move.w  6(%a1),%d0
+        move.l  %d0,E_UVOL(%a3)
+.Ldr_old:
+        moveq   #1,%d0
+        move.l  %d0,E_DSPW(%a3)
+        rts
+| ---- o3_drbase: a1 = track d2's voice record in the ping half going out.  Clobbers d0, d1.
+o3_drbase:
+        move.l  PINGW,%d0
+        moveq   #9,%d1
+        lsl.l   %d1,%d0                 | ping * 0x200
+        move.l  %d2,%d1
+        lsl.l   #6,%d1
+        add.l   %d1,%d0                 | + 64 * track
+        lea     VREC,%a1
+        add.l   %d0,%a1
+        rts
+| ---- o3_dwrite (O3_DSP; d2 = track, a3 = state), after a call that rendered: the voice record for the insert.
+|      AMP ATK / HOLD / REL := 0, 0x7f00, 0x7f00 (CX OSC's override) and VOL := 0x7f00, BAL := 0x4000: the gain ahead
+|      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
+|      gv >> 1, the signature 0x3a5c 0x6517, the track's own VOL.  Clobbers d0, d1, a1.
+o3_dwrite:
+        bsr     o3_drbase
+        clr.w   (%a1)
+        move.l  #0x7f00,%d0
+        move.w  %d0,2(%a1)
+        move.w  %d0,4(%a1)
+        move.w  %d0,6(%a1)
+        move.l  #0x4000,%d0
+        move.w  %d0,8(%a1)
+        move.l  E_GV(%a3),%d0
+        asr.l   #8,%d0
+        asr.l   #1,%d0
+        move.w  %d0,12(%a1)
+        move.l  #0x3a5c,%d0
+        move.w  %d0,14(%a1)
+        move.l  #0x6517,%d0
+        move.w  %d0,16(%a1)
+        move.l  E_UVOL(%a3),%d0
+        move.w  %d0,18(%a1)
+        rts
+        .endif
 | ---- o3_params: this call's knobs into the engine's inputs (R_*), then the engine's o3e_params.
 |      d2 = track, a4 = FP.  Clobbers d0, d1, a0, a1 (a2 saved).
 o3_params:
+        .if     O3_DSP
+        clr.l   E_DSPW(%a3)
+        .endif
         bsr     o3_setup                | FINE before the pitch words
         moveq   #0,%d0
         move.w  0(%a4),%d0
@@ -2055,8 +2130,13 @@ o3_params:
         move.b  (%a1,%d2.l),%d0
         cmp.l   #DEVIL_ID,%d0
         bne     .Lp_f2
+        .if     O3_DSP                  | the insert on FX1: the voice is the DSP's.  Its knobs are not read (the neutral
+        bsr     o3_drec                 | voice only, so far): a0 / a2 stay the neutral bytes
+        bra     .Lp_have
+        .else
         moveq   #LANE_FX1P1,%d1
         bra     .Lp_lane
+        .endif
 .Lp_f2:
         lea     FXID2,%a1
         moveq   #0,%d0
@@ -2384,6 +2464,9 @@ O3_DRV_TH:
         .set    E_PAY,   E_BASE+640     | O3_DSP: the frame's sixteen R longs (the payloads, tools/octa303/dsp/voice/o3v.asm.in)
         .set    E_GQ,    E_BASE+704     | O3_DSP: the gain's target of the last control step, Q28
         .set    E_FS,    E_BASE+708     | O3_DSP: the next sample's index in its frame (the shell sets it before a call)
+        .set    E_UVOL,  E_BASE+712     | O3_DSP: the track's own AMP VOL halfword, as the frame builder wrote it
+        .set    E_DSPW,  E_BASE+716     | O3_DSP: this call: 1 = the insert is on FX1 (the shell, o3_drec)
+        .set    E_DSPON, E_BASE+720     | O3_DSP: 1 = the loops in force are the DSP's
         .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
@@ -3191,6 +3274,13 @@ o3e_render:
         movclr.l %acc0,%d0              | and an empty accumulator, whatever the caller left in it
         tst.l   E_NEW(%a3)
         beq     .Le_w
+        .if     O3_DSP
+        tst.l   E_DSPW(%a3)             | the DSP's voice: a START in mid frame waits for the next frame, its wave too
+        beq     .Le_wv
+        tst.l   E_FS(%a3)
+        bne     .Le_w
+.Le_wv:
+        .endif
         move.l  R_WAVE(%a3),%d0         | a START: its wave (the shell sets R_WAVE at the START only)
         move.l  %d0,E_WAVE(%a3)
         bsr     o3e_lsel                | the loops for this wave (the class: the last control step's; the
@@ -3200,6 +3290,14 @@ o3e_render:
         move.l  E_G3(%a3),%a5
         move.l  E_G4(%a3),%a6
         .if     O3_DSP
+        move.l  E_DSPW(%a3),%d0         | the insert came or went: the other set of loops
+        cmp.l   E_DSPON(%a3),%d0
+        beq     .Le_dm
+        move.l  %d0,E_DSPON(%a3)
+        bsr     o3e_lsel
+.Le_dm:
+        tst.l   E_DSPON(%a3)
+        beq     .Le_dg
         lea     E_PAY(%a3),%a2          | the next payload
         move.l  E_FS(%a3),%d0
         bne     .Le_mid
@@ -4178,6 +4276,13 @@ o3e_ova:                                | {raw, a at raw (Q24), the step down pe
 o3e_lsel:
         moveq   #1,%d0
         and.l   E_WAVE(%a3),%d0
+        .if     O3_DSP
+        tst.l   E_DSPON(%a3)
+        beq     .Lls0
+        addq.l  #4,%d0                  | the DSP's two rows
+        bra     .Lls1
+.Lls0:
+        .endif
         tst.l   E_XCL(%a3)
         beq     .Lls1
         addq.l  #2,%d0
@@ -4197,16 +4302,13 @@ o3e_lsel:
 |      point after the control step with DRIV 0, with DRIV above 0
         .align  4
 o3e_ltab:
-        .if     O3_DSP                                  | every class and DRIV: the DSP's loops (the neutral voice only, so far)
-        .long   o3e_d0, o3e_d0, o3e_dp0, o3e_dp0
-        .long   o3e_d1, o3e_d1, o3e_dp1, o3e_dp1
-        .long   o3e_d0, o3e_d0, o3e_dp0, o3e_dp0
-        .long   o3e_d1, o3e_d1, o3e_dp1, o3e_dp1
-        .else
         .long   o3e_l00, o3e_l01, o3e_p00, o3e_p01      | SAW, neutral
         .long   o3e_l10, o3e_l11, o3e_p10, o3e_p11      | SQR, neutral
         .long   o3e_x00, o3e_x01, o3e_q00, o3e_q01      | SAW, stage B
         .long   o3e_x10, o3e_x11, o3e_q10, o3e_q11      | SQR, stage B
+        .if     O3_DSP
+        .long   o3e_d0, o3e_d0, o3e_dp0, o3e_dp0        | SAW, the DSP's voice (E_DSPON)
+        .long   o3e_d1, o3e_d1, o3e_dp1, o3e_dp1        | SQR
         .endif
 
 | ---- o3e generated: tools/octa303/gen_o3e_v7.py (do not edit by hand)
