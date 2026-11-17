@@ -3,10 +3,14 @@
 
     python3 tools/octa303/sonda1.py IMAGE [--project DIR] [--frames N] [--out DIR]
 
-The image is built from the probe branch: the OCTA-303 voice writes a frame counter c as its sixteen samples
+The image is built from the probe branch: the OCTA-303 voice writes a counter c as its samples
 (V = (c & 0x7ff) << 4), the same V | 0..8 into dEVILish's nine FX1 halfwords of the DSP voice record and CX OSC's
 AMP override (0, 0x7f00, 0x7f00) into halfwords 0..2; dEVILish's DSP half copies x:(r6+0..5) and x:(r6+$c..$e) into
 the R of samples 0..8.  The project copy has T5 = OCTA-303 with dEVILish on FX1 and a trig on every step.
+
+The counter counts o3_params calls, not frames: one a frame on a held note, but a frame with a START splits (2205
+samples a step is not a multiple of 16) and calls it two or three times, so in such a frame L holds two values and
+c jumps by 2 or 3.  START frames are read apart.
 
 The port's --block-dump keeps every host-port block.  This script does not judge: it writes, for the last frames of
 the run, the raw words of the blocks that carry the voice records, the track records and the post-FX2 read-back to
@@ -62,7 +66,7 @@ def main():
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT") or (dot.read_text().strip() if dot.exists() else None))
     ap.add_argument("--frames", type=int, default=3000)
     ap.add_argument("--out", default=str(ROOT / "out/octa303/sonda1"))
-    ap.add_argument("--last", type=int, default=8, help="how many of the run's last frames to write out")
+    ap.add_argument("--last", type=int, default=300, help="how many of the run's last frames to write out (a step is ~138 frames)")
     a = ap.parse_args()
     if not a.project:
         print("sonda 1: nessun progetto (OT_PROJECT o ~/.octabam_project)"); return 2
@@ -81,6 +85,7 @@ def main():
     print(f"sonda 1: {a.image}, {a.frames} frame; uscita dell'emulatore {r.returncode}; "
           f"arrivato in fondo: {'si' if 'run ended REACHED' in log else 'NO'}; progetto caricato: "
           f"{'si' if 'LOAD PROJECT handled' in log else 'NO'}; ILLEGAL: {'SI' if 'ILLEGAL' in log else 'no'}")
+    ok = r.returncode == 0 and "run ended REACHED" in log and "LOAD PROJECT handled" in log and "ILLEGAL" not in log
     if not dump.exists():
         print("sonda 1: l'emulatore non ha scritto il file dei blocchi"); return 1
     blocks = blockdump.read(str(dump))
@@ -104,7 +109,9 @@ def main():
                         for i in range(0, len(w), 16):
                             f.write(f"{i:4d}: " + " ".join(f"{x:04x}" for x in w[i:i + 16]) + "\n")
     print(f"sonda 1: scritti {out / 'sonda1_classi.txt'} ({len(lines)} classi) e {out / 'sonda1_blocchi.txt'}")
-    return 0
+    if not ok:
+        print("sonda 1: l'emulatore NON e' arrivato in fondo come doveva: i file ci sono ma vanno letti con sospetto")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@
 init:
         rts
 proc:
+        move    #>$ffffff,m1                    ; linear addressing, whatever the effect before us left (lofi2, extprobe)
+        move    #>$ffffff,m2
         move    r6,r1
         move    r0,r2
         do      #6,dvs_a
