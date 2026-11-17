@@ -1,0 +1,252 @@
+; o3v -- OCTA303 vFable, phase 3 (17 Nov 2026, written by Claude): the neutral 303 voice's per-sample part as an FX
+; insert.  NOT a module of an image yet: it runs on vfable/dsp_host_o3 against the reference o3d_sample (dsp_ref/o3k.c).
+; In:  x:(r0) = 16 interleaved L/R samples.  L = the oscillator (x << 2, through the gain ahead of FX1).
+;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
+;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
+;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
+; Out: L = R = the voice.  A frame whose mark or sum is wrong is silenced (the payloads must never reach the output).
+; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 6,7 the gain (48 bits); 8,9 its step; $a.. g1 g2 g3 g4 kq dq gh gv gt;
+; $20..$2f the decoded payloads.  The ceiling's two tables (98 entries each) are in P.
+; CYCLES_FORWARD_BRANCHES
+init:
+        move    #>$ffffff,m5                    ; not guaranteed linear at init (DSP.md)
+        move    r7,r5
+        clr     a
+        do      #$30,o3v_izero
+        move    a,x:(r5)+
+o3v_izero:
+        move    r7,r5
+        move    #>$10,n5
+        move    #>@GH@,x0
+        move    x0,x:(r5+n5)                    ; gh, a constant of the laws
+        rts
+proc:
+        move    #>$ffffff,m1
+        move    #>$ffffff,m2
+        move    #>$ffffff,m3
+        move    #>$ffffff,m4
+        move    #>$ffffff,m5
+; ---- the sixteen payloads: p = (y + y * 672 * 2^-23) >> 8 ----------------------------------------------------
+        move    r0,r1
+        move    r7,r2
+        move    #>$20,n2
+        move    (r1)+                           ; R of sample 0
+        move    (r2)+n2
+        move    #>672,y1
+        do      #16,o3v_dec
+        move    x:(r1)+,x0
+        move    x0,a
+        mac     x0,y1,a
+        move    (r1)+
+        asr     #8,a,a
+        move    a1,x:(r2)+
+o3v_dec:
+        move    r7,r2
+        move    #>$20,n2
+        move    (r2)+n2                         ; r2 = the payloads
+        move    x:(r2)+,a
+        move    #>$7fff,x0
+        cmp     x0,a
+        bne     o3v_bad
+        clr     b
+        do      #14,o3v_sum
+        move    x:(r2)+,x0
+        add     x0,b
+o3v_sum:
+        move    #>$7fff,x0
+        and     x0,b
+        move    x:(r2),x0
+        cmp     x0,b
+        bne     o3v_bad
+        move    r7,r2
+        move    (r2)+n2
+        move    (r2)+                           ; r2 = payload 1
+; ---- seven 23-bit numbers: (hi << 8) + lo ----------------------------------------------------------------
+        move    r7,r5
+        move    #>$a,n5
+        move    (r5)+n5                         ; r5 = g1
+        do      #6,o3v_asm
+        move    x:(r2)+,a
+        asl     #8,a,a
+        move    x:(r2)+,x0
+        add     x0,a
+        move    a1,x:(r5)+
+o3v_asm:
+        move    x:(r2)+,a
+        asl     #8,a,a
+        move    x:(r2)+,x0
+        add     x0,a                            ; gt
+        move    x:(r6),b
+        asr     #7,b,b                          ; gv
+        move    (r5)+                           ; past gh
+        move    b1,x:(r5)+
+        move    a1,x:(r5)
+; ---- the gain's step: (gt - gain) >> 4, 48 bits -----------------------------------------------------------
+        move    r7,r2
+        move    #>6,n2
+        move    (r2)+n2                         ; r2 = the gain
+        move    x:(r5),a
+        move    x:(r2)+,b
+        move    x:(r2)+,b0
+        sub     b,a
+        asr     #4,a,a
+        move    a1,x:(r2)+
+        move    a0,x0
+        move    x0,x:(r2)
+        move    r7,r2
+        move    (r2)+n2                         ; r2 = the gain, for the loop
+        move    r7,r1                           ; r1 = s1
+        move    r7,r5
+        move    #>$a,n5
+        move    (r5)+n5                         ; r5 = g1
+        move    r5,r3                           ; r3 = g1, kept
+        move    #>2,n5
+        do      n7,o3v_end
+; ---- zero-input pass --------------------------------------------------------------------------------------
+        move    x:(r1)+,x0
+        move    x:(r5)+,y1
+        move    x0,a
+        mac     -x0,y1,a
+        move    x:(r1)+,x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        move    x1,a
+        mac     x0,y1,a         x:(r1)+,x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        move    x1,a
+        mac     x0,y1,a         x:(r1)+,x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        move    x1,a
+        mac     x0,y1,a         x:(r1)+,x1      ; z; x1 = lp
+        sub     x1,a            x:(r5)+,y1      ; kq
+        move    a,x0
+        mpy     x0,y1,a         x:(r5)+,y1      ; dq
+        asl     #7,a,a
+        move    x:(r0),b                        ; the oscillator, x << 2
+        asr     #2,b,b
+        sub     a,b
+        move    b,x0
+        mpy     x0,y1,a                         ; u
+        move    r7,r1
+        move    r3,r5
+; ---- four poles: v = (in - s) g, y = s + v, s = y + v --------------------------------------------------------
+        move    x:(r1),x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r1)+
+        move    x:(r1),x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r1)+
+        move    x:(r1),x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r1)+
+        move    x:(r1),x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r1)+
+; ---- the loop's high-pass ---------------------------------------------------------------------------------
+        move    a,y0                            ; y4
+        move    (r5)+n5                         ; r5 = gh
+        move    x:(r1),x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r1)+
+        move    y0,b
+        sub     a,b                             ; hp
+; ---- the VCA input's high-pass ------------------------------------------------------------------------------
+        tfr     b,a
+        move    b,y0
+        move    x:(r1),x1
+        sub     x1,a            x:(r5)+,y1
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r1)+
+        move    y0,b
+        sub     a,b                             ; v
+        move    b,x0
+; ---- the VCA: gain += step (48 bits), y = v gain << 3 ----------------------------------------------------------
+        move    x:(r2)+,a
+        move    x:(r2)+,a0
+        move    x:(r2)+,b
+        move    x:(r2)-,b0
+        add     b,a
+        move    (r2)-
+        move    a0,y0                           ; (x0 holds v)
+        move    y0,x:(r2)-
+        move    a1,x:(r2)
+        move    a1,y1
+        mpy     x0,y1,a
+        asl     #3,a,a
+; ---- the BA662's ceiling: two tables in P, 98 entries each, step 2^14 (the idiom of fet76's f76_tab) -----------
+        move    a,x1                            ; y, limited: its sign and its integer part
+        move    x1,a
+        abs     a
+        move    #>@LIM@,x0
+        cmp     x0,a
+        tgt     x0,a
+        move    a,y0
+        asr     #14,a,a
+        move    a1,n4
+        move    y0,a
+        and     #>$3fff,a
+        asl     #9,a,a
+        move    a,x0                            ; the fraction, 23 bits
+        move    #>@PTP@,r4
+        move    x1,b
+        tst     b
+        bpl     o3v_pos
+        move    #>@PTN@,r4
+o3v_pos:
+        move    (r4)+n4
+        move    p:(r4)+,y0
+        move    p:(r4),b
+        move    y0,a
+        sub     a,b
+        move    b,y1
+        mpy     x0,y1,a
+        add     y0,a
+        move    x1,b
+        tst     b
+        bpl     o3v_sgn
+        neg     a
+o3v_sgn:
+        move    a,x0
+        move    r7,r1
+        move    r3,r5
+        move    x0,x:(r0)+
+        move    x0,x:(r0)+
+o3v_end:
+        rts
+o3v_bad:
+        clr     a
+        do      #32,o3v_mute
+        move    a,x:(r0)+
+o3v_mute:
+        rts
