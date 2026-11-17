@@ -652,6 +652,22 @@ sy_render:
         lsl.l   #3,%d0
         lea     (%a1,%d0.l),%a6
         moveq   #11,%d7                 | it holds the shift 11 (FM411, the VCO's >> 11) for the whole loop
+        tst.l   S_FMQ(%a3)              | v8.8: the neutral case runs .LFloop (same samples, fewer tests)
+        bne     .Lloop
+        tst.l   S_WAVE(%a3)
+        bne     .Lloop
+        tst.l   S_GINQ15(%a3)
+        beq     .Lloop
+        moveq   #2,%d0
+        cmp.l   S_SWP(%a3),%d0
+        bne     .Lloop
+        tst.l   S_MUFF(%a3)
+        bne     .Lloop
+        tst.l   S_DIST(%a3)
+        bne     .Lloop
+        move.l  S_OSIN(%a3),%d0
+        cmp.l   #DRV_G0,%d0
+        beq     .LFloop
 
 | ---------------------------------------------------------------- per sample (inline)
 .Lloop:
@@ -1073,6 +1089,250 @@ sy_render:
         move.l  %d6,(%a1)+
         cmpa.l  %a6,%a1                 | v8.4: to the end pointer (d7 holds 11)
         bne     .Lloop
+        bra     .Ldone
+| ---------------------------------------------------------------- v8.8: the neutral loop (strada A, step 1)
+| The same arithmetic as .Lloop, bit for bit, with what the neutral case never runs left out: no FM, the saw,
+| OVDR up to normal (GINQ15), SWP ACID (no noise), no MUFF, no +D, DRIV 0.  None of these is written by the
+| control step (o3_ctrl), so a call that enters here stays here; the ladder clip (CLG) and P11 are kept.
+.LFloop:
+        subq.l  #1,S_CS(%a3)
+        bne     .LFnoctl
+        moveq   #CS,%d0
+        move.l  %d0,S_CS(%a3)
+        bsr     o3_ctrl
+        clr.l   S_P11(%a3)              | v8.2 P11: the control step may move the level's step
+.LFnoctl:
+        tst.l   S_P11(%a3)              | v8.5: closed at its fixed point since the last control step: the
+        bgt     .LFp11                   | whole voice waits (VCO, filter, FM: paused; the word is the same)
+.LFnofm:
+        move.l  S_INC(%a3),%d5          | VCO
+        move.l  S_PHASE(%a3),%d4
+        add.l   %d5,%d4
+        move.l  %d4,S_PHASE(%a3)
+        move.l  %d4,%d6                 | saw
+        lsr.l   %d7,%d6
+        sub.l   #0x100000,%d6
+        cmp.l   %d5,%d4                 | polyBLEP only within one increment of the wrap
+        bcs     .LFsb
+        move.l  %d4,%d0
+        neg.l   %d0
+        cmp.l   %d5,%d0
+        bcc     .LFosc
+.LFsb:
+        move.l  %d4,%d0
+        bsr     o3_blep
+        lsl.l   #5,%d0
+        sub.l   %d0,%d6
+.LFosc:
+        move.l  %d6,%d0                 | VCO->VCF coupling highpass, level
+        sub.l   S_HP(%a3),%d0
+        FM411   %d0,K_PREHP(%a5)
+        add.l   S_HP(%a3),%d0
+        move.l  %d0,S_HP(%a3)
+        sub.l   %d0,%d6
+        FM78    %d6,S_GIN(%a3)          | OVDR up to normal (this loop is entered with GINQ15 set)
+        move.l  S_Y4(%a3),%d4           | resonance: y4 through the loop highpass, * k
+        move.l  %d4,%d0
+        sub.l   S_FB(%a3),%d0
+        FM411   %d0,K_FBHP(%a5)
+        add.l   S_FB(%a3),%d0
+        move.l  %d0,S_FB(%a3)
+        move.l  %d4,%d1
+        sub.l   %d0,%d1
+        CLAMP   %d1,-0x800000,0x800000
+        move.l  %d1,S_FBO(%a3)          | v7.4: the high-passed ladder output, also the voice's output
+        asr.l   #8,%d1
+        muls.l  S_K(%a3),%d1
+        sub.l   %d1,%d6
+        tst.l   S_CLG(%a3)              | v7.3 (#1011): at the top of the table softclip(u * g) / g,
+        beq     .LFlcp                   | so its 3rd harmonic cannot lock the loop at fs/4
+        move.l  S_CLL(%a3),%d2
+        cmp.l   %d2,%d6
+        ble     .LFlc1
+        move.l  %d2,%d6
+.LFlc1:
+        neg.l   %d2
+        cmp.l   %d2,%d6
+        bge     .LFlc2
+        move.l  %d2,%d6
+.LFlc2:
+        asr.l   #4,%d6
+        muls.l  S_CLG(%a3),%d6
+        asr.l   #8,%d6
+        SOFTCLIP %d6
+        asr.l   #4,%d6
+        muls.l  S_CLI(%a3),%d6
+        asr.l   #8,%d6
+        bra     .LFlc9
+.LFlcp:
+        SOFTCLIP %d6
+.LFlc9:
+        move.l  S_Y1(%a3),%d1           | diode ladder
+        move.l  S_Y2(%a3),%d2
+        move.l  S_Y3(%a3),%d3
+        move.l  S_B(%a3),%d5
+        move.l  %d6,%d0
+        sub.l   %d1,%d0
+        add.l   %d2,%d0
+        FM78    %d0,S_C1(%a3)
+        add.l   %d0,%d1
+        move.l  %d1,%d0
+        sub.l   %d2,%d0
+        sub.l   %d2,%d0
+        add.l   %d3,%d0
+        FM78    %d0,%d5
+        add.l   %d0,%d2
+        move.l  %d2,%d0
+        sub.l   %d3,%d0
+        sub.l   %d3,%d0
+        add.l   %d4,%d0
+        FM78    %d0,%d5
+        add.l   %d0,%d3
+        move.l  %d3,%d0
+        sub.l   %d4,%d0
+        sub.l   %d4,%d0
+        FM78    %d0,%d5
+        add.l   %d0,%d4
+        move.l  %d1,S_Y1(%a3)
+        move.l  %d2,S_Y2(%a3)
+        move.l  %d3,S_Y3(%a3)
+        move.l  %d4,S_Y4(%a3)
+        move.l  S_FBO(%a3),%d6          | v7.4: the output is the loop's high-pass (one, shared), then the
+        move.l  %d6,%d0                 | VCA's input pair: 72 Hz plain + 156 Hz from the RES wiper
+        sub.l   S_VP1(%a3),%d0
+        FM411   %d0,K_VP1(%a5)
+        add.l   S_VP1(%a3),%d0
+        move.l  %d0,S_VP1(%a3)
+        move.l  %d6,%d1
+        sub.l   %d0,%d1                 | d1 = fb - vp1
+        move.l  %d6,%d0
+        sub.l   S_VP2(%a3),%d0
+        FM411   %d0,K_VP2(%a5)
+        add.l   S_VP2(%a3),%d0
+        move.l  %d0,S_VP2(%a3)
+        sub.l   %d0,%d6                 | fb - vp2
+        asr.l   #6,%d6
+        muls.l  S_W2(%a3),%d6
+        asr.l   #6,%d6
+        add.l   %d1,%d6
+        move.l  S_AMP(%a3),%d3          | v8.2 P11: the VCA's level first (was after the OTA, same value;
+        add.l   S_AMPSTEP(%a3),%d3      | d3 is free from here to the sample's end)
+        bgt     .LFamp                   | open: the whole chain
+        moveq   #0,%d3
+        move.l  %d3,S_AMP(%a3)          | closed this sample: max(0, amp + step) = 0
+        move.l  S_P11(%a3),%d0
+        bgt     .LFp11                   | 1: the chain after the VCA sits at its fixed point: its word again
+        beq     .LFp11t                  | 0: try
+        move.l  S_DC(%a3),%d0           | -1: the sample before was the try (closed, same frame, no control
+        cmp.l   S_P11A(%a3),%d0         | step since): did it leave the chain's three states where they were?
+        bne     .LFp11t
+        move.l  S_MLO(%a3),%d0
+        cmp.l   S_P11B(%a3),%d0
+        bne     .LFp11t
+        move.l  S_TONE(%a3),%d0
+        cmp.l   S_P11C(%a3),%d0
+        bne     .LFp11t
+        moveq   #1,%d0                  | yes: the fixed point, and its word is the one just written
+        move.l  %d0,S_P11(%a3)
+        move.l  -4(%a1),%d0
+        move.l  %d0,S_P11OUT(%a3)
+        bra     .LFp11
+.LFp11t:
+        moveq   #-1,%d0                 | try: this sample runs the chain at level 0; keep its states
+        move.l  %d0,S_P11(%a3)
+        move.l  S_DC(%a3),%d0
+        move.l  %d0,S_P11A(%a3)
+        move.l  S_MLO(%a3),%d0
+        move.l  %d0,S_P11B(%a3)
+        move.l  S_TONE(%a3),%d0
+        move.l  %d0,S_P11C(%a3)
+        bra     .LFamp0
+.LFamp:
+        move.l  %d3,S_AMP(%a3)
+        clr.l   S_P11(%a3)
+.LFamp0:
+        FM66    %d6,S_GCOMP(%a3)        | level compensation, VCA (ramped per sample)
+        CLAMP   %d6,-OTA_LIM,OTA_LIM    | v7.6: the VCA is an OTA (IC15 BA6110): OTA_V * softclip(o / OTA_V)
+        asr.l   #4,%d6
+        move.l  #OTA_IN,%d1
+        muls.l  %d1,%d6
+        asr.l   #8,%d6
+        SOFTCLIP %d6
+        asr.l   #4,%d6
+        move.l  #OTA_OUT,%d1
+        muls.l  %d1,%d6
+        asr.l   #8,%d6
+        asr.l   #3,%d6
+        CLAMP   %d6,-VCA_LIM,VCA_LIM    | v6.9: the VCA multiply never wraps
+        move.l  %d3,%d1                 | v8.2 P11: the level, from above
+        asr.l   #1,%d1                  | v7.3: (o >> 7) * (amp >> 1) >> 6, four times the room
+        asr.l   #7,%d6                  | (#1011; v6.9-v7.1: FM68 with amp)
+        muls.l  %d1,%d6
+        asr.l   #6,%d6
+| v7.7: the BA662A's pin 6 cannot leave the supply (o3tables P6_*):
+        move.l  %d6,%d0                 | o -> sign(o) * P6_F(64 |o| / L), linear between the 257 points;
+        move.l  #P6_KP,%d1              | v7.8: the positive side p6r x higher (O3_P6_FP)
+        lea     O3_P6_FP,%a0
+        tst.l   %d0
+        bpl     .LFp6a
+        neg.l   %d0
+        move.l  #P6_K,%d1
+        lea     O3_P6_F,%a0
+.LFp6a:
+        cmp.l   #P6_AMAX,%d0            | beyond P6_AMAX the table is flat: the multiply stays in 32 bits
+        ble     .LFp6b
+        move.l  #P6_AMAX,%d0
+.LFp6b:
+        asr.l   #6,%d0
+        muls.l  %d1,%d0
+        asr.l   #2,%d0                  | t = 64 |o| / L, Q16
+        move.l  %d0,%d1
+        swap    %d1
+        and.l   #0xFFFF,%d1             | i = t >> 16
+        cmp.l   #256,%d1
+        blt     .LFp6c
+        move.l  1024(%a0),%d1           | i >= 256: the flat end
+        bra     .LFp6d
+.LFp6c:
+        lea     (%a0,%d1.l*4),%a0
+        and.l   #0xFFFF,%d0
+        lsr.l   #1,%d0                  | the fraction, Q15
+        move.l  (%a0)+,%d2              | F[i]
+        move.l  (%a0),%d1
+        sub.l   %d2,%d1                 | F[i+1] - F[i], >= 0 and < 2^15
+        muls.l  %d0,%d1
+        moveq   #15,%d0
+        asr.l   %d0,%d1
+        add.l   %d2,%d1
+.LFp6d:
+        tst.l   %d6
+        bpl     .LFp6e
+        neg.l   %d1
+.LFp6e:
+        move.l  %d1,%d6
+        move.l  %d6,S_OVCA(%a3)         | FM reads the VCA after the Muffler
+        move.l  %d6,%d0                 | output coupling
+        sub.l   S_DC(%a3),%d0
+        FM411   %d0,K_DCHP(%a5)
+        add.l   S_DC(%a3),%d0
+        move.l  %d0,S_DC(%a3)
+        sub.l   %d0,%d6
+        CLAMP   %d6,-16777216,16777216  | DRIV 0 (this loop is entered with OSIN = DRV_G0)
+        asr.l   #SHIFT_OUT,%d6
+        CLAMP   %d6,-32767,32767
+        lsl.l   #8,%d6
+        lsl.l   #8,%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        cmpa.l  %a6,%a1                 | v8.4: to the end pointer (d7 holds 11)
+        bne     .LFloop
+        bra     .Ldone
+.LFp11:                                  | v8.2 P11: closed, fixed point: the same word, S_OVCA unchanged
+        move.l  S_P11OUT(%a3),%d6
+        move.l  %d6,(%a1)+
+        move.l  %d6,(%a1)+
+        cmpa.l  %a6,%a1                 | v8.4: to the end pointer (d7 holds 11)
+        bne     .LFloop
 .Ldone:
         tst.l   o3_pflag                | stopwatch: a call that ran the sample loop adds its times to its track's row
         beq     .Lpf_x
