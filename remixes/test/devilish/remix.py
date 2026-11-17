@@ -1,4 +1,7 @@
-"""OCTA303 + dEVILish beside the stock effects (PHASER, whose id dEVILish takes, gives up its words)."""
+"""OCTA303 + dEVILish beside the stock effects (PHASER, whose id dEVILish takes, gives up its words).
+
+vFable, 17 Nov 2026 (work in progress, branch octa303_optimus_23): dEVILish's DSP half is the 303 voice's filter
+(327 words and two 98-word tables), no longer a pass-through of a few words: COMPRESSOR and LO-FI give up theirs too."""
 
 from remix.schema import Proof, Remix
 
@@ -12,11 +15,11 @@ REMIX = Remix(
     modules=(
         "OCTA303", "DEVILISH",
         "FILTER", "EQUALIZER", "DJ EQ", "FLANGER", "CHORUS",
-        "SPATIALIZER", "COMB FILTER", "COMPRESSOR", "LO-FI",
+        "SPATIALIZER", "COMB FILTER",
         "DELAY", "PLATE REV", "SPRING REV", "DARK REV",
     ),
     fx1=("DEVILISH",
          "FILTER", "EQUALIZER", "DJ EQ", "FLANGER", "CHORUS",
-         "SPATIALIZER", "COMB FILTER", "COMPRESSOR", "LO-FI"),
+         "SPATIALIZER", "COMB FILTER"),
     fallback="NONE",
 )
