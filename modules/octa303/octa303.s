@@ -128,6 +128,7 @@
         .set    E_BASE,256                      | 256..1023: the engine's
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024
+        .set    O3_SONDA2,1016                  | SONDA 1C: dEVILish's first knob as the previous call read it
         .set    O3_SONDA,1020                   | SONDA 1: the probe's frame counter (the engine's block ends at E_END, far below)
         .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
         .set    O3_SKIP_STOCK,1                 |   FLEX renderer (sy_render, .Lskip); 0 = the shell before it
@@ -2055,11 +2056,14 @@ o3_vrec:
         move.w  %d0,22(%a1)
         addq.l  #1,%d0
         move.w  %d0,36(%a1)
-        addq.l  #1,%d0
-        move.w  %d0,38(%a1)
+        move.l  O3_SONDA2(%a3),%d0      | SONDA 1C: the eighth word is that knob as read in the PREVIOUS call.  o3_params
+        move.w  %d0,38(%a1)             | runs twice a frame on a held note: the second call reads what the first wrote
+                                        | (1B: 83, 84, ...), so the first call's read is the one that tells whether the
+                                        | frame builder rewrote the record: 25 if it did
         moveq   #0,%d0                  | SONDA 1B: the ninth word is dEVILish's first knob AS READ IN THIS CALL (OVDR,
         move.b  S_DFK(%a3),%d0          | 25 by default): if the frame builder did not rewrite the record every frame,
         move.w  %d0,40(%a1)             | this would be the probe's own V >> 8 (82..120 and moving), not 25
+        move.l  %d0,O3_SONDA2(%a3)
         lea     S_DFK(%a3),%a0
         movem.l (%sp),%d3/%a1-%a2
         lea     12(%sp),%sp
