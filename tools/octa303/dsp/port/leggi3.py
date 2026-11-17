@@ -15,8 +15,8 @@ G = 8387936
 s24 = lambda hi, lo: (((hi << 8) | (lo >> 8)) ^ 0x800000) - 0x800000
 gain = lambda v: (v * G + (1 << 22)) >> 23
 dec = lambda y: ((y << 24) + ((y * 672) << 1)) >> 32
-def main(path):
-    D = json.load(open(path))
+def main(path, D=None):
+    D = D or json.load(open(path))
     fam = {k: {int(f): v for f, v in D[k].items()} for k in D}
     frames = sorted(set(fam['voce']) & set(fam['audio']))
     if not frames: print('nessun frame nel file: la corsa non vale'); return 1
