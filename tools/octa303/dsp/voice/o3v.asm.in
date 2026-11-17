@@ -23,7 +23,8 @@ o3v_izero:
         move    r7,r5
         move    #>$10,n5
         move    #>@GH@,x0
-        move    x0,x:(r5+n5)                    ; gh, a constant of the laws
+        move    (r5)+n5
+        move    x0,x:(r5)+                      ; gh, a constant of the laws
         rts
 proc:
         move    #>$ffffff,m1
@@ -107,7 +108,7 @@ o3v_asm:
         and     #>$ffff00,b                     ; (an LFO's fraction never reaches gv)
         asr     #7,b,b                          ; gv
         move    (r5)+                           ; past gh
-        move    b1,x:(r5)+
+        move    b,x:(r5)+                       ; (gv: b1 alone, positive)
         move    a1,x:(r5)
 ; ---- the gain's step: (gt - gain) >> 4, 48 bits -----------------------------------------------------------
         move    r7,r2
@@ -136,21 +137,29 @@ o3v_asm:
         move    x0,a
         mac     -x0,y1,a
         move    x:(r1)+,x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         move    x1,a
-        mac     x0,y1,a         x:(r1)+,x1
-        sub     x1,a            x:(r5)+,y1
+        mac     x0,y1,a
+        move    x:(r1)+,x1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         move    x1,a
-        mac     x0,y1,a         x:(r1)+,x1
-        sub     x1,a            x:(r5)+,y1
+        mac     x0,y1,a
+        move    x:(r1)+,x1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         move    x1,a
-        mac     x0,y1,a         x:(r1)+,x1      ; z; x1 = lp
-        sub     x1,a            x:(r5)+,y1      ; kq
+        mac     x0,y1,a                         ; z
+        move    x:(r1)+,x1                      ; lp
+        sub     x1,a
+        move    x:(r5)+,y1                      ; kq
         move    a,x0
-        mpy     x0,y1,a         x:(r5)+,y1      ; dq
+        mpy     x0,y1,a
+        move    x:(r5)+,y1                      ; dq
         asl     #7,a,a
         move    x:(r0),b                        ; the oscillator, x << 2
         asr     #2,b,b
@@ -161,7 +170,8 @@ o3v_asm:
         move    r3,r5
 ; ---- four poles: v = (in - s) g, y = s + v, s = y + v --------------------------------------------------------
         move    x:(r1),x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
@@ -169,7 +179,8 @@ o3v_asm:
         add     a,b
         move    b,x:(r1)+
         move    x:(r1),x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
@@ -177,7 +188,8 @@ o3v_asm:
         add     a,b
         move    b,x:(r1)+
         move    x:(r1),x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
@@ -185,7 +197,8 @@ o3v_asm:
         add     a,b
         move    b,x:(r1)+
         move    x:(r1),x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
@@ -196,20 +209,21 @@ o3v_asm:
         move    a,y0                            ; y4
         move    (r5)+n5                         ; r5 = gh
         move    x:(r1),x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
         add     x1,a
         add     a,b
         move    b,x:(r1)+
-        move    y0,b
-        sub     a,b                             ; hp
+        neg     a
+        add     y0,a                            ; hp = y4 - lo
 ; ---- the VCA input's high-pass ------------------------------------------------------------------------------
-        tfr     b,a
-        move    b,y0
+        move    a,y0
         move    x:(r1),x1
-        sub     x1,a            x:(r5)+,y1
+        sub     x1,a
+        move    x:(r5)+,y1
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
@@ -226,8 +240,8 @@ o3v_asm:
         move    x:(r2)-,b0
         add     b,a
         move    (r2)-
-        move    a0,y0                           ; (x0 holds v)
-        move    y0,x:(r2)-
+        move    a0,y1                           ; (x0 holds v)
+        move    y1,x:(r2)-
         move    a1,x:(r2)
         move    a1,y1
         mpy     x0,y1,a
@@ -237,24 +251,25 @@ o3v_asm:
         move    x1,a
         abs     a
         move    #>@LIM@,x0
-        cmp     x0,a
-        tgt     x0,a
+        move    #>@LIM@,b
+        cmp     a,b
+        tlt     x0,a                            ; |y| above the table's end: the end
         move    a,y0
         asr     #14,a,a
-        move    a1,n4
+        move    a1,n5
         move    y0,a
         and     #>$3fff,a
         asl     #9,a,a
         move    a,x0                            ; the fraction, 23 bits
-        move    #>@PTP@,r4
+        move    #>@PTP@,r5
         move    x1,b
         tst     b
-        bpl     o3v_pos
-        move    #>@PTN@,r4
+        bge     o3v_pos
+        move    #>@PTN@,r5
 o3v_pos:
-        move    (r4)+n4
-        move    p:(r4)+,y0
-        move    p:(r4),b
+        move    (r5)+n5
+        move    p:(r5)+,y0                      ; (fet76's two reads)
+        move    p:(r5),b
         move    y0,a
         sub     a,b
         move    b,y1
@@ -262,12 +277,13 @@ o3v_pos:
         add     y0,a
         move    x1,b
         tst     b
-        bpl     o3v_sgn
+        bge     o3v_sgn
         neg     a
 o3v_sgn:
         move    a,x0
         move    r7,r1
         move    r3,r5
+        move    #>2,n5
         move    x0,x:(r0)+
         move    x0,x:(r0)+
 o3v_end:
