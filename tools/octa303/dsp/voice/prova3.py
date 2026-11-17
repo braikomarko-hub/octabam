@@ -15,7 +15,7 @@ def ref(e):
 def send(p):                      # a 15-bit payload through the gain ahead of FX1
     assert 0<=p<32768; return (((p<<8)|0x80)*G+(1<<22))>>23
 def build(gh):
-    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PT@',str(PTP)).replace('@CV@',str(CV))
+    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PT@',str(PTP)).replace('@PTN@',str(PTP+KN+1)).replace('@CV@',str(CV))
     open(WORK+'/o3v.asm','w').write(src)
     r=subprocess.run([DA,'-in',WORK+'/o3v.asm','-org','%x'%ORG,'-out',WORK+'/o3v.bin','-list'],capture_output=True,text=True)
     open(WORK+'/o3v.lst','w').write(r.stdout+r.stderr)
