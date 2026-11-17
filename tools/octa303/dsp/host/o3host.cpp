@@ -45,18 +45,30 @@ int main(int argc, char** argv) {
     if (!runToRts(dsp, init, n)) { fprintf(stderr, "init did not return\n"); return 1; }
     if (dsp.regs().r[1].var != 0x123) { fprintf(stderr, "init changed r1\n"); return 1; }
     auto in = slurp(argv[7]); FILE* fo = fopen(argv[8], "wb");
-    const size_t FR = 52 * 4; uint64_t mx = 0;
+    const size_t FR = 52 * 4; uint64_t mx = 0; size_t over = 0;
     for (size_t o = 0; o + FR <= in.size(); o += FR) {
         int32_t w[52]; memcpy(w, &in[o], FR);
         for (int k = 0; k < 32; ++k) dsp.memWrite(MemArea_X, AUDIO + k, (TWord)w[k] & 0xffffff);
         for (int k = 0; k < 20; ++k) dsp.memWrite(MemArea_X, PARAMS + k, (TWord)w[32 + k] & 0xffffff);
-        dsp.regs().r[0].var = AUDIO; dsp.regs().r[6].var = PARAMS; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = 16;
+        // w[51] = k (1..15): the frame comes in two pieces, the insert is called for [0,k) and then for [k,16) with r0 moved on
+        // (what SONDA 4's run B showed under the port, 17 Nov 2026); 0 = one call of 16 samples.  A guard word after the
+        // block tells a call that writes past it.
+        const int k = (w[51] >= 1 && w[51] <= 15) ? w[51] : 0;
+        dsp.memWrite(MemArea_X, AUDIO + 32, 0x123456);
+        dsp.regs().r[0].var = AUDIO; dsp.regs().r[6].var = PARAMS; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = k ? k : 16;
         if (!runToRts(dsp, proc, n)) { fprintf(stderr, "proc did not return (frame %zu)\n", o / FR); return 1; }
+        if (k) {
+            uint64_t n2 = 0;
+            dsp.regs().r[0].var = AUDIO + 2 * k; dsp.regs().r[6].var = PARAMS; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = 16 - k;
+            if (!runToRts(dsp, proc, n2)) { fprintf(stderr, "proc did not return (frame %zu, second piece)\n", o / FR); return 1; }
+            n += n2;
+        }
+        if ((mem.get(MemArea_X, AUDIO + 32) & 0xffffff) != 0x123456) ++over;
         if (n > mx) mx = n;
         int32_t out[33];
         for (int k = 0; k < 32; ++k) { TWord v = mem.get(MemArea_X, AUDIO + k) & 0xffffff; out[k] = (int32_t)(v << 8) >> 8; }
         out[32] = (int32_t)n; fwrite(out, 4, 33, fo);
     }
-    fclose(fo); printf("frames %zu, max instructions per proc call %llu\n", in.size() / FR, (unsigned long long)mx);
+    fclose(fo); printf("frames %zu, max instructions per frame %llu, frames written past the audio block %zu\n", in.size() / FR, (unsigned long long)mx, over);
     return 0;
 }
