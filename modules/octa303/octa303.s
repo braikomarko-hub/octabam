@@ -2063,6 +2063,9 @@ o3_vrec:
         moveq   #0,%d0                  | SONDA 1B: the ninth word is dEVILish's first knob AS READ IN THIS CALL (OVDR,
         move.b  S_DFK(%a3),%d0          | 25 by default): if the frame builder did not rewrite the record every frame,
         move.w  %d0,40(%a1)             | this would be the probe's own V >> 8 (82..120 and moving), not 25
+        move.l  PINGW,%d1               | ... with the ping half that call wrote to in bits 8 up: the two calls of a
+        lsl.l   #8,%d1                  | frame may not see the same half (reviewer, 17 Nov).  Not in halfword 21: the
+        or.l    %d1,%d0                 | stock keeps a value there (0x101 in the 1B dump)
         move.l  %d0,O3_SONDA2(%a3)
         lea     S_DFK(%a3),%a0
         movem.l (%sp),%d3/%a1-%a2

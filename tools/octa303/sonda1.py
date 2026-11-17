@@ -8,6 +8,7 @@ The image is built from the probe branch: the OCTA-303 voice writes a counter c 
 AMP override (0, 0x7f00, 0x7f00) into halfwords 0..2; dEVILish's DSP half copies x:(r6+0..5) and x:(r6+$c..$e) into
 the R of samples 0..8.  The project copy has T5 = OCTA-303 with dEVILish on FX1 and a trig on every step.
 
+[STALE, 17 Nov: SONDA 1/1B measured the counter advancing 2 a dump frame on a held note; why is open]
 The counter counts o3_params calls, not frames: one a frame on a held note, but a frame with a START splits (2205
 samples a step is not a multiple of 16) and calls it two or three times, so in such a frame L holds two values and
 c jumps by 2 or 3.  START frames are read apart.
