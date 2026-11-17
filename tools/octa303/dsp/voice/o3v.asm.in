@@ -1,10 +1,13 @@
-; o3v -- OCTA303 vFable, phase 3 (17 Nov 2026, written by Claude): the neutral 303 voice's per-sample part as an FX
-; insert.  NOT a module of an image yet: it runs on vfable/dsp_host_o3 against the reference o3d_sample (dsp_ref/o3k.c).
+; o3v -- OCTA303 vFable, the 303 voice on the DSP (17 Nov 2026, written by Claude): the neutral voice's per-sample
+; part as an FX insert.  NOT a module of an image yet: it runs on tools/octa303/dsp/host/o3host.cpp against the
+; reference o3d_sample (tools/octa303/dsp/ref/o3k.c).
 ; In:  x:(r0) = 16 interleaved L/R samples.  L = the oscillator (x << 2, through the gain ahead of FX1).
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
 ;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
-; Out: L = R = the voice.  A frame whose mark or sum is wrong is silenced (the payloads must never reach the output).
+;      A frame is taken only if the mark, the sum and the seven low-byte payloads (nothing above bit 7) all agree.
+; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
+;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 6,7 the gain (48 bits); 8,9 its step; $a.. g1 g2 g3 g4 kq dq gh gv gt;
 ; $20..$2f the decoded payloads.  The ceiling's two tables (98 entries each) are in P.
 ; CYCLES_FORWARD_BRANCHES
@@ -61,6 +64,18 @@ o3v_sum:
         move    r7,r2
         move    (r2)+n2
         move    (r2)+                           ; r2 = payload 1
+        clr     b
+        do      #7,o3v_low                      ; the seven low bytes: nothing above bit 7
+        move    x:(r2)+,x0
+        move    x:(r2)+,a
+        and     #>$7f00,a
+        add     a,b
+o3v_low:
+        tst     b
+        bne     o3v_bad
+        move    r7,r2
+        move    (r2)+n2
+        move    (r2)+                           ; r2 = payload 1
 ; ---- seven 23-bit numbers: (hi << 8) + lo ----------------------------------------------------------------
         move    r7,r5
         move    #>$a,n5
@@ -77,6 +92,7 @@ o3v_asm:
         move    x:(r2)+,x0
         add     x0,a                            ; gt
         move    x:(r6),b
+        and     #>$ffff00,b                     ; (an LFO's fraction never reaches gv)
         asr     #7,b,b                          ; gv
         move    (r5)+                           ; past gh
         move    b1,x:(r5)+
@@ -246,6 +262,12 @@ o3v_end:
         rts
 o3v_bad:
         clr     a
+        move    r7,r2
+        move    #>6,n2
+        move    (r2)+n2
+        do      #4,o3v_gz                       ; the gain and its step: the voice ramps in from 0 afterwards
+        move    a,x:(r2)+
+o3v_gz:
         do      #32,o3v_mute
         move    a,x:(r0)+
 o3v_mute:

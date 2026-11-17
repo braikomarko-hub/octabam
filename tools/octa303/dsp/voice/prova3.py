@@ -83,3 +83,8 @@ if __name__=='__main__':
     F2=F.copy(); F2[200,3]=send(0x1234); F2[201,1]=send(0x7ffe); F2[202,1:32:2]=0x7fffff
     o,_,_=run_host(F2,PROC,ORG)
     print('frame non validi 200,201,202 in silenzio:',bool((o[200:203]==0).all()),'| frame 199 calcolato:',bool((o[199]!=0).any()))
+    F3=F.copy(); F3[300,4]=send(0x0100|int(C[300][0]&0xff)); F3[300,31]=send((sum(int(v) for v in [C[300][k]>>8 for k in range(7)])+sum(int(C[300][k]&0xff) for k in range(7))+0x100)&0x7fff)
+    o3,_,_=run_host(F3,PROC,ORG)
+    print('byte basso sporco (somma giusta) rifiutato:',bool((o3[300]==0).all()),'| ripartenza dopo il silenzio: primo campione del frame 203 =',int(o[203,0]),', del frame 204 =',int(o[204,0]),'(senza interruzione:',int(y[203*16]),int(y[204*16]),')')
+    F4=F.copy(); F4[:,32]|=0x7f; o4,_,_=run_host(F4,PROC,ORG)
+    print('byte basso della parola del foglietto sporco: campioni diversi',int((o4[:,0::2].reshape(-1)!=y[:o4.shape[0]*16]).sum()))
