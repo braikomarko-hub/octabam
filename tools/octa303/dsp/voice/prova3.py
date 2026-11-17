@@ -75,9 +75,11 @@ if __name__=='__main__':
         first=int(np.argmax(yl!=y[:n])) if d else -1
         print(c,'campioni',n,'diversi',d,'(primo %d: dsp %d modello %d)'%(first,yl[first],y[first]) if d else '','R!=L',d2,'| istruzioni a frame max',int(ni.max()),'=> a campione %.1f'%((ni.max())/16))
     print('TOTALE: %d campioni, %d diversi'%(tot,totd))
+    FAIL=[totd]
     for seed,loud in ((1,True),(2,True),(3,False),(4,False)):
         d,n,sat,pk=stress(seed,loud=loud)
         print('prova dura %d (%s): campioni %d, diversi %d, saturazioni nel modello %d, picco %d'%(seed,'ingresso a fondo scala' if loud else 'ingresso normale, coefficienti a caso',n,d,sat,pk))
+        FAIL.append(d)
     # frame non validi: segno giusto ma somma sbagliata; segno sbagliato; destro a fondo scala
     e=ev(64,127,64,1); y,C,X=ref(e); F=frames(C,X)
     F2=F.copy(); F2[200,3]=send(0x1234); F2[201,1]=send(0x7ffe); F2[202,1:32:2]=0x7fffff
@@ -90,3 +92,5 @@ if __name__=='__main__':
     print('senza la firma del motore (traccia non OCTA-303): 20 frame lasciati intatti:',bool((o5[400:420]==F5[400:420,:32]).all()),'| frame 399 calcolato:',bool((o5[399]!=F5[399,:32]).any()))
     F4=F.copy(); F4[:,32]|=0x7f; o4,_,_=run_host(F4,PROC,ORG)
     print('byte basso della parola del foglietto sporco: campioni diversi',int((o4[:,0::2].reshape(-1)!=y[:o4.shape[0]*16]).sum()))
+    ok=not any(FAIL) and bool((o[200:203]==0).all()) and bool((o3[300]==0).all()) and bool((o5[400:420]==F5[400:420,:32]).all()) and int((o4[:,0::2].reshape(-1)!=y[:o4.shape[0]*16]).sum())==0
+    print('ESITO prova3:', 'PASS' if ok else 'FAIL'); sys.exit(0 if ok else 1)

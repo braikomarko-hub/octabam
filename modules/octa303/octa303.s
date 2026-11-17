@@ -129,8 +129,8 @@
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024
         .ifndef O3_DSP                          | vFable, the 303 voice on the DSP (work in progress, tools/octa303/dsp):
-        .set    O3_DSP,0                        |   1 = the engine renders the oscillator (L) and the control step's
-        .endif                                  |   numbers (R) for the DSP insert; 0 = the engine as it is, bit for bit
+        .set    O3_DSP,1                        |   1 = with the insert on FX1 the engine sends the oscillator (L) and the
+        .endif                                  |   control step's numbers (R) to it; 0 = the engine as it is, bit for bit
         .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
         .set    O3_SKIP_STOCK,1                 |   FLEX renderer (sy_render, .Lskip); 0 = the shell before it
         .endif

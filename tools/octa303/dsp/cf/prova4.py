@@ -36,6 +36,7 @@ def reference(s, incc3):
     assert rc == 0, rc
     return [int(v) for v in y], C[:n // 16], X
 
+GH_SEEN = []
 SRC_D = source(local={'O3_DSP': 1})
 class EngD(T7.Eng):
     def __init__(self):
@@ -101,6 +102,7 @@ def check(s, e, built):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
         F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700; F[f, 35] = P3.VOL
     if not built:
+        GH_SEEN.append(int(C[0][8]))
         lst, _ = P3.build(int(C[0][8])); ls = [l for l in lst.splitlines() if l[6:7] == ':']
         k = [i for i, l in enumerate(ls) if ' rts' in l][0]; built.append(int(ls[k + 1][:6], 16))
     out, ni, _ = P3.run_host(F, built[0], P3.ORG)
@@ -186,13 +188,19 @@ if __name__ == '__main__':
         if d1 or d2 or d3: print('  %-28s campioni %6d | L diversi %d | frame con numeri diversi %d | catena: campioni diversi %d' % (s['name'], n, d1, d2, d3))
     print('TOTALE: %d scenari, %d campioni | L diversi %d | frame con numeri diversi %d | catena (ColdFire -> DSP): campioni diversi %d' % (len(use), tot[3], tot[0], tot[1], tot[2]))
     print('passi del simulatore ColdFire a campione (motore in modo DSP, controllo compreso): %.1f' % (st_all / tot[3]))
+    FAIL = tot[0] + tot[1] + tot[2]
+    sys.path.insert(0, os.path.join(HERE, '..')); import gen_module
+    FAIL += built[0] is None or gen_module.GH != GH_SEEN[0]; print('gh del riferimento = costante del modulo:', gen_module.GH == GH_SEEN[0])
     print('--- il guscio intero (finto sistema operativo), effetto in FX1')
     for a in ((1, 480, 0, 0, 11, 0x4000, None), (1, 480, 12, 1, 12, 0x7f00, None), (1, 480, 5, 0, 13, 0x2000, None),
               (1, 300, 0, 1, 14, 0x5a80, (127, 127, 127, 127, 127, 127, 127, 2, 2, 2, 1, 1))):
         df = a[6] or T7.DFN
         nm, n, bad, d1, d3, nr, ng = shell_chain(a[:6] + (df,), built)
         print('  %-28s campioni %6d (%d START, %d chiusure del gate) | frame con il foglietto sbagliato %d | L diversi %d | catena: campioni diversi %d' % (nm, n, nr, ng, bad, d1, d3))
+        FAIL += bad + d1 + d3
     print('--- il guscio intero, SENZA l effetto: deve essere il motore di oggi')
     for a in ((1, 300, 0, 0, 21), (0, 300, 7, 1, 22)):
         nm, n, nd, first, ng, nr = shell_fallback(a)
         print('  %-28s campioni %6d | diversi dal modello di oggi %d %s' % (nm, n, nd, first))
+        FAIL += nd
+    print('ESITO prova4:', 'PASS' if not FAIL else 'FAIL'); sys.exit(0 if not FAIL else 1)
