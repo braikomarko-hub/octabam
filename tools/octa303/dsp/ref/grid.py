@@ -3,9 +3,19 @@ the reference that computes the per-sample loop as a DSP56300 would (o3d_sample 
 import sys, os, ctypes, itertools, json, numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 OUT = os.path.join(ROOT, 'out', 'octa303', 'dsp')
-os.environ.setdefault('O3K_LIB', os.path.join(OUT, 'libo3k_dsp.so'))
-sys.path.insert(0, os.path.join(ROOT, 'tools', 'octa303', 'model_v7'))
-import o3model as m
+import importlib.util
+def _load():
+    """the model's wrapper (model_v7/o3model.py) bound to the DSP reference kernel, under a name of its own: a caller
+    may have the plain model loaded as o3model too (the engine's tests)"""
+    old = os.environ.get('O3K_LIB'); os.environ['O3K_LIB'] = os.environ.get('O3K_DSP_LIB') or os.path.join(OUT, 'libo3k_dsp.so')
+    try:
+        sp = importlib.util.spec_from_file_location('o3model_dsp', os.path.join(ROOT, 'tools', 'octa303', 'model_v7', 'o3model.py'))
+        mod = importlib.util.module_from_spec(sp); sp.loader.exec_module(mod)
+    finally:
+        if old is None: del os.environ['O3K_LIB']
+        else: os.environ['O3K_LIB'] = old
+    return mod
+m = _load()
 M = m.load_laws(os.path.join(ROOT, 'tools', 'octa303', 'model_v7', 'leggi_A_v5.json'))
 L = m._lib; L.o3_get_dsat.restype = ctypes.c_longlong; L.o3_get_dbig.restype = ctypes.c_longlong
 STEP = 5088   # 16 x 318 samples: about 130 BPM sixteenths

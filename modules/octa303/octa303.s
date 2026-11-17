@@ -128,6 +128,9 @@
         .set    E_BASE,256                      | 256..1023: the engine's
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024
+        .ifndef O3_DSP                          | vFable, the 303 voice on the DSP (work in progress, tools/octa303/dsp):
+        .set    O3_DSP,0                        |   1 = the engine renders the oscillator (L) and the control step's
+        .endif                                  |   numbers (R) for the DSP insert; 0 = the engine as it is, bit for bit
         .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
         .set    O3_SKIP_STOCK,1                 |   FLEX renderer (sy_render, .Lskip); 0 = the shell before it
         .endif
@@ -2377,6 +2380,11 @@ O3_DRV_TH:
         .set    E_OVS2,  E_BASE+364     | OVDR above 25: the clip's output scale x 2 and its ceiling, both with the level
         .set    E_OVB,   E_BASE+368     | correction a(raw) (16 Nov 2026; o3k.c ov_level)
         .set    E_END,   E_BASE+372     | 372 of the engine's 768 bytes
+        .if     O3_DSP
+        .set    E_PAY,   E_BASE+640     | O3_DSP: the frame's sixteen R longs (the payloads, tools/octa303/dsp/voice/o3v.asm.in)
+        .set    E_GQ,    E_BASE+704     | O3_DSP: the gain's target of the last control step, Q28
+        .set    E_FS,    E_BASE+708     | O3_DSP: the next sample's index in its frame (the shell sets it before a call)
+        .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
         .set    E_ONE,   0x7fffffff
@@ -2785,6 +2793,46 @@ O3_DRV_TH:
         bne     \ls
         bra     .Le_end
         .endm
+        | ---- O3_DSP: the loop that feeds the DSP insert.  L = the oscillator, x << 2 as a 24-bit sample (the long's
+        | top three bytes); R = the frame's payload of that sample.  The control step runs at a frame's first sample
+        | only (o3e_render sets E_CNT); after it o3e_pay builds the sixteen payloads.  a2 = the next payload.
+        .macro  E_LOOPD wv, ls, lp
+\ls:
+        subq.l  #1,E_CNT(%a3)
+        bpl     .Lr\@
+        bsr     o3e_ctl
+\lp:
+        bsr     o3e_pay
+        lea     E_PAY(%a3),%a2
+        move.l  E_FS(%a3),%d0
+        lsl.l   #2,%d0
+        add.l   %d0,%a2
+.Lr\@:
+        E_OSC\wv
+        lsl.l   #8,%d6
+        lsl.l   #2,%d6
+        move.l  %d6,(%a1)+
+        move.l  (%a2)+,(%a1)+
+        addq.l  #1,E_FS(%a3)
+        subq.l  #1,%d7
+        bne     \ls
+        bra     .Le_end
+        .endm
+        .macro  E_PAY1 src              | one 23-bit number as two payloads: (bits 22..8), (bits 7..0); d3 += both
+        move.l  \src(%a3),%d0
+        lsr.l   #8,%d0
+        move.l  %d0,%d1
+        lsr.l   #8,%d1
+        add.l   %d1,%d3
+        swap    %d1
+        move.w  #0x8000,%d1
+        move.l  %d1,(%a0)+
+        and.l   #0xff,%d0
+        add.l   %d0,%d3
+        swap    %d0
+        move.w  #0x8000,%d0
+        move.l  %d0,(%a0)+
+        .endm
         .macro  E_LOOPX wv, dv, ls, lp  | the stage-B loop: every feature, each while its knob is not neutral
 \ls:
         subq.l  #1,E_CNT(%a3)
@@ -3151,6 +3199,19 @@ o3e_render:
         move.l  E_G2(%a3),%a4
         move.l  E_G3(%a3),%a5
         move.l  E_G4(%a3),%a6
+        .if     O3_DSP
+        lea     E_PAY(%a3),%a2          | the next payload
+        move.l  E_FS(%a3),%d0
+        bne     .Le_mid
+        clr.l   E_CNT(%a3)              | a frame's first sample: the control step, now
+        bra     .Le_dg
+.Le_mid:
+        move.l  #255,%d1                | a call in mid frame: no control step (a START waits for the next frame)
+        move.l  %d1,E_CNT(%a3)
+        lsl.l   #2,%d0
+        add.l   %d0,%a2
+.Le_dg:
+        .endif
         move.l  S_OSIN(%a3),%d0
         cmp.l   #DRV_G0,%d0
         bne     .Le_dv
@@ -3177,11 +3238,37 @@ o3e_sil:                                | silence: d7 zero samples, the state un
         E_LOOPX 1,0,o3e_x10,o3e_q10
         E_LOOPX 0,1,o3e_x01,o3e_q01
         E_LOOPX 1,1,o3e_x11,o3e_q11
+        .if     O3_DSP
+        E_LOOPD 0,o3e_d0,o3e_dp0
+        E_LOOPD 1,o3e_d1,o3e_dp1
+        .endif
 .Le_end:
         move.l  E_MACSR(%a3),%d0
         move.l  %d0,%macsr
         rts
 
+        .if     O3_DSP
+| ---- o3e_pay (O3_DSP): the frame's sixteen payloads from the control step's numbers, each a 15-bit p sent as the
+|      24-bit sample p * 256 + 128: the mark 0x7fff, g1 g2 g3 g4 kq dq gt (two each), the sum of the fourteen.
+|      Clobbers d0, d1, d3, a0.
+o3e_pay:
+        lea     E_PAY(%a3),%a0
+        move.l  #0x7fff8000,%d0
+        move.l  %d0,(%a0)+
+        moveq   #0,%d3
+        E_PAY1  E_G1
+        E_PAY1  E_G2
+        E_PAY1  E_G3
+        E_PAY1  E_G4
+        E_PAY1  E_KQ
+        E_PAY1  E_DQ
+        E_PAY1  E_GQ
+        and.l   #0x7fff,%d3
+        swap    %d3
+        move.w  #0x8000,%d3
+        move.l  %d3,(%a0)
+        rts
+        .endif
 | ---- o3e_ctl: THE CONTROL STEP (o3int.h is_note + is_step, the gate of o3k.c core()).  Called from the sample
 |      loop with MACSR 0x20 and ACC0 empty; keeps d7, a1 and a3; clobbers d0-d6, a0, a2, a4-a6 (the loop
 |      reloads its coefficients).  Reads R_* and S_GMODE / S_GATE live; writes S_GLVL under GATE 303.
@@ -3680,6 +3767,9 @@ o3e_sil:                                | silence: d7 zero samples, the state un
         moveq   #0,%d0
 .Lc_v5\@:
         lsl.l   #4,%d0                  | gq, Q28
+        .if     O3_DSP
+        move.l  %d0,E_GQ(%a3)
+        .endif
         sub.l   E_GAIN(%a3),%d0
         bpl     .Lc_v6\@
         moveq   #15,%d1
@@ -4107,10 +4197,17 @@ o3e_lsel:
 |      point after the control step with DRIV 0, with DRIV above 0
         .align  4
 o3e_ltab:
+        .if     O3_DSP                                  | every class and DRIV: the DSP's loops (the neutral voice only, so far)
+        .long   o3e_d0, o3e_d0, o3e_dp0, o3e_dp0
+        .long   o3e_d1, o3e_d1, o3e_dp1, o3e_dp1
+        .long   o3e_d0, o3e_d0, o3e_dp0, o3e_dp0
+        .long   o3e_d1, o3e_d1, o3e_dp1, o3e_dp1
+        .else
         .long   o3e_l00, o3e_l01, o3e_p00, o3e_p01      | SAW, neutral
         .long   o3e_l10, o3e_l11, o3e_p10, o3e_p11      | SQR, neutral
         .long   o3e_x00, o3e_x01, o3e_q00, o3e_q01      | SAW, stage B
         .long   o3e_x10, o3e_x11, o3e_q10, o3e_q11      | SQR, stage B
+        .endif
 
 | ---- o3e generated: tools/octa303/gen_o3e_v7.py (do not edit by hand)
 | From tools/octa303/model_v7: o3tab.s / o3tab.h (gen_tables.py from leggi_A_v5.json); code written by

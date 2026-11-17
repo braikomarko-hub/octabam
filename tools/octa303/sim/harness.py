@@ -40,7 +40,7 @@ def remix_inc(devilish=True):
     return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
             + ''.join('        .set    %s, 0\n' % f for f in hooks_flags()))
 
-LOCAL_FLAGS = {'O3_SKIP_STOCK': 1}      # octa303.s's own assembly switches (its .ifndef default), by value
+LOCAL_FLAGS = {'O3_SKIP_STOCK': 1, 'O3_DSP': 0}      # octa303.s's own assembly switches (its .ifndef default), by value
 
 def _unflag(s, local=None):
     """The .if / .else / .endif blocks on a HOOKS flag resolved as OCTA303 alone builds them (every
