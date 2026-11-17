@@ -2217,7 +2217,7 @@ o3_out:
         rts
 
 | SONDA 2 (probe branch only): one L/R pair of markers at (a1)+.  c = the call counter, i = the sample's index in
-| this call (0..15).  L long = (c & 0x7f) << 24 | i << 16 | 0xa500; R long = (0x40 | i) << 24 | (c & 0xff) << 16 | 0x3c00.
+| this call (0..15).  L long = (c & 0x1f) << 24 (headroom if VOL boosts) | i << 16 | 0xa500; R long = (0x40 | i) << 24 | (c & 0xff) << 16 | 0x3c00.
 | The low words are not zero: does the DSP take 24 bits of a sample?  R differs from L: is the path stereo up to FX1?
 | Clobbers d6 only.
 o3_sonda_smp:
@@ -2226,7 +2226,7 @@ o3_sonda_smp:
         addq.l  #1,O3_SONDA3(%a3)
         and.l   #15,%d0
         move.l  O3_SONDA(%a3),%d6
-        and.l   #0x7f,%d6
+        and.l   #0x1f,%d6
         lsl.l   #8,%d6
         or.l    %d0,%d6
         lsl.l   #8,%d6
