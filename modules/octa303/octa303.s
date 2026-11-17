@@ -128,6 +128,7 @@
         .set    E_BASE,256                      | 256..1023: the engine's
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024
+        .set    O3_SONDA,1020                   | SONDA 1: the probe's frame counter (the engine's block ends at E_END, far below)
         .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
         .set    O3_SKIP_STOCK,1                 |   FLEX renderer (sy_render, .Lskip); 0 = the shell before it
         .endif
@@ -2027,6 +2028,37 @@ o3_vrec:
         move.b  %d0,(%a2)+
         subq.l  #1,%d3
         bge     .Lvr_lp
+        | ---- SONDA 1 (probe branch only, never an image for the unit; 17 Nov 2026): the channel ColdFire -> FX1.
+        | dEVILish must be on FX1: a1 is 12 bytes past its six page-1 halfwords, the track's voice record is 24 bytes
+        | before a1.  A frame counter c lives in the state's last long; V = (c & 0x7ff) << 4.  Into the record:
+        | page 1 halfwords 6..11 := V | 0..5, page 2 halfwords 18..20 := V | 6..8, AMP halfwords 0/1/2 := 0, 0x7f00,
+        | 0x7f00 (CX OSC's override: ATK 0, HOLD INF, REL INF).  E_OUT0 writes V as this frame's sixteen samples.
+        addq.l  #1,O3_SONDA(%a3)
+        move.l  O3_SONDA(%a3),%d0
+        and.l   #0x7ff,%d0
+        lsl.l   #4,%d0
+        lea     -24(%a1),%a1            | the track's voice record
+        clr.w   (%a1)
+        move.l  #0x7f00,%d1
+        move.w  %d1,2(%a1)
+        move.w  %d1,4(%a1)
+        move.w  %d0,12(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,14(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,16(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,18(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,20(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,22(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,36(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,38(%a1)
+        addq.l  #1,%d0
+        move.w  %d0,40(%a1)
         lea     S_DFK(%a3),%a0
         movem.l (%sp),%d3/%a1-%a2
         lea     12(%sp),%sp
@@ -2399,10 +2431,16 @@ O3_DRV_TH:
         move.l  %d3,\s(%a3)
         .endm
         .macro  E_OUT0                  | o3_out's DRIV-0 path: d6 = y -> the 16-bit word to L and R.  Its two clamps are
-        asr.l   #SHIFT_OUT,%d6          | dead here and left out: y comes from the knee, |y| <= 692,192 (its largest entry),
-        lsl.l   #8,%d6                  | below 2^24, and y >> 6 <= 10,815 fits 16 bits (test_o3e_v7 checks the tables)
+        move.l  O3_SONDA(%a3),%d6       | SONDA 1: the sample is V = (c & 0x7ff) << 4, not the voice
+        and.l   #0x7ff,%d6
+        lsl.l   #4,%d6
         lsl.l   #8,%d6
-        move.l  %d6,(%a1)+
+        lsl.l   #8,%d6
+        move.l  %d6,(%a1)+              | L: V
+        moveq   #0,%d6                  | R: dEVILish's first knob as o3_vrec read it this frame (OVDR, 25 by default):
+        move.b  S_DFK(%a3),%d6          | if the frame builder did not rewrite the record every frame, this would be
+        lsl.l   #8,%d6                  | the probe's own V read back
+        lsl.l   #8,%d6
         move.l  %d6,(%a1)+
         .endm
         .macro  E_OUT1                  | DRIV above 0: o3_out itself (clobbers d0-d2, d6, a0: nothing the loop keeps)
