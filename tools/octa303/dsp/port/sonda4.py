@@ -28,9 +28,16 @@ FAM_T5 = {"voce": ((0x80000210, 0x80000410), ">", 24), "audio": ((0x800021d0, 0x
           "rilettura": ((0x80003790, 0x80003390), "<", 64)}
 FAM_B = {"voce": ((0x80000110, 0x80000310), ">", 128), "audio": ((0x80001c90, 0x80002710), ">", 672),
          "rilettura": ((0x80003190, 0x80003590), "<", 256)}
-RUNS = {"A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),
+# M, N (SONDA 5, the measure): where r0 points and what n7 holds at each call of the insert (--dsp-pcwatch at its proc,
+# payload A), and who last wrote X:$20 of that core (--dsp-watch), with the frame in two pieces (M: one trig on step 9,
+# the run ends before the next) and whole (N).  The insert's place comes from the build's own log (--buslog).
+PROC_OFF = 16                       # proc's offset in the module (init is 16 words; tools/octa303/dsp/voice/prova3.py)
+RUNS = {"M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
+        "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),
+        "A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),
         "B": dict(track=4, trigs=list(range(9, 17)), frames=1600, fam=FAM_T5, watch=False),
         "C": dict(track=1, trigs=list(range(1, 17)), frames=600, fam=FAM_B, watch=False)}
+PLACE = None
 WLINE = re.compile(r"\[\s*([0-9.]+)\] \[(0x[0-9a-f]+)\] <- (0x[0-9a-f]+|0) \((\d+)\) at pc (0x[0-9a-f]+) in (.*?)\s+i=(\d+)")
 
 
@@ -73,6 +80,10 @@ def one(name, image, project, top):
            "--main-level", "64", "--block-dump", str(dump)]
     if r_["watch"]:
         cmd += ["--watch-mem", f"{PINGW:#x},4;0x80000210,24;0x80000410,24", "--block-log", str(out / "blocchi.log")]
+    if r_.get("dsp"):
+        if PLACE is None:
+            print(f"sonda {name}: non conosco il posto dell'effetto (--buslog)"); return False
+        cmd += ["--dsp-pcwatch", f"0:{PLACE[0] + PROC_OFF:x}", "--dsp-watch", "0:X:20"]
     with (out / "port.log").open("w") as log:
         r = subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=3600)
     log = (out / "port.log").read_text()
@@ -90,8 +101,17 @@ def one(name, image, project, top):
                 for frame, w in fr:
                     data[k].setdefault(str(frame), []).append([ram, [int(x) for x in w[:n]]])
     tag = "blocchi" if name == "C" else "t5"
+
     (top / f"sonda4_{name}_{tag}.json").write_text(json.dumps(data))
     print(f"sonda 4 {name}: scritto sonda4_{name}_{tag}.json (frame: " + ", ".join(f"{k} {len(v)}" for k, v in data.items()) + ")")
+    if r_.get("dsp"):
+        keep = []; on = False
+        for l in log.split("\n"):
+            if l.startswith("dsp pcwatch") or l.startswith("dsp watch"): on = True; keep.append(l); continue
+            if on and l.startswith("             "): keep.append(l)
+            else: on = False
+        (top / f"sonda5_{name}_dsp.txt").write_text(f"effetto in P:{PLACE[0]:#x}..{PLACE[1]:#x} (carico A), proc a {PLACE[0] + PROC_OFF:#x}\n" + "\n".join(keep) + "\n")
+        print(f"sonda {name}: scritto sonda5_{name}_dsp.txt ({len(keep)} righe)")
     if r_["watch"]:
         W = [m.groups() for m in WLINE.finditer(log)]
         sig = [float(w[0]) for w in W if int(w[2], 16) == 0x3a5c and int(w[3]) == 2]
@@ -129,7 +149,12 @@ def main():
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT") or (dot.read_text().strip() if dot.exists() else None))
     ap.add_argument("--out", default=str(ROOT / "out/octa303/sonda4"))
     ap.add_argument("--only", default="A,B,C")
+    ap.add_argument("--buslog", help="make bus's log: the line 'DEVILISH  P:0x..  ..0x..' of payload A gives the insert's place")
     a = ap.parse_args()
+    global PLACE
+    if a.buslog and os.path.exists(a.buslog):
+        m = re.search(r"(?m)^\s*DEVILISH\s+P:0x([0-9a-f]+)\.\.0x([0-9a-f]+)", open(a.buslog, errors="replace").read())
+        if m: PLACE = (int(m.group(1), 16), int(m.group(2), 16))
     if not a.project:
         print("sonda 4: nessun progetto (OT_PROJECT o ~/.octabam_project)"); return 2
     if not (ROOT / "out/emu/ot_emu").exists():
