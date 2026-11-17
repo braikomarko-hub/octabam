@@ -34,7 +34,11 @@ RUNS = {"A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, wat
 WLINE = re.compile(r"\[\s*([0-9.]+)\] \[(0x[0-9a-f]+)\] <- (0x[0-9a-f]+|0) \((\d+)\) at pc (0x[0-9a-f]+) in (.*?)\s+i=(\d+)")
 
 
-def fixture(src, out, T, trigs):
+BLINE = re.compile(r"^(.) frame\s+(\d+) ch\s+\d+ core -?\d+ ram ([0-9a-f]{8})")
+KLINE = re.compile(r"kicked@([0-9.]+) done@([0-9.]+)")
+
+
+def fixture(src, out, T, trigs, solo):
     d = prepare(src, out / "RIG")
     for path in sorted(d.glob("bank*.work")):
         def mutate(data):
@@ -45,7 +49,7 @@ def fixture(src, out, T, trigs):
         otp._bank_write(d, int(path.stem[4:]), mutate, guard=False)
     spec = {"banks": "all",
             "parts": {"all": {"tracks": {str(T + 1): {"fx1": "DEVILISH", "fx2": "NONE"}}}},
-            "patterns": {"all": {"tracks": {"all": {"locks": {"all": "clear"}},
+            "patterns": {"all": {"tracks": {"all": dict({"locks": {"all": "clear"}}, **({"trigs": "clear"} if solo else {})),
                                             str(T + 1): {"trigs": trigs}}}}}
     (out / "spec.json").write_text(json.dumps(spec))
     subprocess.run([sys.executable, str(ROOT / "tools/hw/ot_spec.py"), "apply", str(d), str(out / "spec.json")], check=True)
@@ -62,13 +66,13 @@ def fixture(src, out, T, trigs):
 
 def one(name, image, project, top):
     r_ = RUNS[name]; out = top / name; shutil.rmtree(out, ignore_errors=True); out.mkdir(parents=True)
-    card = fixture(project, out, r_["track"], r_["trigs"])
+    card = fixture(project, out, r_["track"], r_["trigs"], name == "C")
     dump = out / "blocchi.dump"
     cmd = [str(ROOT / "out/emu/ot_emu"), "--image", image, "--card", str(card), "--set", "OCTABAM", "--project", "RIG",
            "--sequencer", "--internal-clock", "--frames", str(r_["frames"]), "--load-ms", "90000", "--dsp",
            "--main-level", "64", "--block-dump", str(dump)]
     if r_["watch"]:
-        cmd += ["--watch-mem", f"{PINGW:#x},4;0x80000210,24;0x80000410,24"]
+        cmd += ["--watch-mem", f"{PINGW:#x},4;0x80000210,24;0x80000410,24", "--block-log", str(out / "blocchi.log")]
     with (out / "port.log").open("w") as log:
         r = subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=3600)
     log = (out / "port.log").read_text()
@@ -101,8 +105,18 @@ def one(name, image, project, top):
         if sig:
             P = [w for w in W if int(w[1], 16) == PINGW]
             j0 = sum(1 for w in P if int(w[6]) < int(W[i0][6]))
-            for w in P[max(0, j0 - 40):j0 + 200]:
+            for w in P[max(0, j0 - 40):j0 + 400]:
                 lines.append(f"{w[0]} {w[2]} {w[4]} {w[6]}")
+        # when each block left (the port's own clock, the same as the watch's): frame, ram, kicked, done -- no words
+        lines.append("i blocchi partiti (verso frame ram partito finito), i primi 40 frame:")
+        bl = out / "blocchi.log"
+        if bl.exists():
+            want = {0x80000210, 0x80000410, 0x800021d0, 0x80002c50, 0x80003790, 0x80003390}
+            for l in bl.read_text().split("\n"):
+                m = BLINE.match(l)
+                if m and int(m.group(3), 16) in want and int(m.group(2)) <= 40:
+                    k = KLINE.search(l)
+                    lines.append(f"{m.group(1)} {m.group(2)} 0x{m.group(3)} {k.group(1) if k else '-'} {k.group(2) if k else '-'}")
         (top / "sonda4_A_scritture.txt").write_text("\n".join(lines) + "\n")
         print(f"sonda 4 A: scritto sonda4_A_scritture.txt ({len(lines)} righe)")
     return ok

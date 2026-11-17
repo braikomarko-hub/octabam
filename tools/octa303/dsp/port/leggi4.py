@@ -12,36 +12,50 @@ import leggi3
 PINGW = 0x800000e0
 
 def scritture(path):
+    """Who signed which half, when, and which half left when.  The engine reads the ping word just before it writes, so
+    'the signed half is the ping word's' holds by construction: the test is the signature's time against the time each
+    half was kicked (the port's block log, the same clock)."""
     L = open(path).read().split('\n'); print(L[0])
     cut = next(i for i, l in enumerate(L) if l.startswith('la parola del ping'))
+    cutb = next((i for i, l in enumerate(L) if l.startswith('i blocchi partiti')), len(L))
     W = [l.split(' ') for l in L[2:cut] if l]
     W = [(float(w[0]), int(w[1], 16), int(w[2], 16), int(w[3]), int(w[4], 16), ' '.join(w[5:-1]), int(w[-1])) for w in W]
     sig = [w for w in W if w[2] == 0x3a5c and w[3] == 2]
     if not sig: print('  nessuna firma nel registro'); return
     pc0 = sig[0][4]; eng = lambda w: abs(w[4] - pc0) <= 96 and w[1] != PINGW
-    print('  istruzione che scrive la firma: pc %#x; scritture del motore nel pezzo: %d; di altri: %d' % (pc0, sum(1 for w in W if eng(w)), sum(1 for w in W if not eng(w) and w[1] != PINGW)))
-    ping = None; fr = []; cur = None
-    for w in W:
-        if w[1] == PINGW:
-            ping = w[2]; cur = dict(ping=ping, t=w[0], eng=collections.Counter(), oth=collections.Counter(), after=0, sig=None, pcs=set()); fr.append(cur); continue
-        if cur is None: cur = dict(ping=None, t=w[0], eng=collections.Counter(), oth=collections.Counter(), after=0, sig=None, pcs=set()); fr.append(cur)
-        half = (w[1] - 0x80000210) // 0x200
-        if eng(w):
-            cur['eng'][half] += 1
-            if w[2] == 0x3a5c: cur['sig'] = half
-        else:
-            cur['oth'][half] += 1; cur['pcs'].add(w[4])
-            if cur['eng'][half]: cur['after'] += 1
-    print('  per ogni scrittura della parola del ping (= un frame): ping, meta firmata dal motore, scritture del motore per meta, di altri per meta, di altri DOPO il motore nella stessa meta')
-    k0 = next(i for i, f in enumerate(fr) if f['sig'] is not None)
-    for f in fr[max(0, k0 - 4):k0 + 12]:
-        print('   campione %10.1f ping %s firma nella meta %s motore %s altri %s dopo-il-motore %d' % (f['t'], f['ping'], f['sig'], dict(f['eng']), dict(f['oth']), f['after']))
-    signed = [f for f in fr if f['sig'] is not None and f['ping'] is not None]
-    bad = [f for f in signed if f['sig'] != f['ping']]
-    print('  frame in cui il motore firma: %d; in cui la meta firmata NON e quella della parola del ping: %d; in cui altri scrivono dopo il motore: %d' % (len(signed), len(bad), sum(1 for f in signed if f['after'])))
-    P = [l.split(' ') for l in L[cut + 1:] if l]
+    half = lambda a: (a - 0x80000210) // 0x200
+    rec = [w for w in W if w[1] != PINGW]
+    print('  istruzione che scrive la firma: pc %#x; scritture nel foglietto: del motore %d, di altri %d (pc degli altri: %s)' % (
+        pc0, sum(1 for w in rec if eng(w)), sum(1 for w in rec if not eng(w)), sorted({hex(w[4]) for w in rec if not eng(w)})[:8]))
+    P = [l.split(' ') for l in L[cut + 1:cutb] if l]
     v = [int(p[1], 16) for p in P]; rep = [i for i in range(1, len(v)) if v[i] == v[i - 1]]
-    print('  parola del ping: %d scritture nel pezzo, valori %s; ripetizioni (stesso valore due volte di fila) ai posti %s; pc %s' % (len(v), sorted(set(v)), rep[:10], sorted({p[2] for p in P})[:6]))
+    print('  parola del ping: %d scritture, valori %s; stesso valore due volte di fila ai posti %s (campioni %s); pc %s' % (
+        len(v), sorted(set(v)), rep[:10], [P[i][0] for i in rep[:10]], sorted({p[2] for p in P})[:6]))
+    B = [l.split(' ') for l in L[cutb + 1:] if l]
+    K = [(int(b[1]), int(b[2], 16), float(b[3]), float(b[4])) for b in B if b[0] == '>' and b[3] != '-' and int(b[2], 16) in (0x80000210, 0x80000410)]
+    if not K: print('  nessun tempo di partenza dei blocchi nel registro: H1/H2/H5 non si possono distinguere'); return
+    print('  per ogni foglietto partito: frame, meta, campione di partenza; ultima firma del motore in quella meta prima della partenza; scritture di altri alla casella della firma dopo quella firma e prima della partenza; prima firma del motore DOPO la partenza')
+    prev = 0.0; esito = collections.Counter(); tmax = max(w[0] for w in rec)
+    for fr, ram, kick, done in sorted(K, key=lambda k: k[2]):
+        if kick > tmax: break                    # past the piece of the write log that was kept
+        h = half(ram)
+        mine = [w for w in sig if half(w[1]) == h and w[0] <= kick]
+        last = mine[-1][0] if mine else None
+        fresh = last is not None and last > prev
+        oth = [w for w in rec if not eng(w) and half(w[1]) == h and (w[1] - 0x80000210) % 0x200 in (14, 16) and last is not None and last < w[0] <= kick]
+        nxt = next((w[0] for w in sig if w[0] > kick), None)
+        other = [w for w in sig if half(w[1]) != h and prev < w[0] <= kick]
+        if fresh and not oth: e = 'firmato in tempo'
+        elif fresh and oth: e = 'H2: riscritto da altri dopo la firma'
+        elif other: e = 'H1: in questo frame il motore ha firmato l ALTRA meta'
+        elif nxt is not None and nxt - kick < 16: e = 'H5: firmato dopo la partenza'
+        else: e = 'nessuna firma del motore prima della partenza'
+        esito[e] += 1
+        if fr <= 12: print('   frame %3d meta %d partito %.1f; ultima firma %s; altri dopo %d; firma dopo la partenza %s -> %s' % (fr, h, kick, last, len(oth), nxt, e))
+        prev = kick
+    print('  esiti sui foglietti partiti nel pezzo:', dict(esito))
+    hs = [half(k[1]) for k in sorted(K, key=lambda k: k[0])]
+    print('  meta partite nei primi frame:', hs[:16], '; ripetizioni ai posti', [i for i in range(1, len(hs)) if hs[i] == hs[i - 1]][:8])
 
 def trova(D):
     """the track's place in payload B's blocks: the audio offset whose right channel carries the mark, the record
@@ -75,6 +89,8 @@ def main(d):
         if not os.path.exists(p): print('== corsa %s: manca %s' % (name, p)); rc = 1; continue
         print('== corsa %s (T5)%s' % (name, ', prima nota al passo 9' if name == 'B' else ''))
         leggi3.main(p)
+        D = json.load(open(p)); fr = sorted(D['voce'], key=int)[:30]
+        print('  meta del foglietto nei primi 30 frame:', ''.join('0' if D['voce'][f][0][0] == 0x80000210 else '1' for f in fr))
     p = os.path.join(d, 'sonda4_A_scritture.txt')
     if os.path.exists(p): print('== corsa A, il registro delle scritture'); scritture(p)
     else: print('== manca', p); rc = 1
