@@ -5,6 +5,7 @@ from grid import *
 WORK=OUT
 DA=os.environ.get('O3_DSP_ASM') or os.path.join(os.environ.get('O3_DSP56300', os.path.join(ROOT,'vendor','dsp56300')),'build','source','dsp_host','dsp_asm')
 HOST=os.path.join(OUT,'o3host')
+AB=0x5000                          # the bench's audio block (o3host AUDIO); the unit's is X:0
 G=8387936; KN=97; PTP=0x1800; ORG=0x1000; CV=4260619; VOL=0x400000      # the AMP VOL word of the tests: 64
 def ref(e):
     n=e['nsamp']; C=np.zeros((n//16+1,9),np.int32); X=np.zeros(n,np.int32); L.o3_set_dvol(VOL)
@@ -15,7 +16,7 @@ def ref(e):
 def send(p):                      # a 15-bit payload through the gain ahead of FX1
     assert 0<=p<32768; return (((p<<8)|0x80)*G+(1<<22))>>23
 def build(gh):
-    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PT@',str(PTP)).replace('@PTN@',str(PTP+KN+1)).replace('@CV@',str(CV))
+    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PT@',str(PTP)).replace('@PTN@',str(PTP+KN+1)).replace('@CV@',str(CV)).replace('@AB@',str(AB))
     open(WORK+'/o3v.asm','w').write(src)
     r=subprocess.run([DA,'-in',WORK+'/o3v.asm','-org','%x'%ORG,'-out',WORK+'/o3v.bin','-list'],capture_output=True,text=True)
     open(WORK+'/o3v.lst','w').write(r.stdout+r.stderr)
@@ -93,4 +94,33 @@ if __name__=='__main__':
     F4=F.copy(); F4[:,32]|=0x7f; o4,_,_=run_host(F4,PROC,ORG)
     print('byte basso della parola del foglietto sporco: campioni diversi',int((o4[:,0::2].reshape(-1)!=y[:o4.shape[0]*16]).sum()))
     ok=not any(FAIL) and bool((o[200:203]==0).all()) and bool((o3[300]==0).all()) and bool((o5[400:420]==F5[400:420,:32]).all()) and int((o4[:,0::2].reshape(-1)!=y[:o4.shape[0]*16]).sum())==0
+    # ---- the frame in pieces (SONDA 4): the dispatcher calls the insert once a piece.  Any cut k = 1..15, a cut that changes
+    #      every frame, refused frames among them, an unsigned stretch: the output must be the whole call's, word for word,
+    #      and nothing may be written outside the block's 32 words.
+    import re as _re
+    def outside(msg): return int(_re.search(r'outside the audio block (\d+)', msg).group(1))
+    r=np.random.default_rng(11); nf=1500
+    C=np.zeros((nf,10),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
+    C[:,0:4]=r.integers(1,int(0.98*2**23),(nf,4)); C[:,4]=r.integers(0,120*65536,nf); C[:,5]=r.integers(1,2**23,nf)
+    C[:,6]=r.integers(0,2**23,nf); C[:,7]=r.integers(0,2**15,nf)*2; C[:,8]=GH
+    for f in range(1,nf):
+        if f%7: C[f]=C[f-1]
+    X=r.integers(-2**22,2**22,16*nf).astype(np.int32)
+    F0=frames(C,X)
+    for f in r.integers(20,nf-20,60): F0[f,1]=send(0x1234)            # a refused frame (the mark)
+    for f in r.integers(20,nf-20,30): F0[f,31]^=0x4000                 # a refused frame (the sum)
+    F0[700:760,33]=0                                                   # sixty frames without the signature
+    whole,_,msg0=run_host(F0,proc,init); ow=outside(msg0)
+    pz_bad=0; pz_out=ow; rows=[]
+    for k in list(range(1,16))+['a caso']:
+        F=F0.copy()
+        F[:,51]=k if k!='a caso' else r.integers(0,16,nf)
+        o,ni,msg=run_host(F,proc,init)
+        d=int((o!=whole).any(axis=1).sum()); pz_bad+=d; pz_out+=outside(msg); rows.append((k,d,outside(msg),int(ni.max())))
+    print('frame in pezzi: taglio, frame diversi dalla chiamata intera, frame con scritture fuori dal blocco, istruzioni a frame max')
+    print('   '+'  '.join('%s:%d/%d/%d'%r_ for r_ in rows))
+    print('frame in pezzi: %d frame per taglio; rifiutati fra questi: %d; diversi in tutto %d; scritture fuori dal blocco in tutto %d (chiamata intera: %d)'%(nf,int((whole[:,0::2]==0).all(axis=1).sum()),pz_bad,pz_out,ow))
+    FAIL.append(pz_bad); FAIL.append(pz_out)
+    # a later piece with nothing latched (the first call the insert ever gets is a second piece): silence, not noise
+    F=F0[:3].copy(); F[:,51]=0
     print('ESITO prova3:', 'PASS' if ok else 'FAIL'); sys.exit(0 if ok else 1)

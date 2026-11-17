@@ -8,7 +8,7 @@ inside the frames; every START on a frame's first sample).  Checked, sample for 
   2. R: the sixteen payloads of every frame decode to the reference's control numbers of that frame;
   3. the chain: those L / R frames into the assembled insert on the emulator (o3host) == the reference's output.
 Run tools/octa303/dsp/build.sh first.  Thresholds: 0 differences, written before the run (the vFable diary)."""
-import os, sys, random, collections, ctypes, numpy as np
+import os, sys, re, random, collections, ctypes, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..', '..'))
 sys.path.insert(0, os.path.join(ROOT, 'tools', 'octa303', 'sim')); sys.path.insert(0, os.path.join(HERE, '..', 'voice'))
 import test_o3e_v7 as T7
@@ -121,7 +121,7 @@ def shell_chain(args, built):
     fld = lambda n: T7.s32(m.r(st + C[n], 'l'))
     r.machine(T7.T, (wave, gsel, 64, 0, 0, 64)); r.voice(T7.T, True, 3); r.path(3, '/AUDIO/x.wav')
     rec = VREC + 64 * T7.T                              # the mock's ping 0
-    t = None; L = []; R = []; retrig = []; goff = []; gprev = 1; acc0 = None; pnote = None; words_rec = []; bad = 0
+    t = None; L = []; R = []; retrig = []; goff = []; gprev = 1; acc0 = None; pnote = None; words_rec = []; bad = 0; cuts = []
     for f in range(nfr):
         start = f % 48 == 2
         acc = (0, 120)[(f // 48) % 2]
@@ -140,6 +140,7 @@ def shell_chain(args, built):
             gprev = fld('S_GATE') if not sb else 1
             L += l; R += rr; t += b - a
         if t:
+            cuts.append(sp if sp < 16 else 0)
             hw = [m.r(rec + 2 * i, 'w') for i in range(10)]
             bad += hw[:5] != [0, 0x7f00, 0x7f00, 0x7f00, 0x4000] or hw[7:10] != [0x3a5c, 0x6517, vol]
             words_rec.append(hw)
@@ -157,9 +158,23 @@ def shell_chain(args, built):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
         hw = words_rec[len(words_rec) - nf + f]
         for i in range(4): F[f, 32 + i] = hw[6 + i] << 8
-    out, ni, _ = P3.run_host(F, built[0], P3.ORG)
+    # o3_dquiet: the first O3_DQN frames after the transport is first seen running go out as zeros, L and R (the insert
+    # refuses them: silence, its gain restarts).  The bench gets every frame in the pieces the shell rendered it in.
+    DQN = C['O3_DQN']
+    zq = sum(1 for i in range(16 * DQN) if (L[i] >> 8) or (R[i] >> 8))
+    d1 = sum(1 for i in range(16 * DQN, n) if Lg[i] != int(X[i]))
+    for f in range(nf): F[f, 51] = cuts[len(cuts) - nf + f]
+    out, ni, msg = P3.run_host(F, built[0], P3.ORG)
     yl = out[:, 0::2].reshape(-1)
-    d3 = int(sum(1 for i in range(n) if int(yl[i]) != y[i]))
+    ip = lambda a_: a_.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
+    LD.o3d_new.restype = ctypes.c_void_p; dst = ctypes.c_void_p(LD.o3d_new())
+    kn_ = np.ascontiguousarray(MD.KNEG, np.int32); kp_ = np.ascontiguousarray(MD.KPOS, np.int32); ye = np.zeros(n, np.int32)
+    for f in range(nf):
+        if f < DQN: LD.o3d_bad(dst); continue
+        Cf = np.array([int(v) for v in Cm[f][:7]] + [int(Cm[f][7]), int(Cm[f][8]), vol << 8], np.int32)
+        Xf = np.ascontiguousarray(X[16 * f:16 * f + 16], np.int32); yo = np.zeros(16, np.int32)
+        LD.o3d_frame(dst, ip(Cf), ip(Xf), ip(yo), ip(kn_), ip(kp_)); ye[16 * f:16 * f + 16] = yo
+    d3 = int(sum(1 for i in range(n) if int(yl[i]) != int(ye[i]))) + zq + int(re.search(r'outside the audio block (\d+)', msg).group(1))
     return s['name'], n, bad, d1, d3, len(retrig), len(goff)
 
 def shell_fallback(args):

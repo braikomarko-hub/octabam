@@ -416,6 +416,7 @@ sy_render:
         .if     O3_DSP
         move.l  60(%sp),%d0             | the call's first sample in its frame
         move.l  %d0,E_FS(%a3)
+        move.l  %a1,E_ZP(%a3)           | and where its samples go (o3_dquiet)
         .endif
 
         bsr     o3e_render              | THE ENGINE: n = d7 samples into (a1)+, a3 = the track's state
@@ -423,6 +424,8 @@ sy_render:
         .if     O3_DSP
         tst.l   E_DSPW(%a3)
         beq     .Lno_dw
+        move.l  64(%sp),%d2             | the call's end in its frame
+        bsr     o3_dquiet
         move.l  52(%sp),%d2
         bsr     o3_dwrite
 .Lno_dw:
@@ -2082,6 +2085,49 @@ o3_drbase:
         lea     VREC,%a1
         add.l   %d0,%a1
         rts
+| ---- o3_dquiet (O3_DSP; d2 = the call's end in its frame, a3 = state), after a call that rendered for the insert:
+|      the call's samples are zeroed, L and R, when the insert must not be given them.
+|      1. For O3_DQN frames from the frame in which the sequencer is first seen running (TRANSPORT becomes 1; a track's
+|         first call too, its state being 0).  At a transport start the frame builder passes twice over one ping half
+|         and the voice record leaves without the signature just written (SONDA 4, the port, 17 Nov 2026): the insert
+|         then lets the audio through untouched, and that audio must not be the payloads.
+|      2. While no control step has made the payloads (E_PAYOK): a START in mid frame waits for the next frame, and
+|         the oscillator's resting level must not go out with empty payloads.
+|      Zeros with the signature are a refused frame for the insert (silence, its gain restarts); without it, silence.
+|      Clobbers d0, d1, a1.
+        .set    O3_DQN, 3
+o3_dquiet:
+        move.l  TRANSPORT,%d0
+        cmp.l   E_TRW(%a3),%d0
+        beq     .Ldq_same
+        move.l  %d0,E_TRW(%a3)
+        moveq   #1,%d1
+        cmp.l   %d1,%d0
+        bne     .Ldq_same
+        moveq   #O3_DQN,%d1
+        move.l  %d1,E_DSPZ(%a3)
+.Ldq_same:
+        tst.l   E_DSPZ(%a3)
+        beq     .Ldq_pay
+        moveq   #16,%d0
+        cmp.l   %d0,%d2                 | the frame's last call: one frame less to go
+        bne     .Ldq_zero
+        subq.l  #1,E_DSPZ(%a3)
+        bra     .Ldq_zero
+.Ldq_pay:
+        tst.l   E_PAYOK(%a3)
+        bne     .Ldq_x
+.Ldq_zero:
+        move.l  E_ZP(%a3),%a1
+        move.l  o3_pn,%d0               | the samples this call rendered
+        beq     .Ldq_x
+.Ldq_l:
+        clr.l   (%a1)+
+        clr.l   (%a1)+
+        subq.l  #1,%d0
+        bne     .Ldq_l
+.Ldq_x:
+        rts
 | ---- o3_dwrite (O3_DSP; d2 = track, a3 = state), after a call that rendered: the voice record for the insert.
 |      AMP ATK / HOLD / REL := 0, 0x7f00, 0x7f00 (CX OSC's override) and VOL := 0x7f00, BAL := 0x4000: the gain ahead
 |      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
@@ -2467,6 +2513,10 @@ O3_DRV_TH:
         .set    E_UVOL,  E_BASE+712     | O3_DSP: the track's own AMP VOL halfword, as the frame builder wrote it
         .set    E_DSPW,  E_BASE+716     | O3_DSP: this call: 1 = the insert is on FX1 (the shell, o3_drec)
         .set    E_DSPON, E_BASE+720     | O3_DSP: 1 = the loops in force are the DSP's
+        .set    E_TRW,   E_BASE+724     | O3_DSP: TRANSPORT as the last call with the insert saw it (o3_dquiet)
+        .set    E_DSPZ,  E_BASE+728     | O3_DSP: frames still to be sent as zeros
+        .set    E_PAYOK, E_BASE+732     | O3_DSP: 1 = a control step has made the payloads since the DSP's loops came
+        .set    E_ZP,    E_BASE+736     | O3_DSP: where this call's samples went
         .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
@@ -3294,6 +3344,7 @@ o3e_render:
         cmp.l   E_DSPON(%a3),%d0
         beq     .Le_dm
         move.l  %d0,E_DSPON(%a3)
+        clr.l   E_PAYOK(%a3)            | the payloads are not this voice's until its next control step
         bsr     o3e_lsel
 .Le_dm:
         tst.l   E_DSPON(%a3)
@@ -3350,6 +3401,8 @@ o3e_sil:                                | silence: d7 zero samples, the state un
 |      24-bit sample p * 256 + 128: the mark 0x7fff, g1 g2 g3 g4 kq dq gt (two each), the sum of the fourteen.
 |      Clobbers d0, d1, d3, a0.
 o3e_pay:
+        moveq   #1,%d0
+        move.l  %d0,E_PAYOK(%a3)
         lea     E_PAY(%a3),%a0
         move.l  #0x7fff8000,%d0
         move.l  %d0,(%a0)+

@@ -1,7 +1,8 @@
 ; o3v -- OCTA303 vFable, the 303 voice on the DSP (17 Nov 2026, written by Claude): the neutral voice's per-sample
 ; part as an FX insert.  NOT a module of an image yet: it runs on tools/octa303/dsp/host/o3host.cpp against the
 ; reference o3d_sample (tools/octa303/dsp/ref/o3k.c).
-; In:  x:(r0) = 16 interleaved L/R samples.  L = the oscillator (x << 2, through the gain ahead of FX1).
+; In:  x:(r0) = this call's n7 samples, interleaved L/R, in the frame's block of 16 (at x:@AB@; a frame may come in
+;      two calls, see o3v_first).  L = the oscillator (x << 2, through the gain ahead of FX1).
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
 ;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
@@ -12,7 +13,7 @@
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 6 the output's gain (VOL^2); 7,8 the gain (48 bits); 9,$a its step;
-; $b.. g1 g2 g3 g4 kq dq gh gv gt; $20..$2f the decoded payloads.
+; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused); $20..$2f the decoded payloads.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
 ; agu_check.py checks the listing).  The ceiling's two tables (98 entries each) are in P.
 ; CYCLES_FORWARD_BRANCHES
@@ -48,6 +49,24 @@ proc:
         move    #>$651700,x0
         cmp     x0,a
         bne     o3v_pass
+        move    r0,b                            ; the frame's first piece starts the audio block; a later piece does not
+        move    #>@AB@,x0
+        cmp     x0,b
+        beq     o3v_first
+; ---- a later piece of the frame (the packer hands a track over in two pieces, [0,s) and [s,16), and the dispatcher
+;      calls the insert once a piece: n7 = the piece's samples, r0 moved on in the same block; SONDA 4, 17 Nov 2026).
+;      The first piece's own output has overwritten its payloads: nothing is decoded here, the numbers, the gain's step
+;      and VOL^2 are the ones the first piece latched.
+        move    r7,r2
+        move    #>$14,n2
+        clr     a
+        clr     b
+        move    (r2)+n2
+        move    x:(r2),b
+        tst     b
+        bne     o3v_run                         ; the frame was taken
+        bra     o3v_mz                          ; it was refused: this piece is silent too (the gain is already 0)
+o3v_first:
         move    (r1)+
         move    x:(r1),x0                       ; AMP VOL
         mpy     x0,x0,a
@@ -134,6 +153,13 @@ o3v_asm:
         move    a1,x:(r2)+
         move    a0,x0
         move    x0,x:(r2)
+        move    #>$a,n2
+        move    #>1,x0
+        clr     b
+        move    (r2)+n2                         ; r2 = $14, the frame's verdict
+        move    x0,x:(r2)                       ; 1 = taken: a later piece of this frame runs on these numbers
+o3v_run:
+        move    #>7,n2
         move    #>$b,n5
         move    r7,r2
         move    r7,r5
@@ -317,7 +343,14 @@ o3v_bad:
         do      #4,o3v_gz                       ; the gain and its step: the voice ramps in from 0 afterwards
         move    a,x:(r2)+
 o3v_gz:
-        do      #32,o3v_mute
+        move    #>9,n2
+        clr     b
+        clr     a
+        move    (r2)+n2                         ; r2 = $14
+        move    a,x:(r2)                        ; 0 = refused, for the frame's later pieces
+o3v_mz:
+        do      n7,o3v_mute                     ; this call's samples, no word more
+        move    a,x:(r0)+
         move    a,x:(r0)+
 o3v_mute:
         rts

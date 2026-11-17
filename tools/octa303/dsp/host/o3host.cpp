@@ -54,7 +54,8 @@ int main(int argc, char** argv) {
         // (what SONDA 4's run B showed under the port, 17 Nov 2026); 0 = one call of 16 samples.  A guard word after the
         // block tells a call that writes past it.
         const int k = (w[51] >= 1 && w[51] <= 15) ? w[51] : 0;
-        dsp.memWrite(MemArea_X, AUDIO + 32, 0x123456);
+        for (int g = 0; g < 48; ++g) dsp.memWrite(MemArea_X, AUDIO + 32 + g, 0x123456 + g);      // the unit's X:$20..$4f is the stock code's
+        for (int g = 1; g <= 16; ++g) dsp.memWrite(MemArea_X, AUDIO - g, 0x654321 + g);
         dsp.regs().r[0].var = AUDIO; dsp.regs().r[6].var = PARAMS; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = k ? k : 16;
         if (!runToRts(dsp, proc, n)) { fprintf(stderr, "proc did not return (frame %zu)\n", o / FR); return 1; }
         if (k) {
@@ -63,12 +64,15 @@ int main(int argc, char** argv) {
             if (!runToRts(dsp, proc, n2)) { fprintf(stderr, "proc did not return (frame %zu, second piece)\n", o / FR); return 1; }
             n += n2;
         }
-        if ((mem.get(MemArea_X, AUDIO + 32) & 0xffffff) != 0x123456) ++over;
+        { bool hit = false;
+          for (int g = 0; g < 48; ++g) hit |= (mem.get(MemArea_X, AUDIO + 32 + g) & 0xffffff) != (TWord)(0x123456 + g);
+          for (int g = 1; g <= 16; ++g) hit |= (mem.get(MemArea_X, AUDIO - g) & 0xffffff) != (TWord)(0x654321 + g);
+          if (hit) ++over; }
         if (n > mx) mx = n;
         int32_t out[33];
         for (int k = 0; k < 32; ++k) { TWord v = mem.get(MemArea_X, AUDIO + k) & 0xffffff; out[k] = (int32_t)(v << 8) >> 8; }
         out[32] = (int32_t)n; fwrite(out, 4, 33, fo);
     }
-    fclose(fo); printf("frames %zu, max instructions per frame %llu, frames written past the audio block %zu\n", in.size() / FR, (unsigned long long)mx, over);
+    fclose(fo); printf("frames %zu, max instructions per frame %llu, frames written outside the audio block %zu\n", in.size() / FR, (unsigned long long)mx, over);
     return 0;
 }

@@ -32,7 +32,13 @@ FAM_B = {"voce": ((0x80000110, 0x80000310), ">", 128), "audio": ((0x80001c90, 0x
 # payload A), and who last wrote X:$20 of that core (--dsp-watch), with the frame in two pieces (M: one trig on step 9,
 # the run ends before the next) and whole (N).  The insert's place comes from the build's own log (--buslog).
 PROC_OFF = 16                       # proc's offset in the module (init is 16 words; tools/octa303/dsp/voice/prova3.py)
-RUNS = {"M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
+# D (SONDA 5): STOP and PLAY again while the track plays, twice (the second time after a double STOP = rewound).  STOP is
+# the stock key handler called as main (tools/verify/verify_stems.py: KEY_STOP, with its gate byte poked), PLAY the
+# stock transport routine's start case (tools/emu/emu_frames.py FW_TRANSPORT) -- the port's own way of starting.
+KEY_STOP, STOP_GATE, FW_TRANSPORT, TRANSPORT = 0x4000a1e0, 0x80000029, 0x4009b964, 0x800065b8
+RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, watch=True,
+                  at=[(500, KEY_STOP), (800, FW_TRANSPORT), (1100, KEY_STOP), (1103, KEY_STOP), (1300, FW_TRANSPORT)]),
+        "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
         "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),
         "A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),
         "B": dict(track=4, trigs=list(range(9, 17)), frames=1600, fam=FAM_T5, watch=False),
@@ -79,7 +85,9 @@ def one(name, image, project, top):
            "--sequencer", "--internal-clock", "--frames", str(r_["frames"]), "--load-ms", "90000", "--dsp",
            "--main-level", "64", "--block-dump", str(dump)]
     if r_["watch"]:
-        cmd += ["--watch-mem", f"{PINGW:#x},4;0x80000210,24;0x80000410,24", "--block-log", str(out / "blocchi.log")]
+        cmd += ["--watch-mem", f"{PINGW:#x},4;0x80000210,24;0x80000410,24;{TRANSPORT:#x},4", "--block-log", str(out / "blocchi.log")]
+    if r_.get("at"):
+        cmd += ["--at", ",".join(f"{f}:0x{a_:x}:0" for f, a_ in r_["at"]), "--poke", f"0x{STOP_GATE:x}=1"]
     if r_.get("dsp"):
         if PLACE is None:
             print(f"sonda {name}: non conosco il posto dell'effetto (--buslog)"); return False
@@ -134,11 +142,17 @@ def one(name, image, project, top):
             want = {0x80000210, 0x80000410, 0x800021d0, 0x80002c50, 0x80003790, 0x80003390}
             for l in bl.read_text().split("\n"):
                 m = BLINE.match(l)
-                if m and int(m.group(3), 16) in want and int(m.group(2)) <= 40:
+                if m and int(m.group(3), 16) in want and (int(m.group(2)) <= 40 or name == "D"):
                     k = KLINE.search(l)
                     lines.append(f"{m.group(1)} {m.group(2)} 0x{m.group(3)} {k.group(1) if k else '-'} {k.group(2) if k else '-'}")
-        (top / "sonda4_A_scritture.txt").write_text("\n".join(lines) + "\n")
-        print(f"sonda 4 A: scritto sonda4_A_scritture.txt ({len(lines)} righe)")
+        T = [w for w in W if int(w[1], 16) == TRANSPORT]
+        lines.append("la parola del trasporto, ogni scrittura (campione valore pc istruzione):")
+        lines += [f"{w[0]} {w[2]} {w[4]} {w[6]}" for w in T]
+        Pall = [w for w in W if int(w[1], 16) == PINGW]
+        lines.append("la parola del ping: ogni volta che ha lo stesso valore due volte di fila (numero della scrittura, campione, valore):")
+        lines += [f"{i} {Pall[i][0]} {Pall[i][2]}" for i in range(1, len(Pall)) if Pall[i][2] == Pall[i - 1][2]]
+        (top / f"sonda4_{name}_scritture.txt").write_text("\n".join(lines) + "\n")
+        print(f"sonda 4 {name}: scritto sonda4_{name}_scritture.txt ({len(lines)} righe)")
     return ok
 
 
