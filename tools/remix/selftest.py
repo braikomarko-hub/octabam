@@ -1070,7 +1070,9 @@ def main():
              # DISTORX on SPATIALIZER's id, dEVILish on PHASER's, dB666 on EQUALIZER's; their DSP words come
              # from the others the remix does not list (ACIDV91: no ATOMIZER, no demand loader)
              # FET76 on a new id; FLANGER given up to join the two runs (its 289 words)
-             "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS", "PLATE REV", "SPRING REV"),
+             # vFable, 17 Nov 2026: COMPRESSOR and LO-FI given up too (dEVILish's DSP half is the 303 voice's filter)
+             "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS", "PLATE REV", "SPRING REV",
+                           "COMPRESSOR", "LO-FI"),
              "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
              "ext-probe": ("EQUALIZER",),   # EXTPROBE takes EQUALIZER's id
              "stock-meter-a": ("PHASER",), "stock-meter-b": ("SPATIALIZER",),   # LOAD METER's DSP half in the given-up effect's words
