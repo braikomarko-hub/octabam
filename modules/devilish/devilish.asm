@@ -16,7 +16,7 @@
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 6 the output's gain (VOL^2); 7,8 the gain (48 bits); 9,$a its step;
-; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused); $20..$2f the decoded payloads.
+; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched); $20..$2f the decoded payloads.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
 ; agu_check.py checks the listing).  The ceiling's two tables (98 entries each) are in P.
 ; CYCLES_FORWARD_BRANCHES
@@ -40,6 +40,9 @@ proc:
         move    #>$ffffff,m3
         move    #>$ffffff,m4
         move    #>$ffffff,m5
+        move    n7,a                            ; (a call of no samples: the dispatcher skips it; a do of 0 would not)
+        tst     a
+        beq     o3v_pass
         move    r6,r1
         move    r7,r2
         move    #>6,n2
@@ -47,11 +50,11 @@ proc:
         move    x:(r1)+,a
         move    #>$3a5c00,x0
         cmp     x0,a
-        bne     o3v_pass                        ; not an OCTA-303 track: nothing is touched
+        bne     o3v_uns                         ; not an OCTA-303 track: nothing is touched
         move    x:(r1),a
         move    #>$651700,x0
         cmp     x0,a
-        bne     o3v_pass
+        bne     o3v_uns
         move    r0,b                            ; the frame's first piece starts the audio block; a later piece does not
         move    #>0,x0
         cmp     x0,b
@@ -66,9 +69,12 @@ proc:
         clr     b
         move    (r2)+n2
         move    x:(r2),b
-        tst     b
-        bne     o3v_run                         ; the frame was taken
-        bra     o3v_mz                          ; it was refused: this piece is silent too (the gain is already 0)
+        move    #>1,x0
+        cmp     x0,b
+        beq     o3v_run                         ; the frame was taken (1)
+        bra     o3v_mz                          ; refused (0): this piece is silent too, the gain is already 0.  Passed
+                                                ; untouched (2) by a first piece that had no signature: the pieces' records
+                                                ; disagree (each piece has its own r6, SONDA 5M), silence
 o3v_first:
         move    (r1)+
         move    x:(r1),x0                       ; AMP VOL
@@ -336,6 +342,27 @@ o3v_sgn:
         move    x0,x:(r0)+
 o3v_end:
 o3v_pass:
+        rts
+; ---- no signature in this piece's record.  A first piece leaves the audio as it came and says so (2); a later piece
+;      does the same only after such a first piece: after a taken or a refused one the records disagree, and what is
+;      in the block is the engine's (payloads in R): silence.
+o3v_uns:
+        move    r7,r2
+        move    #>$14,n2
+        move    r0,b
+        move    #>0,x0
+        move    (r2)+n2
+        cmp     x0,b
+        bne     o3v_ulat
+        move    #>2,x0
+        move    x0,x:(r2)
+        rts
+o3v_ulat:
+        move    x:(r2),b
+        move    #>2,x0
+        clr     a
+        cmp     x0,b
+        bne     o3v_mz
         rts
 o3v_bad:
         move    #>7,n2

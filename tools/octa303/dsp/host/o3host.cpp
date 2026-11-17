@@ -15,7 +15,15 @@
 #include "dsp56kEmu/peripherals.h"
 using namespace dsp56k;
 class AllowAll : public IMemoryValidator { public: bool memValidateAccess(EMemArea, TWord, bool) const override { return true; } };
-static const TWord SENTINEL = 0x03f000, AUDIO = 0x5000, PARAMS = 0x5100, STATE = 0x4000;
+static const TWord SENTINEL = 0x03f000, AUDIO = 0x5000, PARAMS = 0x5100, PARAMS2 = 0x5180, STATE = 0x4000;
+// what a call must not lean on: the registers an insert may use arrive with anything in them (m1..m5 not linear, as at init)
+static void scramble(DSP& dsp) {
+    static uint32_t z = 0x2545f491;
+    auto nx = [&]() { z ^= z << 13; z ^= z >> 17; z ^= z << 5; return (TWord)(z & 0xffffff); };
+    for (int q = 1; q <= 5; ++q) { dsp.regs().r[q].var = nx(); dsp.regs().n[q].var = nx(); dsp.regs().m[q].var = 0x00000f; }
+    dsp.regs().x.var = ((uint64_t)nx() << 24) | nx(); dsp.regs().y.var = ((uint64_t)nx() << 24) | nx();
+    dsp.regs().a.var = ((uint64_t)nx() << 24) | nx(); dsp.regs().b.var = ((uint64_t)nx() << 24) | nx();
+}
 static bool runToRts(DSP& dsp, TWord pc, uint64_t& n) {
     dsp.setPC(SENTINEL); dsp.jsr(pc);
     const uint64_t i0 = dsp.getInstructionCounter();
@@ -56,11 +64,18 @@ int main(int argc, char** argv) {
         const int k = (w[51] >= 1 && w[51] <= 15) ? w[51] : 0;
         for (int g = 0; g < 48; ++g) dsp.memWrite(MemArea_X, AUDIO + 32 + g, 0x123456 + g);      // the unit's X:$20..$4f is the stock code's
         for (int g = 1; g <= 16; ++g) dsp.memWrite(MemArea_X, AUDIO - g, 0x654321 + g);
+        scramble(dsp);
         dsp.regs().r[0].var = AUDIO; dsp.regs().r[6].var = PARAMS; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = k ? k : 16;
         if (!runToRts(dsp, proc, n)) { fprintf(stderr, "proc did not return (frame %zu)\n", o / FR); return 1; }
         if (k) {
             uint64_t n2 = 0;
-            dsp.regs().r[0].var = AUDIO + 2 * k; dsp.regs().r[6].var = PARAMS; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = 16 - k;
+            // each piece has its own parameter block on the unit (r6 = $263, $2e3, $363 in turn; SONDA 5M): the second
+            // piece reads PARAMS2, a copy -- w[50] = 1: its signature cleared; 2: its signature set whatever the first's is
+            for (int q = 0; q < 20; ++q) dsp.memWrite(MemArea_X, PARAMS2 + q, (TWord)w[32 + q] & 0xffffff);
+            if (w[50] == 1) { dsp.memWrite(MemArea_X, PARAMS2 + 1, 0); dsp.memWrite(MemArea_X, PARAMS2 + 2, 0); }
+            if (w[50] == 2) { dsp.memWrite(MemArea_X, PARAMS2 + 1, 0x3a5c00); dsp.memWrite(MemArea_X, PARAMS2 + 2, 0x651700); }
+            scramble(dsp);
+            dsp.regs().r[0].var = AUDIO + 2 * k; dsp.regs().r[6].var = PARAMS2; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = 16 - k;
             if (!runToRts(dsp, proc, n2)) { fprintf(stderr, "proc did not return (frame %zu, second piece)\n", o / FR); return 1; }
             n += n2;
         }

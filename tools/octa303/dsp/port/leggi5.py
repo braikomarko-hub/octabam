@@ -52,8 +52,21 @@ def main(d):
                 print('  trasporto (campione valore):', [(l.split(' ')[0], l.split(' ')[1]) for l in L[i + 1:j] if l][-12:])
                 print('  ping ripetuto (campione):', [l.split(' ')[1] for l in L[j + 1:] if l][:12])
                 if name == 'D':
-                    vals = [int(l.split(' ')[1], 16) for l in L[i + 1:j] if l]
-                    T.append(('D il trasporto si e fermato e ripartito due volte (la corsa vale)', sum(1 for k in range(1, len(vals)) if vals[k] == 1 and vals[k - 1] != 1) >= 2))
+                    tw = [(float(l.split(' ')[0]), int(l.split(' ')[1], 16)) for l in L[i + 1:j] if l]
+                    first1 = next((k for k, (t_, v_) in enumerate(tw) if v_ == 1), None)
+                    rest = [] if first1 is None else [tw[k][0] for k in range(first1 + 1, len(tw)) if tw[k][1] == 1 and tw[k - 1][1] != 1]
+                    T.append(('D il trasporto si e fermato e ripartito due volte (la corsa vale)', len(rest) >= 2)); d_ok = True
+                    # at each restart: the frames kicked in the 48 samples after it carry zeros (at least 2 of them)
+                    Dj = json.load(open(os.path.join(d, 'sonda4_D_t5.json')))
+                    cb = next(k for k, l in enumerate(L) if l.startswith('i blocchi partiti'))
+                    K = [l.split(' ') for l in L[cb + 1:i] if l.startswith('> ')]
+                    K = [(int(b[1]), float(b[3])) for b in K if b[3] != '-' and int(b[2], 16) in (0x800021d0, 0x80002c50)]
+                    for t_ in rest:
+                        fr = [f for f, kt in K if t_ < kt <= t_ + 64]
+                        z = sum(1 for f in fr if str(f) in Dj['audio'] and not any(banco4.pieces(Dj['audio'][str(f)][0][1])[1]) and not any(banco4.pieces(Dj['audio'][str(f)][0][1])[2]))
+                        print('  ripartenza al campione %.1f: frame partiti nei 64 campioni dopo %s, di cui a zero %d' % (t_, fr, z))
+                        T.append(('D dopo la ripartenza al campione %.0f almeno 2 frame a zero' % t_, z >= 2))
+        elif name == 'D': T.append(('D il registro delle scritture c e', False))
     p = os.path.join(d, 'sonda5_M_dsp.txt')
     if os.path.exists(p):
         t = open(p).read(); print('== corsa M (il DSP)'); print('\n'.join(t.split('\n')[:1]))
@@ -62,7 +75,7 @@ def main(d):
         wr = re.findall(r'last pcs ([0-9a-f]{6})', t); ins = [w for w in wr if lo <= int(w, 16) < hi]
         calls = re.findall(r'(?m)^ +\d+ (?:[0-9a-f]{6}:[0-9a-f]{6} ){2}(?:[0-9a-f]{6} ){4}([0-9a-f]{6}) .* ([0-9a-f]{6})$', t)
         print('  chiamate (r0, n7):', sorted(set(calls)), '; ultimi che hanno scritto X:$20: %d, di cui dentro l effetto: %d' % (len(wr), len(ins)))
-        T += [('M l effetto non scrive X:$20', not ins), ('M le chiamate sono (0,8) e (16,8)', set(calls) == {('000000', '000008'), ('000010', '000008')})]
+        T += [('M la guardia su X:$20 era armata', 'dsp watch  : 0:X:20' in t), ('M l effetto non scrive X:$20', not ins), ('M le chiamate sono (0,8) e (16,8)', set(calls) == {('000000', '000008'), ('000010', '000008')})]
     else: T.append(('M il file c e', False))
     print('== soglie')
     for n, ok in T: print('  [%s] %s' % ('PASS' if ok else 'FAIL', n))

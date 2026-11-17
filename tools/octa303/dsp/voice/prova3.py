@@ -121,6 +121,18 @@ if __name__=='__main__':
     print('   '+'  '.join('%s:%d/%d/%d'%r_ for r_ in rows))
     print('frame in pezzi: %d frame per taglio; rifiutati fra questi: %d; diversi in tutto %d; scritture fuori dal blocco in tutto %d (chiamata intera: %d)'%(nf,int((whole[:,0::2]==0).all(axis=1).sum()),pz_bad,pz_out,ow))
     FAIL.append(pz_bad); FAIL.append(pz_out)
-    # a later piece with nothing latched (the first call the insert ever gets is a second piece): silence, not noise
-    F=F0[:3].copy(); F[:,51]=0
+    # the two pieces of a frame have each their own record (r6): when the signatures disagree nothing of the engine's may
+    # go out.  Frame 300: the second piece's record has no signature -> the first piece as ever, the second silent.
+    # Frame 900: only the second piece's record has it -> the first piece untouched, the second silent.
+    dis = 0
+    for k in (1, 5, 8, 13, 15):
+        F = F0.copy(); F[:, 51] = k; F[300, 50] = 1; F[900, 33] = 0; F[900, 34] = 0; F[900, 50] = 2
+        o, ni, msg = run_host(F, proc, init)
+        a_ = bool((o[300, :2 * k] == whole[300, :2 * k]).all()) and bool((o[300, 2 * k:] == 0).all()) and bool(whole[300].any())
+        b_ = bool((o[900, :2 * k] == F[900, :2 * k]).all()) and bool((o[900, 2 * k:] == 0).all())
+        c_ = bool((o[:300] == whole[:300]).all()) and outside(msg) == 0
+        dis += (not a_) + (not b_) + (not c_)
+    print('firme diverse fra i due pezzi (5 tagli): casi sbagliati %d' % dis)
+    FAIL.append(dis)
+    ok = ok and not any(FAIL)
     print('ESITO prova3:', 'PASS' if ok else 'FAIL'); sys.exit(0 if ok else 1)
