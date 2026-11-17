@@ -128,6 +128,7 @@
         .set    E_BASE,256                      | 256..1023: the engine's
         .set    ST_SHIFT,10
         .set    ST_SIZE,1024
+        .set    O3_SONDA3,1012                  | SONDA 2: the sample's index in this call
         .set    O3_SONDA2,1016                  | SONDA 1C: dEVILish's first knob as the previous call read it
         .set    O3_SONDA,1020                   | SONDA 1: the probe's frame counter (the engine's block ends at E_END, far below)
         .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
@@ -2067,6 +2068,26 @@ o3_vrec:
         lsl.l   #8,%d1                  | frame may not see the same half (reviewer, 17 Nov).  Not in halfword 21: the
         or.l    %d1,%d0                 | stock keeps a value there (0x101 in the 1B dump)
         move.l  %d0,O3_SONDA2(%a3)
+        clr.l   O3_SONDA3(%a3)          | SONDA 2: the sample index restarts with the call
+        move.l  O3_SONDA(%a3),%d0       | ... and AMP VOL / BAL (halfwords 3 / 4) by phase, 64 calls each:
+        move.l  #0x7f00,%d1
+        lsr.l   #6,%d0                  | 0 as the frame builder wrote them, 1 VOL := 0x7f00, 2 BAL := 0x7f00,
+        and.l   #3,%d0                  | 3 VOL := 0x2000.  Does the gain ahead of FX1 follow them?
+        subq.l  #1,%d0
+        bne     .Lvs_p2
+        move.w  %d1,6(%a1)
+        bra     .Lvs_p9
+.Lvs_p2:
+        subq.l  #1,%d0
+        bne     .Lvs_p3
+        move.w  %d1,8(%a1)
+        bra     .Lvs_p9
+.Lvs_p3:
+        subq.l  #1,%d0
+        bne     .Lvs_p9
+        move.l  #0x2000,%d0
+        move.w  %d0,6(%a1)
+.Lvs_p9:
         lea     S_DFK(%a3),%a0
         movem.l (%sp),%d3/%a1-%a2
         lea     12(%sp),%sp
@@ -2192,12 +2213,36 @@ o3_out:
         neg.l   %d0
         move.l  %d0,%d6
 .Lo_x:
-        asr.l   #SHIFT_OUT,%d6
-        CLAMP   %d6,-32767,32767
+        bsr     o3_sonda_smp            | SONDA 2: the probe's sample pair, not the voice
+        rts
+
+| SONDA 2 (probe branch only): one L/R pair of markers at (a1)+.  c = the call counter, i = the sample's index in
+| this call (0..15).  L long = (c & 0x7f) << 24 | i << 16 | 0xa500; R long = (0x40 | i) << 24 | (c & 0xff) << 16 | 0x3c00.
+| The low words are not zero: does the DSP take 24 bits of a sample?  R differs from L: is the path stereo up to FX1?
+| Clobbers d6 only.
+o3_sonda_smp:
+        move.l  %d0,-(%sp)
+        move.l  O3_SONDA3(%a3),%d0
+        addq.l  #1,O3_SONDA3(%a3)
+        and.l   #15,%d0
+        move.l  O3_SONDA(%a3),%d6
+        and.l   #0x7f,%d6
+        lsl.l   #8,%d6
+        or.l    %d0,%d6
         lsl.l   #8,%d6
         lsl.l   #8,%d6
+        or.l    #0xa500,%d6
         move.l  %d6,(%a1)+
+        or.l    #0x40,%d0
+        lsl.l   #8,%d0
+        move.l  O3_SONDA(%a3),%d6
+        and.l   #0xff,%d6
+        or.l    %d0,%d6
+        lsl.l   #8,%d6
+        lsl.l   #8,%d6
+        or.l    #0x3c00,%d6
         move.l  %d6,(%a1)+
+        move.l  (%sp)+,%d0
         rts
 
 
@@ -2438,18 +2483,8 @@ O3_DRV_TH:
         add.l   %d6,%d3
         move.l  %d3,\s(%a3)
         .endm
-        .macro  E_OUT0                  | o3_out's DRIV-0 path: d6 = y -> the 16-bit word to L and R.  Its two clamps are
-        move.l  O3_SONDA(%a3),%d6       | SONDA 1: the sample is V = (c & 0x7ff) << 4, not the voice
-        and.l   #0x7ff,%d6
-        lsl.l   #4,%d6
-        lsl.l   #8,%d6
-        lsl.l   #8,%d6
-        move.l  %d6,(%a1)+              | L: V
-        moveq   #0,%d6                  | R: dEVILish's first knob as o3_vrec read it this frame (OVDR, 25 by default):
-        move.b  S_DFK(%a3),%d6          | if the frame builder did not rewrite the record every frame, this would be
-        lsl.l   #8,%d6                  | the probe's own V read back
-        lsl.l   #8,%d6
-        move.l  %d6,(%a1)+
+        .macro  E_OUT0                  | SONDA 2: the probe's sample pair (o3_sonda_smp), not the voice
+        bsr     o3_sonda_smp
         .endm
         .macro  E_OUT1                  | DRIV above 0: o3_out itself (clobbers d0-d2, d6, a0: nothing the loop keeps)
         bsr     o3_out
