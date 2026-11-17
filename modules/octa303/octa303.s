@@ -1104,7 +1104,6 @@ sy_render:
 .LFnoctl:
         tst.l   S_P11(%a3)              | v8.5: closed at its fixed point since the last control step: the
         bgt     .LFp11                   | whole voice waits (VCO, filter, FM: paused; the word is the same)
-.LFnofm:
         move.l  S_INC(%a3),%d5          | VCO
         move.l  S_PHASE(%a3),%d4
         add.l   %d5,%d4
@@ -1310,7 +1309,7 @@ sy_render:
         neg.l   %d1
 .LFp6e:
         move.l  %d1,%d6
-        move.l  %d6,S_OVCA(%a3)         | FM reads the VCA after the Muffler
+        move.l  %d6,S_OVCA(%a3)         | kept: the full loop's FM reads it if a later call runs there
         move.l  %d6,%d0                 | output coupling
         sub.l   S_DC(%a3),%d0
         FM411   %d0,K_DCHP(%a5)
