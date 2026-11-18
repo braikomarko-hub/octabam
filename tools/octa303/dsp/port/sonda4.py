@@ -38,6 +38,14 @@ PROC_OFF = 16                       # proc's offset in the module (init is 16 wo
 KEY_STOP, STOP_GATE, FW_TRANSPORT, TRANSPORT = 0x4000a1e0, 0x80000029, 0x4009b964, 0x800065b8
 RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, watch=True,
                   at=[(500, KEY_STOP), (800, FW_TRANSPORT), (1100, KEY_STOP), (1103, KEY_STOP), (1300, FW_TRANSPORT)]),
+        # E (SONDA 7): D without the insert -- today's engine on the ColdFire through the same STOP / PLAY: what
+        # silences the voice at a STOP there (the DSP voice rings on for seconds on the unit, 18 Nov 2026)
+        "E": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, watch=True, dev=False,
+                  at=[(500, KEY_STOP), (800, FW_TRANSPORT), (1100, KEY_STOP), (1103, KEY_STOP), (1300, FW_TRANSPORT)]),
+        # X, Y (SONDA 7): A with an AMP lock on every trig -- XVOL 64, then VOL 32 as the known case (the engine pins
+        # the record's VOL, so Y must sound as A does): does XVOL reach the samples ahead of FX1 and break the numbers?
+        "X": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"XVOL": 64}),
+        "Y": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"VOL": 32}),
         "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
         "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),
         "A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),
@@ -51,7 +59,7 @@ BLINE = re.compile(r"^(.) frame\s+(\d+) ch\s+\d+ core -?\d+ ram ([0-9a-f]{8})")
 KLINE = re.compile(r"kicked@([0-9.]+) done@([0-9.]+)")
 
 
-def fixture(src, out, T, trigs, solo):
+def fixture(src, out, T, trigs, solo, dev=True, amp=None):
     d = prepare(src, out / "RIG")
     for path in sorted(d.glob("bank*.work")):
         def mutate(data):
@@ -61,9 +69,9 @@ def fixture(src, out, T, trigs, solo):
                 data[base + 60 + 30 * T:base + 63 + 30 * T] = b"TB\x01"
         otp._bank_write(d, int(path.stem[4:]), mutate, guard=False)
     spec = {"banks": "all",
-            "parts": {"all": {"tracks": {str(T + 1): {"fx1": "DEVILISH", "fx2": "NONE"}}}},
+            "parts": {"all": {"tracks": {str(T + 1): {"fx1": "DEVILISH" if dev else "NONE", "fx2": "NONE"}}}},
             "patterns": {"all": {"tracks": {"all": dict({"locks": {"all": "clear"}}, **({"trigs": "clear"} if solo else {})),
-                                            str(T + 1): {"trigs": trigs}}}}}
+                                            str(T + 1): dict({"trigs": trigs}, **({"locks": {"amp": {str(t): amp for t in trigs}}} if amp else {}))}}}}
     (out / "spec.json").write_text(json.dumps(spec))
     subprocess.run([sys.executable, str(ROOT / "tools/hw/ot_spec.py"), "apply", str(d), str(out / "spec.json")], check=True)
     for p in d.glob("project.*"):
@@ -79,7 +87,7 @@ def fixture(src, out, T, trigs, solo):
 
 def one(name, image, project, top):
     r_ = RUNS[name]; out = top / name; shutil.rmtree(out, ignore_errors=True); out.mkdir(parents=True)
-    card = fixture(project, out, r_["track"], r_["trigs"], name == "C")
+    card = fixture(project, out, r_["track"], r_["trigs"], name == "C", r_.get("dev", True), r_.get("amp"))
     dump = out / "blocchi.dump"
     cmd = [str(ROOT / "out/emu/ot_emu"), "--image", image, "--card", str(card), "--set", "OCTABAM", "--project", "RIG",
            "--sequencer", "--internal-clock", "--frames", str(r_["frames"]), "--load-ms", "90000", "--dsp",
