@@ -24,9 +24,15 @@ from ab_fixture import prepare  # noqa: E402
 import ot_project as otp  # noqa: E402
 
 BPM_X24 = 7200; FRAMES = 2000
-RANGES = [("interruzione di frame (0x4000aad0..0x4000d9b0)", 0x4000aad0, 0x4000d9b0),
-          ("DELAY di fabbrica, otto tracce (0x400031a0..0x4000385a)", 0x400031a0, 0x4000385a),
-          ("renderer delle voci (0x40007960..0x40008f82)", 0x40007960, 0x40008f82),
+# Stock ranges (they stay where stock has them: octabam's hooks are in-place detours).  A range counts ITS OWN
+# instructions, not what it calls: the frame interrupt's body calls the voice renderer (and our sy_render in its place);
+# the stock DELAY's routine is not called by the frame interrupt but by the level-6 eDMA chain (COLDFIRE_DELAY.md).
+RANGES = [("corpo dell'interruzione di frame, prima parte (0x4000aad0..0x4000cc6c)", 0x4000aad0, 0x4000cc6c),
+          ("corpo dell'interruzione di frame, seconda parte (0x4000cc6c..0x4000d9b0)", 0x4000cc6c, 0x4000d9b0),
+          ("DELAY di fabbrica: preparazione e DMA (0x400031a0..0x4000361a)", 0x400031a0, 0x4000361a),
+          ("DELAY di fabbrica: filtro e miscela (0x4000361a..0x4000377a)", 0x4000361a, 0x4000377a),
+          ("DELAY di fabbrica: chiusura (0x4000377a..0x4000385a)", 0x4000377a, 0x4000385a),
+          ("renderer delle voci di fabbrica (0x40007960..0x40008f82)", 0x40007960, 0x40008f82),
           ("\"analisi del campione\" (0x40098388..0x400985ac)", 0x40098388, 0x400985ac)]
 RUNS = {"V": dict(fx1="NONE", fx2="NONE", o3=False, dev=False), "D": dict(fx1="NONE", fx2="DELAY", o3=False, dev=False),
         "F": dict(fx1="FILTER", fx2="DELAY", o3=False, dev=False), "C": dict(fx1="NONE", fx2="NONE", o3=True, dev=False),
@@ -63,11 +69,11 @@ def fixture(src, out, r):
     return card
 
 
-def o3_range(elf):
+def symbols(elf):
+    """the runtime's own text symbols (octabam's code, not stock's), sorted: [(address, name)]"""
     nm = shutil.which("m68k-elf-nm") or "m68k-elf-nm"
     syms = [l.split() for l in subprocess.check_output([nm, "-n", str(elf)], text=True).splitlines()]
-    a = [int(s[0], 16) for s in syms if len(s) == 3 and s[1] in "tT" and (s[2].startswith("o3_") or s[2].startswith("sy_"))]
-    return min(a), max(a) + 0x2000          # as tools/octa303/play_gate.py counts it
+    return sorted((int(x[0], 16), x[2]) for x in syms if len(x) == 3 and x[1] in "tT")
 
 
 def one(name, image, project, top, o3r, lines):
@@ -92,10 +98,21 @@ def one(name, image, project, top, o3r, lines):
     tot = sum(n for _, n in pcs)
     lines.append(f"   istruzioni a frame secondo l'emulatore: {m.group(1) if m else '-'}; istruzioni contate in tutto {tot} "
                  f"= {tot / FRAMES:.0f} a frame su {FRAMES} frame; indirizzi distinti {len(pcs)}")
-    rng = RANGES + ([("OCTA303 (motore e guscio)", o3r[0], o3r[1])] if o3r else [])
-    for label, lo, hi in rng:
+    for label, lo, hi in RANGES:
         n = sum(c for pc, c in pcs if lo <= pc < hi)
         lines.append(f"   {n / FRAMES:9.0f} a frame  {100.0 * n / max(tot, 1):5.1f} %  {label}")
+    if o3r:                                   # the runtime, symbol by symbol (bisect: the last symbol at or below the PC)
+        import bisect
+        ad = [x[0] for x in o3r]; lo, hi = ad[0], ad[-1] + 0x4000; per = {}
+        for pc, c in pcs:
+            if lo <= pc < hi:
+                nm_ = o3r[bisect.bisect_right(ad, pc) - 1][1]; per[nm_] = per.get(nm_, 0) + c
+        o3 = sum(c for k, c in per.items() if k.startswith(("o3_", "o3e_", "sy_", "O3")))
+        rt = sum(per.values())
+        lines.append(f"   {rt / FRAMES:9.0f} a frame  {100.0 * rt / max(tot, 1):5.1f} %  tutto il codice di octabam (runtime 0x{lo:08x}..), di cui OCTA303 (simboli o3_, o3e_, sy_): {o3 / FRAMES:.0f} a frame")
+        lines.append("   i 25 simboli di octabam piu' battuti (nome, istruzioni a frame):")
+        for k, c in sorted(per.items(), key=lambda kv: -kv[1])[:25]:
+            lines.append(f"     {k:28s} {c / FRAMES:9.1f}")
     b = {}
     for pc, c in pcs: b[pc >> 8] = b.get(pc >> 8, 0) + c
     lines.append("   i 40 tratti di 256 byte piu' battuti (indirizzo, istruzioni a frame, %):")
@@ -120,11 +137,12 @@ def main():
     top = pathlib.Path(a.out); top.mkdir(parents=True, exist_ok=True)
     o3r = None
     try:
-        if pathlib.Path(a.elf).exists(): o3r = o3_range(a.elf)
+        if pathlib.Path(a.elf).exists(): o3r = symbols(a.elf)
     except Exception as e:                                  # noqa: BLE001  (no nm, another layout: the run still counts)
         print(f"sonda 6: non trovo il posto di OCTA303 ({type(e).__name__}): quella riga manchera'")
     lines = [f"SONDA 6 -- dove vanno le istruzioni del ColdFire in un frame (emulatore: istruzioni, NON tempo). {FRAMES} frame a corsa, sequencer in moto.",
-             f"posto di OCTA303: {'0x%08x..0x%08x' % o3r if o3r else 'non trovato'}"]
+             "ATTENZIONE: il conteggio prende TUTTO cio' che il ColdFire esegue dalla partenza del trasporto (interruzione di frame, catena eDMA di livello 6, pannello, USB, scheda): le percentuali sono sul totale, non sul frame. Ogni riga conta le istruzioni PROPRIE del tratto, non quelle delle routine che chiama.",
+             f"simboli del runtime di octabam: {len(o3r) if o3r else 'non trovati'}"]
     ok = True
     for name in a.only.split(","):
         ok = one(name, a.image, a.project, top, o3r, lines) and ok
