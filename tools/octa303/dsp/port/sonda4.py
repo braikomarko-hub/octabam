@@ -42,8 +42,8 @@ RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, wa
         # silences the voice at a STOP there (the DSP voice rings on for seconds on the unit, 18 Nov 2026)
         "E": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, watch=True, dev=False,
                   at=[(500, KEY_STOP), (800, FW_TRANSPORT), (1100, KEY_STOP), (1103, KEY_STOP), (1300, FW_TRANSPORT)]),
-        # X, Y (SONDA 7): A with an AMP lock on every trig -- XVOL 64, then VOL 32 as the known case (the engine pins
-        # the record's VOL, so Y must sound as A does): does XVOL reach the samples ahead of FX1 and break the numbers?
+        # X, Y (SONDA 7): A with an AMP lock on every trig -- XVOL 64, then VOL 32 as the control (the engine pins
+        # the record's VOL and hands the true one over in halfword 9: Y proves the AMP locks arrive): does XVOL reach the samples ahead of FX1 and break the numbers?
         "X": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"XVOL": 64}),
         "Y": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"VOL": 32}),
         "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),

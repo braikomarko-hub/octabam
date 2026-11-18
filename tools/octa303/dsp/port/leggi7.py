@@ -25,13 +25,14 @@ def run(name, p):
         hw = D['voce'][str(f)][0][1]; segs, Ls, Rs = pieces(D['audio'][str(f)][0][1])
         rb = D['rilettura'].get(str(f + 2)); o = max(abs(s24(rb[0][1][2 * j], rb[0][1][2 * j + 1])) for j in range(32)) if rb else None
         rows[f] = (tuple(segs), max(map(abs, Ls)) if Ls else 0, max(map(abs, Rs)) if Rs else 0, hw[:6], hw[7] == 0x3a5c and hw[8] == 0x6517, o)
+    print('   frame letti %d; senza la rilettura dal DSP (due frame dopo): %d -- se non e\' 0 o 2, i livelli qui sotto vanno letti con sospetto' % (len(rows), sum(1 for f in rows if rows[f][5] is None)))
     print('== corsa %s: %s' % (name, 'dEVILish in FX1 (voce sul DSP)' if name == 'D' else 'senza dEVILish (motore sul ColdFire)'))
     print('   frame: pezzi | picco mandato L, R | foglietto ATK HOLD REL VOL BAL e la parola dopo | firma | picco rimandato dal DSP')
     for a, b in ((494, 512), (540, 546), (640, 644), (796, 812), (1096, 1112), (1296, 1310)):
         for f in range(a, b):
             if f in rows: print('   %5d: %-9s | %8d %8d | %s | %s | %s' % ((f,) + (str(rows[f][0]), rows[f][1], rows[f][2], rows[f][3], 'si' if rows[f][4] else 'no', rows[f][5])))
         print('   ...')
-    for stop in (500, 1100):
+    for stop in (500,):                # the second STOP (1100) has a PLAY 200 frames later: its table is above, no figures
         ref = max((rows[f][5] or 0) for f in range(stop - 60, stop) if f in rows) or 1
         t = next((f for f in range(stop, stop + 290) if f in rows and all((rows[g][5] or 0) < ref / 1000 for g in range(f, min(f + 20, stop + 290)) if g in rows)), None)
         sent = sum(1 for f in range(stop + 20, stop + 280) if f in rows and rows[f][1])
