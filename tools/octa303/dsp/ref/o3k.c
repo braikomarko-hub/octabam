@@ -213,14 +213,13 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
     d->volc += d->vols;                          /* the output's level: += its step, every sample */
     /* the output for FX2 / AMP: y x 4 (today's y >> 6 as a 16-bit sample) x (VOL / 0x7f00)^2, the law of the gain the
        stock applies ahead of FX1 (SONDA 2: 0.25393 at 64, 0.06348 at 32, 0.99992 at 127).  vol = the AMP VOL halfword << 8 */
-    a = O3D_MPY(r, d->volc); a <<= 3; x0 = o3d_out(d, a);
-    a = O3D_MPY(x0, O3D_CV);
+    a = O3D_MPY(r, d->volc); a <<= 3;
     return o3d_out(d, a);
 }
 /* a taken frame's first piece: the level's step toward VOL^2, a sixteenth of the way a sample; no step left: the
    level itself.  DRIV's word is the frame's. */
 static inline void o3d_ctl(o3d_t *d) {
-    int32_t T = o3d_out(d, O3D_MPY(d->vol, d->vol)), st = (T - d->volc) >> 4;
+    int32_t T = o3d_out(d, O3D_MPY(o3d_out(d, O3D_MPY(d->vol, d->vol)), O3D_CV)), st = (T - d->volc) >> 4;   /* the level: x CV once a frame */
     d->vols = st; if (!st) d->volc = T;
     d->drv = o3_ddrv;
 }

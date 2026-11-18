@@ -31,7 +31,7 @@ init:
         do      #$30,o3v_izero
         move    a,x:(r5)+
 o3v_izero:
-        move    #>$11,n5
+        move    #$11,n5
         move    r7,r5
         move    #>91614,x0
         clr     a
@@ -49,7 +49,7 @@ proc:
         beq     o3v_pass
         move    r6,r1
         move    r7,r2
-        move    #>6,n2
+        move    #6,n2
         move    (r1)+
         move    x:(r1)+,a
         move    #>$3a5c00,x0
@@ -68,7 +68,7 @@ proc:
 ;      The first piece's own output has overwritten its payloads: nothing is decoded here, the numbers, the gain's step
 ;      and VOL^2 are the ones the first piece latched.
         move    r7,r2
-        move    #>$14,n2
+        move    #$14,n2
         clr     a
         clr     b
         move    (r2)+n2
@@ -83,7 +83,7 @@ o3v_first:
 ; ---- the sixteen payloads: p = (y + y * 672 * 2^-23) >> 8 ----------------------------------------------------
         move    r0,r1
         move    r7,r2
-        move    #>$20,n2
+        move    #$20,n2
         move    #>672,y1
         move    (r1)+                           ; R of sample 0
         move    (r2)+n2
@@ -111,7 +111,7 @@ o3v_sum:
         move    x:(r2),x0
         cmp     x0,b
         bne     o3v_bad
-        move    #>$21,n2
+        move    #$21,n2
         move    r7,r2
         clr     b
         clr     a
@@ -125,7 +125,7 @@ o3v_low:
         tst     b
         bne     o3v_bad
 ; ---- seven 23-bit numbers: (hi << 8) + lo ----------------------------------------------------------------
-        move    #>$b,n5
+        move    #$b,n5
         move    r7,r2
         move    r7,r5
         clr     a
@@ -149,7 +149,7 @@ o3v_asm:
         move    b,x:(r5)+                       ; (gv: b1 alone, positive)
         move    a1,x:(r5)
 ; ---- the gain's step: (gt - gain) >> 4, 48 bits -----------------------------------------------------------
-        move    #>7,n2
+        move    #7,n2
         move    r7,r2
         move    x:(r5),a
         clr     b
@@ -161,9 +161,9 @@ o3v_asm:
         move    a1,x:(r2)+
         move    a0,x0
         move    x0,x:(r2)
-        move    #>$a,n2
+        move    #$a,n2
         move    r6,r1
-        move    #>3,n1
+        move    #3,n1
         move    #>1,x0
         clr     b
         move    (r2)+n2                         ; r2 = $14, the frame's verdict
@@ -172,8 +172,11 @@ o3v_asm:
         move    (r1)+n1
         move    x:(r1)+,x0                      ; the level's halfword
         mpy     x0,x0,a
+        move    #>4260619,y1
+        move    a,x0                            ; (it / $8000)^2
+        mpy     x0,y1,a                         ; x ($8000 / $7f00)^2 / 2: with the loop's << 3, the voice x 4
         move    x:(r1),y0                       ; DRIV's word
-        move    a,x1                            ; (it / $8000)^2, where the level goes
+        move    a,x1                            ; where the level goes
         move    y0,x:(r2)+                      ; $15
         move    x:(r2)+,b                       ; the level now
         move    x1,a
@@ -186,17 +189,17 @@ o3v_asm:
         bne     o3v_run
         move    x1,x:(r2)                       ; no step left: the level itself
 o3v_run:
-        move    #>7,n2
-        move    #>$b,n5
+        move    #7,n2
+        move    #$b,n5
         move    r7,r2
         move    r7,r5
         move    r7,r1                           ; r1 = s1
         move    r7,r4
-        move    #>$15,n4
+        move    #$15,n4
         move    (r2)+n2                         ; r2 = the gain, for the loop
         move    (r5)+n5                         ; r5 = g1
         move    r5,r3                           ; r3 = g1, kept
-        move    #>2,n5
+        move    #2,n5
         move    (r4)+n4                         ; r4 = DRIV's word, the level, its step
         do      n7,o3v_end
 ; ---- zero-input pass --------------------------------------------------------------------------------------
@@ -409,12 +412,9 @@ o3v_koff:
         mpy     x0,y1,a
         asl     #3,a,a
         move    a,x0
-        move    #>4260619,y1
-        mpy     x0,y1,a                         ; x 4 x ($8000 / $7f00)^2
-        move    a,x0
         move    r7,r1
         move    r3,r5
-        move    #>2,n5
+        move    #2,n5
         move    x0,x:(r0)+
         move    x0,x:(r0)+
 o3v_end:
@@ -425,7 +425,7 @@ o3v_pass:
 ;      in the block is the engine's (payloads in R): silence.
 o3v_uns:
         move    r7,r2
-        move    #>$14,n2
+        move    #$14,n2
         move    r0,b
         move    #>0,x0
         move    (r2)+n2
@@ -442,7 +442,7 @@ o3v_ulat:
         bne     o3v_mz
         rts
 o3v_bad:
-        move    #>7,n2
+        move    #7,n2
         move    r7,r2
         clr     a
         clr     b
@@ -450,7 +450,7 @@ o3v_bad:
         do      #4,o3v_gz                       ; the gain and its step: the voice ramps in from 0 afterwards
         move    a,x:(r2)+
 o3v_gz:
-        move    #>9,n2
+        move    #9,n2
         clr     b
         clr     a
         move    (r2)+n2                         ; r2 = $14

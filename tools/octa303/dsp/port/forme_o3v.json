@@ -1,0 +1,489 @@
+{
+"forme": [
+[
+"move #,mN",
+"move #,mN",
+"move #>$ffffff,m5"
+],
+[
+"move rN,rN",
+"move rN,rN",
+"move r7,r5"
+],
+[
+"clr a",
+"clr A",
+"clr a"
+],
+[
+"do #,$",
+"do #,$",
+"do #$30,$1007"
+],
+[
+"move a,x:(rN)+",
+"move A,x:(rN)+",
+"move a,x:(r5)+"
+],
+[
+"move #,nN",
+"move #,nN",
+"move #$11,n5"
+],
+[
+"move #,x0",
+"move #,D",
+"move #>91614,x0"
+],
+[
+"move (rN)+nN",
+"move (rN)+nN",
+"move (r5)+n5"
+],
+[
+"move x0,x:(rN)+",
+"move D,x:(rN)+",
+"move x0,x:(r5)+"
+],
+[
+"rts",
+"rts",
+"rts"
+],
+[
+"move nN,a",
+"move nN,A",
+"move n7,a"
+],
+[
+"tst a",
+"tst A",
+"tst a"
+],
+[
+"beq $",
+"beq $",
+"beq $184"
+],
+[
+"move (rN)+",
+"move (rN)+",
+"move (r1)+"
+],
+[
+"move x:(rN)+,a",
+"move x:(rN)+,A",
+"move x:(r1)+,a"
+],
+[
+"cmp x0,a",
+"cmp D,A",
+"cmp x0,a"
+],
+[
+"bne $",
+"bne $",
+"bne $17b"
+],
+[
+"move x:(rN),a",
+"move x:(rN),A",
+"move x:(r1),a"
+],
+[
+"move rN,b",
+"move rN,A",
+"move r0,b"
+],
+[
+"cmp x0,b",
+"cmp D,A",
+"cmp x0,b"
+],
+[
+"clr b",
+"clr A",
+"clr b"
+],
+[
+"move x:(rN),b",
+"move x:(rN),A",
+"move x:(r2),b"
+],
+[
+"bra $",
+"bra $",
+"bra $184"
+],
+[
+"move #,y1",
+"move #,D",
+"move #>672,y1"
+],
+[
+"move x:(rN)+,x0",
+"move x:(rN)+,D",
+"move x:(r1)+,x0"
+],
+[
+"move x0,a",
+"move D,A",
+"move x0,a"
+],
+[
+"mac x0,y1,a",
+"mac D,D,A",
+"mac x0,y1,a"
+],
+[
+"asr #,a,a",
+"asr #,A,A",
+"asr #8,a,a"
+],
+[
+"move a1,x:(rN)+",
+"move A,x:(rN)+",
+"move a1,x:(r2)+"
+],
+[
+"add x0,b",
+"add D,A",
+"add x0,b"
+],
+[
+"and x0,b",
+"and D,A",
+"and x0,b"
+],
+[
+"move x:(rN),x0",
+"move x:(rN),D",
+"move x:(r2),x0"
+],
+[
+"and #,a",
+"and #,A",
+"and #>$7f00,a"
+],
+[
+"add a,b",
+"add A,A",
+"add a,b"
+],
+[
+"tst b",
+"tst A",
+"tst b"
+],
+[
+"asl #,a,a",
+"asl #,A,A",
+"asl #8,a,a"
+],
+[
+"add x0,a",
+"add D,A",
+"add x0,a"
+],
+[
+"and #,b",
+"and #,A",
+"and #>$ffff00,b"
+],
+[
+"asr #,b,b",
+"asr #,A,A",
+"asr #7,b,b"
+],
+[
+"move b,x:(rN)+",
+"move A,x:(rN)+",
+"move b,x:(r5)+"
+],
+[
+"move a1,x:(rN)",
+"move A,x:(rN)",
+"move a1,x:(r5)"
+],
+[
+"move x:(rN)+,b",
+"move x:(rN)+,A",
+"move x:(r2)+,b"
+],
+[
+"move x:(rN)+,b0",
+"move x:(rN)+,A",
+"move x:(r2)+,b0"
+],
+[
+"sub b,a",
+"sub A,A",
+"sub b,a"
+],
+[
+"move a0,x0",
+"move A,D",
+"move a0,x0"
+],
+[
+"move x0,x:(rN)",
+"move D,x:(rN)",
+"move x0,x:(r2)"
+],
+[
+"mpy x0,x0,a",
+"mpy D,D,A",
+"mpy x0,x0,a"
+],
+[
+"move a,x0",
+"move A,D",
+"move a,x0"
+],
+[
+"mpy x0,y1,a",
+"mpy D,D,A",
+"mpy x0,y1,a"
+],
+[
+"move x:(rN),y0",
+"move x:(rN),D",
+"move x:(r1),y0"
+],
+[
+"move a,x1",
+"move A,D",
+"move a,x1"
+],
+[
+"move y0,x:(rN)+",
+"move D,x:(rN)+",
+"move y0,x:(r2)+"
+],
+[
+"move x1,a",
+"move D,A",
+"move x1,a"
+],
+[
+"move a1,x0",
+"move A,D",
+"move a1,x0"
+],
+[
+"move x0,x:(rN)-",
+"move D,x:(rN)-",
+"move x0,x:(r2)-"
+],
+[
+"move x1,x:(rN)",
+"move D,x:(rN)",
+"move x1,x:(r2)"
+],
+[
+"do nN,$",
+"do nN,$",
+"do n7,$119f"
+],
+[
+"move x:(rN)+,y1",
+"move x:(rN)+,D",
+"move x:(r5)+,y1"
+],
+[
+"mac -x0,y1,a",
+"mac -D,D,A",
+"mac -x0,y1,a"
+],
+[
+"move x:(rN)+,x1",
+"move x:(rN)+,D",
+"move x:(r1)+,x1"
+],
+[
+"sub x1,a",
+"sub D,A",
+"sub x1,a"
+],
+[
+"sub a,b",
+"sub A,A",
+"sub a,b"
+],
+[
+"move b,x0",
+"move A,D",
+"move b,x0"
+],
+[
+"move x:(rN),x1",
+"move x:(rN),D",
+"move x:(r1),x1"
+],
+[
+"tfr a,b",
+"tfr A,A",
+"tfr a,b"
+],
+[
+"add x1,a",
+"add D,A",
+"add x1,a"
+],
+[
+"move a,y0",
+"move A,D",
+"move a,y0"
+],
+[
+"neg a",
+"neg A",
+"neg a"
+],
+[
+"add y0,a",
+"add D,A",
+"add y0,a"
+],
+[
+"move y0,b",
+"move D,A",
+"move y0,b"
+],
+[
+"move x:(rN)+,a0",
+"move x:(rN)+,A",
+"move x:(r2)+,a0"
+],
+[
+"move x:(rN)-,b0",
+"move x:(rN)-,A",
+"move x:(r2)-,b0"
+],
+[
+"add b,a",
+"add A,A",
+"add b,a"
+],
+[
+"move (rN)-",
+"move (rN)-",
+"move (r2)-"
+],
+[
+"move a0,y1",
+"move A,D",
+"move a0,y1"
+],
+[
+"move y1,x:(rN)-",
+"move D,x:(rN)-",
+"move y1,x:(r2)-"
+],
+[
+"move a1,y1",
+"move A,D",
+"move a1,y1"
+],
+[
+"abs a",
+"abs A",
+"abs a"
+],
+[
+"move #,b",
+"move #,A",
+"move #>1572864,b"
+],
+[
+"cmp a,b",
+"cmp A,A",
+"cmp a,b"
+],
+[
+"tlt x0,a",
+"tlt D,A",
+"tlt x0,a"
+],
+[
+"move x1,b",
+"move D,A",
+"move x1,b"
+],
+[
+"bge $",
+"bge $",
+"bge $5"
+],
+[
+"move a1,nN",
+"move A,nN",
+"move a1,n5"
+],
+[
+"move #,rN",
+"move #,rN",
+"move #>6144,r5"
+],
+[
+"move y0,a",
+"move D,A",
+"move y0,a"
+],
+[
+"move p:(rN)+,y0",
+"move p:(rN)+,D",
+"move p:(r5)+,y0"
+],
+[
+"move p:(rN),b",
+"move p:(rN),A",
+"move p:(r5),b"
+],
+[
+"move b,y1",
+"move A,D",
+"move b,y1"
+],
+[
+"cmp y1,b",
+"cmp D,A",
+"cmp y1,b"
+],
+[
+"move #,y0",
+"move #,D",
+"move #>818505,y0"
+],
+[
+"sub y0,a",
+"sub D,A",
+"sub y0,a"
+],
+[
+"add y1,a",
+"add D,A",
+"add y1,a"
+],
+[
+"move x:(rN)-,y0",
+"move x:(rN)-,D",
+"move x:(r4)-,y0"
+],
+[
+"add y0,b",
+"add D,A",
+"add y0,b"
+],
+[
+"move b,x:(rN)-",
+"move A,x:(rN)-",
+"move b,x:(r4)-"
+],
+[
+"move a,x:(rN)",
+"move A,x:(rN)",
+"move a,x:(r2)"
+]
+]
+}
