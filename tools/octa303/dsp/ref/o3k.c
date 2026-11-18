@@ -475,7 +475,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
             }
         }
         if (o3_dref) {
-            if (!csint || r_ov || r_fm || r_gov || r_muff || (F & F_DP)) return -7;   /* the neutral voice only */
+            if (!csint || r_fm || r_gov || r_muff || (F & F_DP)) return -7;   /* B1: OVDR (above, and is_step's x G^-0.5) but no FM, SWP, MUFF, +D */
             if (x >= 2097152 || x < -2097152) return -8;                           /* x << 2 must fit a 24-bit sample */
             /* the L channel: the sample x << 2 through the gain ahead of FX1 at VOL 0x7F00 (SONDA 2: 8387936 / 2^23, rounded:
                measured on positive samples; taken as floor(v G / 2^23 + 1/2) for negative ones too), then asr #2 on the accumulator */

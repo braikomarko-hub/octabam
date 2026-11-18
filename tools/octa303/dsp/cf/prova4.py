@@ -120,12 +120,15 @@ def xvt_in_source():
     src = open(os.path.join(ROOT, 'modules', 'octa303', 'octa303.s')).read()
     body = src[src.index('\no3_xvt:\n'):]; body = body[:body.index('.align')]
     return [int(v) for l in body.split('\n') if '.short' in l for v in l.split('.short')[1].split(',')]
+TRACE = {}                                            # the last shell_chain: L, R, kq and the instructions of each frame
 def shell_chain(args, built):
-    """the insert on FX1 (its knobs anything: not read), every frame an empty call [0,0) then the frame (half of them
+    """the insert on FX1 (its knobs read, B1: FM, SWP, MUFF, +D forced neutral), every frame an empty call [0,0) then the frame (half of them
     split at random), a START every 48 frames on a frame's first sample, accents alternating, AMP VOL as the frame
-    builder would write it.  -> (name, samples, record errors, L differ, chain differ)"""
+    builder would write it; args[11]: {frame: the twelve knobs from that frame on}.  -> (name, samples, record errors, L differ, chain differ)"""
     gsel, nfr, tune, wave, seed, vol, df = args[:7]; xv = args[7] if len(args) > 7 else 0x7f00
     stops = args[8] if len(args) > 8 else (); src = args[9] if len(args) > 9 else SRC_D; driv = args[10] if len(args) > 10 else 0
+    dfat = args[11] if len(args) > 11 else {}; df0 = df; kev = []; kqs = []; stf = []
+    neut = lambda d: tuple(0 if j in (1, 7, 9) else v for j, v in enumerate(d))   # B1: FM, SWP, MUFF neutral
     gd = T7.o3out.driv_gain(driv)                    # DRIV's gain, Q12: the record's halfword 10
     stopped = lambda f: any(a <= f < b for a, b in stops)
     xt = XVT[xv >> 8] + (((XVT[(xv >> 8) + 1] - XVT[xv >> 8]) * (xv & 0xff)) >> 8)
@@ -136,6 +139,9 @@ def shell_chain(args, built):
     rec = VREC + 64 * T7.T                              # the mock's ping 0
     t = None; L = []; R = []; retrig = []; goff = []; gprev = 1; acc0 = None; pnote = None; words_rec = []; bad = 0; cuts = []; zfr = []; zleft = 0; trw = 0; fseq = 0
     for f in range(nfr):
+        if f in dfat:
+            df = dfat[f]; assert t is not None
+            kev.append((t, {'df': neut(df)}))
         start = f % 48 == 2
         acc = (0, 120)[(f // 48) % 2]
         words = T7.W(tune=tune, cut=70, res=100, env=90, dec=60, acc=acc)
@@ -145,10 +151,10 @@ def shell_chain(args, built):
         tr = 2 if stopped(f) else 1                  # the transport word; a stopped sequencer does not move
         if tr == 1: fseq += 1
         sq = T7.seq_at(fseq)[:5] + (tr,)
-        r.vrec(T7.T, 1, None)
+        r.vrec(T7.T, 1, None); fst = 0
         for k, (a, b, sb) in enumerate(calls):
             if k == 2: r.vrec(T7.T, 1, [m.r(rec + 2 * (6 + i), 'w') for i in range(6)])     # the record as the last call left it
-            l, rr = r.call(T7.T, words, a, b, sb, T7.sample_feed(T7.T + 1), df=df, slot=1, seq=sq)
+            l, rr = r.call(T7.T, words, a, b, sb, T7.sample_feed(T7.T + 1), df=df, slot=1, seq=sq); fst += r.last['steps']
             if t is None and sb: t = 0; acc0 = acc; pnote = fld('R_PNOTE')
             elif t is not None and sb: retrig.append((t, acc))
             if t is None: continue
@@ -164,10 +170,10 @@ def shell_chain(args, built):
             cuts.append(sp if sp < 16 else 0)
             hw = [m.r(rec + 2 * i, 'w') for i in range(11)]
             bad += hw[:6] != [0, 0x7f00, 0x7f00, 0x7f00, 0x4000, 0x7f00] or hw[7:11] != [0x3a5c, 0x6517, veff, gd]
-            words_rec.append(hw)
+            words_rec.append(hw); kqs.append(fld('E_KQ')); stf.append(fst)
     goff = [g - g % 16 for g in goff]
-    s = T7.scen('guscio GATE %s VOL %#x XVOL %#x DRIV %d%s' % ('303' if gsel else 'OFF', vol, xv, driv, ' stop' if stops else ''), t, cut=70, res=100, env=90, dec=60, acc=acc0, wave=wave,
-                gmode=1, pnote=pnote, retrig=retrig, gate_off=goff, kind='real')
+    s = T7.scen('guscio GATE %s VOL %#x XVOL %#x DRIV %d%s' % ('303' if gsel else 'OFF', vol, xv, driv, ' stop' if stops else ''), t, cut=70, res=100, env=90, dec=60, acc=acc0, wave=wave & ~2,
+                gmode=1, pnote=pnote, retrig=retrig, gate_off=goff, kind='real', dfon=1, df=neut(df0), knobs=kev)
     P3.VOL_SAVE = P3.VOL; P3.VOL = veff << 8; P3.DRV = gd << 8
     try: y, Cm, X = reference(s, C['O3E_INCC3'])
     finally: P3.VOL = P3.VOL_SAVE; P3.DRV = 0x100000
@@ -196,6 +202,7 @@ def shell_chain(args, built):
         Xf = np.ascontiguousarray(X[16 * f:16 * f + 16], np.int32); yo = np.zeros(16, np.int32)
         LD.o3_set_ddrv(gd << 8); LD.o3d_frame(dst, ip(Cf), ip(Xf), ip(yo), ip(kn_), ip(kp_)); ye[16 * f:16 * f + 16] = yo
     d3 = int(sum(1 for i in range(n) if int(yl[i]) != int(ye[i]))) + zq + int(re.search(r'outside the audio block (\d+)', msg).group(1))
+    TRACE.update(L=L[:n], R=R[:n], kq=kqs[len(kqs) - nf:], steps=stf[len(stf) - nf:])
     # a STOP: the gate must be closed by the stop's second frame (unless a note started while stopped is sounding)
     return s['name'], n, bad, d1, d3, len(retrig), len(goff), goff, retrig
 

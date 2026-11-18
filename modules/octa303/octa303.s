@@ -2098,7 +2098,8 @@ o3_vrec:
 | ---- o3_drec (O3_DSP; d2 = track, a3 = state): the insert is on FX1.  The track's own AMP VOL is taken from the
 |      voice record while the record is the frame builder's (it rewrites it every frame); a record that already
 |      carries the engine's signature is this frame's, written by an earlier call: nothing is read from it.
-|      Clobbers d0, d1, a1.
+|      B1: so is dEVILish's page 1 (halfwords 6..11, o3_vrec into S_DFK), which o3_dwrite overwrites.
+|      Clobbers d0, d1, a0, a1.
 o3_drec:
         bsr     o3_drbase
         moveq   #0,%d0                  | the record's halfword 27 is FX1's id as the DSP reads it THIS frame (the port, 18
@@ -2120,6 +2121,8 @@ o3_drec:
         moveq   #0,%d0
         move.w  10(%a1),%d0
         move.l  %d0,E_UXV(%a3)
+        moveq   #LANE_FX1P1,%d1
+        bsr     o3_vrec
 .Ldr_old:
         moveq   #1,%d0
         move.l  %d0,E_DSPW(%a3)
@@ -2267,13 +2270,13 @@ o3_params:
         move.b  (%a1,%d2.l),%d0
         cmp.l   #DEVIL_ID,%d0
         bne     .Lp_f2
-        .if     O3_DSP                  | the insert on FX1: the voice is the DSP's.  Its knobs are not read (the neutral
-        bsr     o3_drec                 | voice only, so far): a0 / a2 stay the neutral bytes
-        bra     .Lp_have
-        .else
+        .if     O3_DSP                  | the insert on FX1: the voice is the DSP's.  Page 1 as o3_drec read it, page 2
+        bsr     o3_drec                 | from the lane; a record that is not the insert's: a0 / a2 stay the neutral bytes
+        tst.l   E_DSPW(%a3)
+        beq     .Lp_have
+        .endif
         moveq   #LANE_FX1P1,%d1
         bra     .Lp_lane
-        .endif
 .Lp_f2:
         lea     FXID2,%a1
         moveq   #0,%d0
@@ -2291,6 +2294,11 @@ o3_params:
         add.l   %d0,%a0
         lea     32(%a0,%d1.l),%a2       | page 2 = page 1 + 32 (0x32 - 18 = 0x38 - 24), both slots
         add.l   %d1,%a0
+        .if     O3_DSP
+        lea     S_DFK(%a3),%a0
+        tst.l   E_DSPW(%a3)
+        bne     .Lp_have
+        .endif
         bsr     o3_vrec                 | page 1 as the DSP gets it (locks, scenes, LFOs): a0 = S_DFK
 .Lp_have:
         moveq   #0,%d1
@@ -2315,6 +2323,14 @@ o3_params:
         addq.l  #1,%a2
         subq.l  #1,%d1
         bge     .Lp_c2
+        .if     O3_DSP
+        tst.l   E_DSPW(%a3)             | the insert on FX1: FM, SWP and MUFF are not on the DSP yet: neutral (0), for
+        beq     .Lp_nd                  | the START and the class too
+        clr.b   R_DF+1(%a3)
+        clr.b   R_DF+7(%a3)
+        clr.b   R_DF+9(%a3)
+.Lp_nd:
+        .endif
         moveq   #0,%d0
         move.b  R_DF+4(%a3),%d0         | dEVILish's SLID ...
         tst.l   R_DFON(%a3)
@@ -2329,6 +2345,12 @@ o3_params:
 | ---- o3_note_on: a START.  d5 = SETUP's WAVE (0..7).  The shell's part, then the engine's o3e_note_on.
 |      Clobbers d0, d1, d4, a0, a1.
 o3_note_on:
+        .if     O3_DSP
+        tst.l   E_DSPW(%a3)             | the insert on FX1: +D (WAVE bit 1) is not on the DSP yet
+        beq     .Ln_w
+        and.l   #-3,%d5
+.Ln_w:
+        .endif
         move.l  %d5,R_WAVE(%a3)
         moveq   #0,%d4                  | ACC of the trig, raw 0..127
         move.w  10(%a4),%d4
@@ -3023,11 +3045,18 @@ O3_DRV_TH:
         | ---- O3_DSP: the loop that feeds the DSP insert.  L = the oscillator, x << 2 as a 24-bit sample (the long's
         | top three bytes); R = the frame's payload of that sample.  The control step runs at a frame's first sample
         | only (o3e_render sets E_CNT); after it o3e_pay builds the sixteen payloads.  a2 = the next payload.
+        | B1: OVDR on x before it is sent; the stage-B class (OVDR not 25: FM, SWP, MUFF, +D are neutral here) takes
+        | o3e_ctlx at every step, for OVDR's feedback x G^-0.5.
         .macro  E_LOOPD wv, ls, lp
 \ls:
         subq.l  #1,E_CNT(%a3)
         bpl     .Lr\@
+        tst.l   E_XCL(%a3)
+        bne     .Lx\@
         bsr     o3e_ctl
+        bra     \lp
+.Lx\@:
+        bsr     o3e_ctlx
 \lp:
         bsr     o3e_pay
         lea     E_PAY(%a3),%a2
@@ -3036,6 +3065,7 @@ O3_DRV_TH:
         add.l   %d0,%a2
 .Lr\@:
         E_OSC\wv
+        E_OVD
         lsl.l   #8,%d6
         lsl.l   #2,%d6
         move.l  %d6,(%a1)+
