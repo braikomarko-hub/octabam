@@ -56,6 +56,8 @@ RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, wa
         **{f"X{v}": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"XVOL": v}) for v in (16, 32, 96)},
         **{f"W{v}": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False, amp={"XVOL": v}) for v in (16, 32, 96)},
         "R": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, setup={4: 100}),
+        "RV": dict(track=4, trigs=list(range(1, 17)), frames=600, fam=FAM_T5, watch=False, setup={4: 100}, amp=lambda t: {"VOL": 127 if t % 2 else 32}),
+        "G": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False, setup={4: 100}),
         "V": dict(track=4, trigs=list(range(1, 17)), frames=600, fam=FAM_T5, watch=False, amp=lambda t: {"VOL": 127 if t % 2 else 32}),
         "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
         "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),

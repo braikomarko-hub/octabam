@@ -95,12 +95,15 @@ def main(d):
                            ('F', 'senza dEVILish, nessun lock', False), ('W', 'senza dEVILish, XVOL 64 su ogni trig', False),
                            ('X16', 'XVOL 16', True), ('X32', 'XVOL 32', True), ('X96', 'XVOL 96', True),
                            ('W16', 'senza dEVILish, XVOL 16', False), ('W32', 'senza dEVILish, XVOL 32', False), ('W96', 'senza dEVILish, XVOL 96', False),
-                           ('R', 'DRIV 100 in SETUP', True), ('V', 'VOL 127 / 32 a trig alterni', True)):
+                           ('R', 'DRIV 100 in SETUP', True), ('V', 'VOL 127 / 32 a trig alterni', True),
+                           ('RV', 'DRIV 100 e VOL 127 / 32 a trig alterni', True), ('G', 'senza dEVILish, DRIV 100 in SETUP', False)):
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)
         if os.path.exists(p): amp(name, p, what, sg)
         else: print('== manca', p)
     for a, b, what in (('X', 'A', 'XVOL 64 / nessun lock, con dEVILish'), ('Y', 'A', 'VOL 32 / VOL 64, con dEVILish'), ('W', 'F', 'XVOL 64 / nessun lock, senza dEVILish')):
         if MED.get(a) is not None and MED.get(b): print('rapporto delle mediane %s / %s (%s): %.4f   [(64/127)^2 = %.4f, 64/127 = %.4f]' % (a, b, what, MED[a] / MED[b], (64 / 127) ** 2, 64 / 127))
+    for a, b, what in (('R', 'A', 'DRIV 100 / DRIV 0, con dEVILish'), ('G', 'F', 'DRIV 100 / DRIV 0, senza dEVILish')):
+        if MED.get(a) is not None and MED.get(b): print('rapporto delle mediane dei picchi %s / %s (%s): %.4f' % (a, b, what, MED[a] / MED[b]))
     import math
     for v in (16, 32, 64, 96):                           # SONDA 9: XVOL's law, with the insert and without, by least squares
         nx, nw = ('X', 'W') if v == 64 else ('X%d' % v, 'W%d' % v)
