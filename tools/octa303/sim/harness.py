@@ -40,7 +40,8 @@ def remix_inc(devilish=True):
     return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
             + ''.join('        .set    %s, 0\n' % f for f in hooks_flags()))
 
-LOCAL_FLAGS = {'O3_SKIP_STOCK': 1, 'O3_DSP': 0}      # octa303.s's own assembly switches (its .ifndef default), by value
+LOCAL_NUMBERS = ('O3_STGN',)                         # switches the code also reads as numbers (inside .if O3_DSP)
+LOCAL_FLAGS = {'O3_SKIP_STOCK': 1, 'O3_DSP': 0, 'O3_STGN': 689}      # octa303.s's own assembly switches (its .ifndef default), by value
 
 def _unflag(s, local=None):
     """The .if / .else / .endif blocks on a HOOKS flag resolved as OCTA303 alone builds them (every
@@ -67,7 +68,8 @@ def _unflag(s, local=None):
             keep.pop()
         elif all(keep):
             out.append(line)
-    return '\n'.join(out)
+    # a switch that is also a number the code uses (O3_STGN): its .set went with the .ifndef block
+    return '\n'.join(['        .set    %s,%d' % (k, loc[k]) for k in LOCAL_NUMBERS if loc.get('O3_DSP')] + out)
 
 def source(devilish=True, local=None):
     s = open(SRC_PATH).read()

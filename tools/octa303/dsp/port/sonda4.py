@@ -46,6 +46,9 @@ RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, wa
         # the record's VOL and hands the true one over in halfword 9: Y proves the AMP locks arrive): does XVOL reach the samples ahead of FX1 and break the numbers?
         "X": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"XVOL": 64}),
         "Y": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"VOL": 32}),
+        # F, W (SONDA 8): A and X without the insert -- the engine on the ColdFire and the stock AMP: the law of XVOL
+        "F": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False),
+        "W": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False, amp={"XVOL": 64}),
         "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
         "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),
         "A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),

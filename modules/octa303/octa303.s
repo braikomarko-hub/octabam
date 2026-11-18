@@ -131,6 +131,9 @@
         .ifndef O3_DSP                          | vFable, the 303 voice on the DSP (work in progress, tools/octa303/dsp):
         .set    O3_DSP,1                        |   1 = with the insert on FX1 the engine sends the oscillator (L) and the
         .endif                                  |   control step's numbers (R) to it; 0 = the engine as it is, bit for bit
+        .ifndef O3_STGN                         | O3_DSP: the frames a note started with the sequencer stopped sounds
+        .set    O3_STGN,689                     |   (o3_gate; 689 frames = 250 ms)
+        .endif
         .ifndef O3_SKIP_STOCK                   | vFable: 1 = a latched track's calls without a START skip the stock
         .set    O3_SKIP_STOCK,1                 |   FLEX renderer (sy_render, .Lskip); 0 = the shell before it
         .endif
@@ -729,6 +732,10 @@ o3_gate:
         tst.l   S_GNEW(%a3)
         beq     .Lg_nn
         clr.l   S_GNEW(%a3)             | a 303 START: open, the clock from 0, half a step to go
+        .if     O3_DSP
+        move.l  #O3_STGN,%d0
+        move.l  %d0,E_STG(%a3)
+        .endif
         moveq   #1,%d0
         move.l  %d0,S_GATE(%a3)
         clr.l   S_GEL(%a3)
@@ -761,6 +768,31 @@ o3_gate:
 .Lg_gs:
         move.l  %d0,S_GSTEP(%a3)
 .Lg_nn:
+        .if     O3_DSP
+        | ---- the insert on FX1 (E_DSPW, this call's o3_params): always GATE 303, whatever SETUP says -- the AMP
+        |      envelope is pinned open for the payloads, so nothing else would end a note.  With the sequencer not
+        |      running (TRANSPORT != 1) the stock AMP is what silences a track at a STOP (SONDA 7, 18 Nov 2026: HOLD
+        |      := 0 four frames later) and it is pinned too: the gate closes here instead (the engine's GATE 303
+        |      end, 16 ms).  A note started while stopped sounds O3_STGN frames.
+        tst.l   E_DSPW(%a3)
+        beq     .Lg_nd
+        moveq   #1,%d0
+        cmp.l   TRANSPORT,%d0
+        beq     .Lg_drun
+        move.l  %d0,S_GMODE(%a3)
+        move.l  E_STG(%a3),%d0
+        beq     .Lg_dcl
+        subq.l  #1,%d0
+        move.l  %d0,E_STG(%a3)
+        bra     .Lg_out
+.Lg_dcl:
+        clr.l   S_GATE(%a3)
+        bra     .Lg_out
+.Lg_drun:
+        clr.l   E_STG(%a3)
+        bra     .Lg_on
+.Lg_nd:
+        .endif
         tst.l   S_GSEL(%a3)             | v7.0: SETUP's GATE (v6.5: AMP HOLD INF)
         bne     .Lg_on
         clr.l   S_GMODE(%a3)            | OFF: the AMP decides
@@ -2070,6 +2102,9 @@ o3_drec:
         moveq   #0,%d0
         move.w  6(%a1),%d0
         move.l  %d0,E_UVOL(%a3)
+        moveq   #0,%d0
+        move.w  10(%a1),%d0
+        move.l  %d0,E_UXV(%a3)
 .Ldr_old:
         moveq   #1,%d0
         move.l  %d0,E_DSPW(%a3)
@@ -2129,7 +2164,7 @@ o3_dquiet:
 .Ldq_x:
         rts
 | ---- o3_dwrite (O3_DSP; d2 = track, a3 = state), after a call that rendered: the voice record for the insert.
-|      AMP ATK / HOLD / REL := 0, 0x7f00, 0x7f00 (CX OSC's override) and VOL := 0x7f00, BAL := 0x4000: the gain ahead
+|      AMP ATK / HOLD / REL := 0, 0x7f00, 0x7f00 (CX OSC's override) and VOL := 0x7f00, BAL := 0x4000, XVOL := 0x7f00: the gain ahead
 |      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
 |      gv >> 1, the signature 0x3a5c 0x6517, the track's own VOL.  Clobbers d0, d1, a1.
 o3_dwrite:
@@ -2139,6 +2174,7 @@ o3_dwrite:
         move.w  %d0,2(%a1)
         move.w  %d0,4(%a1)
         move.w  %d0,6(%a1)
+        move.w  %d0,10(%a1)             | XVOL := 0x7f00 as well: it scales the samples ahead of FX1 (SONDA 7, 18 Nov 2026)
         move.l  #0x4000,%d0
         move.w  %d0,8(%a1)
         move.l  E_GV(%a3),%d0
@@ -2149,7 +2185,15 @@ o3_dwrite:
         move.w  %d0,14(%a1)
         move.l  #0x6517,%d0
         move.w  %d0,16(%a1)
-        move.l  E_UVOL(%a3),%d0
+        move.l  E_UVOL(%a3),%d0         | the level the insert applies: VOL x XVOL / 0x7f00 (it squares it)
+        move.l  E_UXV(%a3),%d1
+        muls.l  %d1,%d0                 | both 0..0x7fff: the product fits 31 bits
+        move.l  #0x7f00,%d1
+        divs.l  %d1,%d0
+        cmp.l   #0x7fff,%d0
+        ble     .Ldw_v
+        move.l  #0x7fff,%d0
+.Ldw_v:
         move.w  %d0,18(%a1)
         rts
         .endif
@@ -2517,6 +2561,8 @@ O3_DRV_TH:
         .set    E_DSPZ,  E_BASE+728     | O3_DSP: frames still to be sent as zeros
         .set    E_PAYOK, E_BASE+732     | O3_DSP: 1 = a control step has made the payloads since the DSP's loops came
         .set    E_ZP,    E_BASE+736     | O3_DSP: where this call's samples went
+        .set    E_UXV,   E_BASE+740     | O3_DSP: the track's own AMP XVOL halfword, as the frame builder wrote it
+        .set    E_STG,   E_BASE+744     | O3_DSP: frames a note started with the sequencer stopped still sounds (o3_gate)
         .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset

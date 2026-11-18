@@ -40,29 +40,33 @@ def run(name, p):
         called = sum(1 for f in range(stop + 20, stop + 280) if f in rows and sum(rows[f][0]) > 0)
         print('   STOP al frame %d: uscita prima %d; scende sotto 1/1000 dopo %s frame (%s ms); nei frame %d..%d: motore chiamato in %d, sinistro mandato non nullo in %d; uscita (picco su 10 frame) a +20 / +100 / +200 / +270 frame: %d / %d / %d / %d' % (
             stop, ref, '-' if t is None else t - stop, '-' if t is None else round((t - stop) * 0.3628, 1), stop + 20, stop + 279, called, sent, lev(20), lev(100), lev(200), lev(270)))
-def amp(name, p, what):
+MED = {}
+def amp(name, p, what, signed=True):
     """A / X / Y: the same pattern with no AMP lock, XVOL 64, VOL 32 -- per run: the record's words, how many frames
     the DSP mutes although the oscillator was sent (the numbers refused), and the level that comes back"""
     D = json.load(open(p)); fr = sorted(int(f) for f in D['voce']); n = sig = mute = 0; pk = []; w5 = collections.Counter(); w9 = collections.Counter(); w3 = collections.Counter()
     for f in fr:
         hw = D['voce'][str(f)][0][1]; rb = D['rilettura'].get(str(f + 2))
-        if not (hw[7] == 0x3a5c and hw[8] == 0x6517) or rb is None: continue
+        if (signed and not (hw[7] == 0x3a5c and hw[8] == 0x6517)) or rb is None: continue
         segs, Ls, Rs = pieces(D['audio'][str(f)][0][1]); sig += 1
         if f < fr[0] + 60 or not any(Ls): continue          # the gain ahead of FX1 has settled; the oscillator is there
         o = max(abs(s24(rb[0][1][2 * j], rb[0][1][2 * j + 1])) for j in range(32)); n += 1; mute += o == 0; pk.append(o)
         w3[hw[3]] += 1; w5[hw[5]] += 1; w9[hw[9]] += 1
-    pk.sort()
-    print('== corsa %s (%s): frame con la firma %d; contati (oscillatore mandato, dopo i primi 60) %d; il DSP tace in %d; uscita: mediana dei picchi %s, massimo %s' % (
-        name, what, sig, n, mute, pk[len(pk) // 2] if pk else '-', pk[-1] if pk else '-'))
+    pk.sort(); MED[name] = pk[len(pk) // 2] if pk else None
+    print('== corsa %s (%s): frame %s %d; contati (oscillatore mandato, dopo i primi 60) %d; il DSP tace in %d; uscita: mediana dei picchi %s, massimo %s' % (
+        name, what, 'con la firma' if signed else 'letti (senza firma: motore sul ColdFire)', sig, n, mute, pk[len(pk) // 2] if pk else '-', pk[-1] if pk else '-'))
     print('   foglietto: VOL (casella 3) %s; la parola dopo BAL (casella 5) %s; il VOL vero (casella 9) %s' % (dict(w3), dict(w5), dict(w9)))
 def main(d):
     for name in 'DE':
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)
         if os.path.exists(p): run(name, p)
         else: print('== manca', p)
-    for name, what in (('A', 'nessun lock'), ('X', 'XVOL 64 su ogni trig'), ('Y', 'VOL 32 su ogni trig')):
+    for name, what, sg in (('A', 'nessun lock', True), ('X', 'XVOL 64 su ogni trig', True), ('Y', 'VOL 32 su ogni trig', True),
+                           ('F', 'senza dEVILish, nessun lock', False), ('W', 'senza dEVILish, XVOL 64 su ogni trig', False)):
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)
-        if os.path.exists(p): amp(name, p, what)
+        if os.path.exists(p): amp(name, p, what, sg)
         else: print('== manca', p)
+    for a, b, what in (('X', 'A', 'XVOL 64 / nessun lock, con dEVILish'), ('Y', 'A', 'VOL 32 / VOL 64, con dEVILish'), ('W', 'F', 'XVOL 64 / nessun lock, senza dEVILish')):
+        if MED.get(a) is not None and MED.get(b): print('rapporto delle mediane %s / %s (%s): %.4f   [(64/127)^2 = %.4f, 64/127 = %.4f]' % (a, b, what, MED[a] / MED[b], (64 / 127) ** 2, 64 / 127))
     return 0
 if __name__ == '__main__': sys.exit(main(sys.argv[1]))
