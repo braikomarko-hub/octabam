@@ -234,19 +234,25 @@ if __name__ == '__main__':
         print('  %-40s campioni %6d (%d START, %d chiusure del gate) | foglietto o modo del gate sbagliato %d | L diversi %d | catena: campioni diversi %d' % (nm, n, nr, ng, bad, d1, d3))
         FAIL += bad + d1 + d3
         if a[8]:
-            # the gate's closures the STOP makes: within 2 frames of each stop's first frame, in the test's own clock
-            t0 = (2 - 0) ; first = 2                       # t = 0 at frame 2 (the first START)
-            stn = C_STGN = 20 if src is SRC_S else 689
-            late = 0
+            # the STOP itself, not through the reference (which is fed the closures the engine made): in the test's
+            # own clock (t = 0 at frame 2, the first START)
+            first = 2; stn = 20 if src is SRC_S else 689; wrong = 0
             for sa, sb in a[8]:
-                ts = (sa - first) * 16
-                open_at_stop = [g for g in goff if ts <= g <= ts + 32]
-                starts_in = [x[0] for x in retrig if ts <= x[0] < (sb - first) * 16]
-                # every note started inside the stop closes STGN frames later (or at the next START / the PLAY)
-                for x in starts_in:
-                    late += not any(x < g <= x + 16 * (stn + 2) for g in goff) and not any(x < y[0] <= x + 16 * (stn + 2) for y in retrig) and x + 16 * (stn + 2) < (sb - first) * 16
-                print('    stop ai frame %d..%d: chiusure del gate entro 2 frame dallo stop %d; note partite da fermi %d' % (sa, sb, len(open_at_stop), len(starts_in)))
-            print('    note da fermi che non si chiudono entro %d frame: %d' % (stn + 2, late)); FAIL += late
+                ts, te = (sa - first) * 16, (sb - first) * 16
+                ev = sorted([(x[0], 'S') for x in retrig] + [(g, 'G') for g in goff])
+                last = [k for t_, k in ev if t_ < ts][-1:]                      # open at the stop: its last event is a START
+                at_stop = [g for g in goff if ts <= g <= ts + 32]
+                if last == ['S']: wrong += len(at_stop) != 1                    # ... then it closes within 2 frames
+                starts_in = [x[0] for x in retrig if ts <= x[0] < te]
+                seen = 0
+                for x in starts_in:                                             # a note started while stopped: STGN frames
+                    nxt = min([y[0] for y in retrig if y[0] > x] + [te])
+                    if x + 16 * (stn + 2) >= nxt: continue                      # cut short by the next START or the PLAY
+                    g = [g for g in goff if g > x][:1]
+                    seen += 1; wrong += not g or abs(g[0] - x - 16 * stn) > 16
+                print('    stop ai frame %d..%d: nota aperta allo stop %s, chiusure entro 2 frame %d; note partite da fermi %d, di cui misurate sulla durata (%d frame) %d' % (
+                    sa, sb, 'si' if last == ['S'] else 'no', len(at_stop), len(starts_in), stn, seen))
+            print('    STOP e note da fermi fuori regola: %d' % wrong); FAIL += wrong
     print('--- il guscio intero, SENZA l effetto: deve essere il motore di oggi')
     for a in ((1, 300, 0, 0, 21), (0, 300, 7, 1, 22)):
         nm, n, nd, first, ng, nr = shell_fallback(a)

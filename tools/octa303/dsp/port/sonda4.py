@@ -49,6 +49,8 @@ RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, wa
         # F, W (SONDA 8): A and X without the insert -- the engine on the ColdFire and the stock AMP: the law of XVOL
         "F": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False),
         "W": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False, amp={"XVOL": 64}),
+        # L (SONDA 8): a stop longer than GATE_IDLE (2048 frames), then PLAY: nothing may sound before the first START
+        "L": dict(track=4, trigs=list(range(1, 17)), frames=3000, fam=FAM_T5, watch=False, at=[(300, KEY_STOP), (2700, FW_TRANSPORT)]),
         "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
         "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),
         "A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),

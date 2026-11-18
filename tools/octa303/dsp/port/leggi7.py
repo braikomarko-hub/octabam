@@ -40,6 +40,19 @@ def run(name, p):
         called = sum(1 for f in range(stop + 20, stop + 280) if f in rows and sum(rows[f][0]) > 0)
         print('   STOP al frame %d: uscita prima %d; scende sotto 1/1000 dopo %s frame (%s ms); nei frame %d..%d: motore chiamato in %d, sinistro mandato non nullo in %d; uscita (picco su 10 frame) a +20 / +100 / +200 / +270 frame: %d / %d / %d / %d' % (
             stop, ref, '-' if t is None else t - stop, '-' if t is None else round((t - stop) * 0.3628, 1), stop + 20, stop + 279, called, sent, lev(20), lev(100), lev(200), lev(270)))
+def lungo(p, stop=300, play=2700):
+    """run L: a stop of 2400 frames (past the gate's GATE_IDLE), then PLAY"""
+    D = json.load(open(p)); out = {}
+    for f in sorted(int(f) for f in D['voce']):
+        rb = D['rilettura'].get(str(f + 2))
+        out[f] = max(abs(s24(rb[0][1][2 * j], rb[0][1][2 * j + 1])) for j in range(32)) if rb else None
+    pk = lambda a, b: max([out[f] or 0 for f in range(a, b) if f in out] or [0])
+    ref = pk(stop - 60, stop)
+    print('== corsa L (stop lungo, dEVILish in FX1): frame letti %d, senza rilettura %d' % (len(out), sum(1 for v in out.values() if v is None)))
+    print('   picco prima dello STOP (frame %d..%d) %d; da +100 dallo STOP fino al PLAY (frame %d..%d) %d; dal PLAY per 3 frame %d; PLAY+3..PLAY+10 %d; PLAY+10..PLAY+60 %d; PLAY+60..PLAY+290 %d' % (
+        stop - 60, stop - 1, ref, stop + 100, play - 1, pk(stop + 100, play), pk(play, play + 3), pk(play + 3, play + 10), pk(play + 10, play + 60), pk(play + 60, play + 290)))
+    first = next((f for f in range(play, play + 290) if (out.get(f) or 0) > ref / 100), None)
+    print('   primo frame dopo il PLAY con l uscita sopra 1/100 del livello di prima: %s (PLAY + %s)' % (first, '-' if first is None else first - play))
 MED = {}
 def amp(name, p, what, signed=True):
     """A / X / Y: the same pattern with no AMP lock, XVOL 64, VOL 32 -- per run: the record's words, how many frames
@@ -61,6 +74,9 @@ def main(d):
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)
         if os.path.exists(p): run(name, p)
         else: print('== manca', p)
+    p = os.path.join(d, 'sonda4_L_t5.json')
+    if os.path.exists(p): lungo(p)
+    else: print('== manca', p)
     for name, what, sg in (('A', 'nessun lock', True), ('X', 'XVOL 64 su ogni trig', True), ('Y', 'VOL 32 su ogni trig', True),
                            ('F', 'senza dEVILish, nessun lock', False), ('W', 'senza dEVILish, XVOL 64 su ogni trig', False)):
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)

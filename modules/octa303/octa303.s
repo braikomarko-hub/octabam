@@ -773,7 +773,8 @@ o3_gate:
         |      envelope is pinned open for the payloads, so nothing else would end a note.  With the sequencer not
         |      running (TRANSPORT != 1) the stock AMP is what silences a track at a STOP (SONDA 7, 18 Nov 2026: HOLD
         |      := 0 four frames later) and it is pinned too: the gate closes here instead (the engine's GATE 303
-        |      end, 16 ms).  A note started while stopped sounds O3_STGN frames.
+        |      end, 16 ms).  A note started while stopped sounds O3_STGN frames (o3_gate runs once a frame, in the
+        |      call that ends the frame).
         tst.l   E_DSPW(%a3)
         beq     .Lg_nd
         moveq   #1,%d0
@@ -790,7 +791,9 @@ o3_gate:
         bra     .Lg_out
 .Lg_drun:
         clr.l   E_STG(%a3)
-        bra     .Lg_on
+        move.l  %d0,S_GMODE(%a3)        | (d0 = 1)  Running: the 303's gate, without the rule "the sequencer stands
+        bra     .Lg_run                 | still: open" -- S_IDLE has counted through the stop, and a PLAY must not
+                                        | reopen the last note before its first START
 .Lg_nd:
         .endif
         tst.l   S_GSEL(%a3)             | v7.0: SETUP's GATE (v6.5: AMP HOLD INF)
