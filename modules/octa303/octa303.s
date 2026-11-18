@@ -427,11 +427,19 @@ sy_render:
         .if     O3_DSP
         tst.l   E_DSPW(%a3)
         beq     .Lno_dw
+        moveq   #O3_XQN,%d0             | (armed for the day the insert goes)
+        move.l  %d0,E_XZ(%a3)
         move.l  64(%sp),%d2             | the call's end in its frame
         bsr     o3_dquiet
         move.l  52(%sp),%d2
         bsr     o3_dwrite
+        bra     .Lno_xz
 .Lno_dw:
+        tst.l   E_XZ(%a3)
+        beq     .Lno_xz
+        move.l  64(%sp),%d2
+        bsr     o3_xquiet
+.Lno_xz:
         .endif
 
 .Ldone:
@@ -2093,6 +2101,10 @@ o3_vrec:
 |      Clobbers d0, d1, a1.
 o3_drec:
         bsr     o3_drbase
+        moveq   #0,%d0                  | the record's halfword 27 is FX1's id as the DSP reads it THIS frame (the port, 18
+        move.w  54(%a1),%d0             | Nov 2026: it changes in the frame the Part does).  Not the insert there: the
+        cmp.l   #DEVIL_ID,%d0           | engine's numbers must not go out to another effect -- this call is the
+        bne     .Ldr_no                 | ColdFire's, whatever the live id array says
         moveq   #0,%d0
         move.w  14(%a1),%d0
         cmp.l   #0x3a5c,%d0
@@ -2111,6 +2123,7 @@ o3_drec:
 .Ldr_old:
         moveq   #1,%d0
         move.l  %d0,E_DSPW(%a3)
+.Ldr_no:
         rts
 | ---- o3_drbase: a1 = track d2's voice record in the ping half going out.  Clobbers d0, d1.
 o3_drbase:
@@ -2134,6 +2147,17 @@ o3_drbase:
 |      Zeros with the signature are a refused frame for the insert (silence, its gain restarts); without it, silence.
 |      Clobbers d0, d1, a1.
         .set    O3_DQN, 3
+        .set    O3_XQN, 6               | frames of zeros after the insert has gone (o3_xquiet)
+| ---- o3_xquiet (O3_DSP; d2 = the call's end in its frame): the calls of the O3_XQN frames after the last one rendered
+|      for the insert go out as zeros.  The record was pinned at VOL 0x7f00 and the stock gain ahead of FX1 comes
+|      down from there a sixteenth a sample: the ColdFire's voice through it was 1099944 against 330000 in the first
+|      frame (the port, SONDA 10).  Clobbers d0, d1, a1.
+o3_xquiet:
+        moveq   #16,%d0
+        cmp.l   %d0,%d2
+        bne     .Ldq_zero
+        subq.l  #1,E_XZ(%a3)
+        bra     .Ldq_zero
 o3_dquiet:
         move.l  TRANSPORT,%d0
         cmp.l   E_TRW(%a3),%d0
@@ -2585,6 +2609,7 @@ O3_DRV_TH:
         .set    E_PAYOK, E_BASE+732     | O3_DSP: 1 = a control step has made the payloads since the DSP's loops came
         .set    E_ZP,    E_BASE+736     | O3_DSP: where this call's samples went
         .set    E_UXV,   E_BASE+740     | O3_DSP: the track's own AMP XVOL halfword, as the frame builder wrote it
+        .set    E_XZ,    E_BASE+748     | O3_DSP: frames still to go out as zeros after the insert has gone (o3_xquiet)
         .set    E_STG,   E_BASE+744     | O3_DSP: frames a note started with the sequencer stopped still sounds (o3_gate)
         .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)

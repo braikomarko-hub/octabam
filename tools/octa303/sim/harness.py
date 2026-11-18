@@ -93,6 +93,7 @@ class Rig:
         m.w(CURSOR, 'l', CUR); m.w(FP_PTR, 'l', FRAME); m.w(RS_PTR, 'l', RS)
         self.seen = []; self.feed = None; self.slots = {}
         self.ping = 0; self.vover = {}
+        self.recid = {}           # track -> the record's halfword 27 (FX1's id as the DSP reads it); None = the live id
     def vrec(self, track, slot, hws, ping=None):
         """v7.1: what the frame builder left in track's DSP voice record for FX slot (1, 2): six page-1
         halfwords (raw << 8, locks, scenes and LFOs applied); None = the lane's knobs << 8."""
@@ -161,6 +162,9 @@ class Rig:
                 for i in range(6):
                     v = (over[i] if over is not None else m.r(lane + p1 + i, 'b') << 8) if pg == self.ping else 0x5A5A
                     m.w(rec + 2 * (hw + i), 'w', v & 0xFFFF)
+        rec = VREC + self.ping * 0x200 + 64 * track         # the FX ids the DSP reads this frame: the record's halfwords 27, 28
+        rid = self.recid.get(track)
+        m.w(rec + 54, 'w', m.r(FXID1 + track, 'b') if rid is None else rid); m.w(rec + 56, 'w', m.r(FXID2 + track, 'b'))
         if seq is not None: self.seq(track, seq)
         for i, w in enumerate(words): m.w(FRAME + 2 * i, 'w', w)
         m.w(NIBBLE + track, 'b', 0x10 if startbit else 0)

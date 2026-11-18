@@ -20,7 +20,7 @@
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step;
 ; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
-; $15 DRIV's word; $16 the output's level; $17 its step; $20..$2f the decoded payloads.
+; $15 DRIV's word; $16 the output level's step; $17 the level; $20..$2f the decoded payloads.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
 ; agu_check.py checks the listing).  One table in P: the ceiling's two sides (98 entries each), then DRIV's two (24 each).
 ; CYCLES_FORWARD_BRANCHES
@@ -178,12 +178,14 @@ o3v_asm:
         move    x:(r1),y0                       ; DRIV's word
         move    a,x1                            ; where the level goes
         move    y0,x:(r2)+                      ; $15
-        move    x:(r2)+,b                       ; the level now
+        move    (r2)+
+        move    x:(r2),b                        ; the level now ($17)
         move    x1,a
         sub     b,a
         asr     #4,a,a
+        move    (r2)-
         move    a1,x0
-        move    x0,x:(r2)-                      ; its step
+        move    x0,x:(r2)+                      ; its step ($16)
         move    x0,a
         tst     a
         bne     o3v_run
@@ -200,7 +202,7 @@ o3v_run:
         move    (r5)+n5                         ; r5 = g1
         move    r5,r3                           ; r3 = g1, kept
         move    #2,n5
-        move    (r4)+n4                         ; r4 = DRIV's word, the level, its step
+        move    (r4)+n4                         ; r4 = DRIV's word, the level's step, the level
         do      n7,o3v_end
 ; ---- zero-input pass --------------------------------------------------------------------------------------
         move    x:(r1)+,x0
@@ -354,9 +356,10 @@ o3v_pos:
         neg     a
 o3v_sgn:
 ; ---- DRIV: x = y G; above the knee the mixer's soft ceiling, K + W tanh((|x| - K) / W) from the table -----------
-        move    x:(r4)+,y1                      ; DRIV's word; r4 on the level
-        move    #>$100000,b
-        cmp     y1,b
+        move    x:(r4)+,y1                      ; DRIV's word; r4 on the level's step
+        move    y1,b
+        move    #>$100000,x0
+        cmp     x0,b
         beq     o3v_koff                        ; DRIV 0: nothing
         move    a,x0
         mpy     x0,y1,a
@@ -404,11 +407,12 @@ o3v_ksgn:
         neg     a
 o3v_koff:
         move    a,x0                            ; y
-        move    x:(r4)+,b                       ; the output's level += its step
-        move    x:(r4)-,y0
+        move    x:(r4)+,y0                      ; the output's level += its step
+        move    x:(r4),b
         add     y0,b
-        move    b,x:(r4)-                       ; (r4 back on DRIV's word)
+        move    b,x:(r4)-
         move    b,y1
+        move    (r4)-                           ; (r4 back on DRIV's word)
         mpy     x0,y1,a
         asl     #3,a,a
         move    a,x0

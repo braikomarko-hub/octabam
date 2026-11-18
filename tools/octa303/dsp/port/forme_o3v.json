@@ -63,7 +63,7 @@
 [
 "beq $",
 "beq $",
-"beq $184"
+"beq $188"
 ],
 [
 "move (rN)+",
@@ -83,7 +83,7 @@
 [
 "bne $",
 "bne $",
-"bne $17b"
+"bne $17f"
 ],
 [
 "move x:(rN),a",
@@ -113,7 +113,7 @@
 [
 "bra $",
 "bra $",
-"bra $184"
+"bra $188"
 ],
 [
 "move #>,y1",
@@ -266,14 +266,14 @@
 "move x1,a"
 ],
 [
+"move (rN)-",
+"move (rN)-",
+"move (r2)-"
+],
+[
 "move a1,x0",
 "move A,D",
 "move a1,x0"
-],
-[
-"move x0,x:(rN)-",
-"move D,x:(rN)-",
-"move x0,x:(r2)-"
 ],
 [
 "move x1,x:(rN)",
@@ -283,7 +283,7 @@
 [
 "do nN,$",
 "do nN,$",
-"do n7,$119f"
+"do n7,$11a3"
 ],
 [
 "move x:(rN)+,y1",
@@ -366,11 +366,6 @@
 "add b,a"
 ],
 [
-"move (rN)-",
-"move (rN)-",
-"move (r2)-"
-],
-[
 "move a0,y1",
 "move A,D",
 "move a0,y1"
@@ -446,9 +441,9 @@
 "move b,y1"
 ],
 [
-"cmp y1,b",
-"cmp D,A",
-"cmp y1,b"
+"move y1,b",
+"move D,A",
+"move y1,b"
 ],
 [
 "move #>,y0",
@@ -466,9 +461,9 @@
 "add y1,a"
 ],
 [
-"move x:(rN)-,y0",
-"move x:(rN)-,D",
-"move x:(r4)-,y0"
+"move x:(rN)+,y0",
+"move x:(rN)+,D",
+"move x:(r4)+,y0"
 ],
 [
 "add y0,b",

@@ -199,6 +199,39 @@ def shell_chain(args, built):
     # a STOP: the gate must be closed by the stop's second frame (unless a note started while stopped is sounding)
     return s['name'], n, bad, d1, d3, len(retrig), len(goff), goff, retrig
 
+def shell_modes():
+    """the insert comes and goes (a Part change): the engine signs the record -- and sends its numbers -- only in a
+    frame whose record names the insert for the DSP (halfword 27) AND whose live id does; the O3_XQN frames after the
+    last such frame go out as zeros; outside them the ColdFire's voice sounds and never carries the numbers
+    -> (frames, wrong signatures, frames not silent that had to be, unsigned frames with L != R, ColdFire frames that sound)"""
+    r = Rig(SRC_D); C = r.cpu.consts; m = r.cpu.mem; T = T7.T
+    r.machine(T, (0, 1, 64, 0, 0, 64)); r.voice(T, True, 3); r.path(3, '/AUDIO/x.wav')
+    rec = VREC + 64 * T; XQN = C['O3_XQN']
+    def mode(f):                                         # (the live id is the insert's, the record's id is)
+        if 100 <= f < 150 or 330 <= f < 400: return (False, False)
+        if 220 <= f < 225: return (True, False)          # the live id first, the record's five frames later
+        if 300 <= f < 303: return (False, True)
+        return (True, True)
+    bad_sig = loud = lr = alive = 0; last_dsp = None; n = 0
+    for f in range(480):
+        live, rid = mode(f); start = f % 48 == 2
+        words = T7.W(tune=0, cut=70, res=100, env=90, dec=60, acc=0)
+        for hw in range(6): m.w(rec + 2 * hw, 'w', (0x1100, 0x2200, 0x3300, 0x4000, 0x2a00, 0x7f00)[hw])
+        r.recid[T] = C['DEVIL_ID'] if rid else 4
+        L, R = [], []
+        for a, b, sb in ((0, 0, False), (0, 16, start)):
+            l, rr = r.call(T, words, a, b, sb, T7.sample_feed(T + 1), df=T7.DFN if live else None, slot=1, seq=T7.seq_at(f))
+            L += l; R += rr
+        if f < 2: continue
+        n += 1; dsp = live and rid
+        signed = m.r(rec + 14, 'w') == 0x3a5c and m.r(rec + 16, 'w') == 0x6517
+        bad_sig += signed != dsp
+        if dsp: last_dsp = f; continue
+        lr += any(x != y for x, y in zip(L, R))
+        if last_dsp is not None and f - last_dsp <= XQN: loud += any((x >> 8) for x in L + R)
+        else: alive += any((x >> 8) for x in L)
+    return n, bad_sig, loud, lr, alive
+
 def shell_fallback(args):
     """no insert on the track, the O3_DSP = 1 build: the engine of today, sample for sample (test_o3e_v7's shell_run
     on this build)"""
@@ -266,6 +299,9 @@ if __name__ == '__main__':
                 print('    stop ai frame %d..%d: nota aperta allo stop %s, chiusure entro 2 frame %d; note partite da fermi %d, di cui misurate sulla durata (%d frame) %d' % (
                     sa, sb, 'si' if last == ['S'] else 'no', len(at_stop), len(starts_in), stn, seen))
             print('    STOP e note da fermi fuori regola: %d' % wrong); FAIL += wrong
+    n, bs, loud, lr, alive = shell_modes()
+    print('--- l effetto che va e viene (cambio di Part): frame %d | firme sbagliate %d | frame non muti nei %d dopo l uscita %d | frame senza firma con sinistro diverso dal destro %d | frame del ColdFire che suonano %d' % (n, bs, 6, loud, lr, alive))
+    FAIL += bs + loud + lr + (alive < 50)
     print('--- il guscio intero, SENZA l effetto: deve essere il motore di oggi')
     for a in ((1, 300, 0, 0, 21), (0, 300, 7, 1, 22)):
         nm, n, nd, first, ng, nr = shell_fallback(a)
