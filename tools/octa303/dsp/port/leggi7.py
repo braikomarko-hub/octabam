@@ -8,13 +8,21 @@ Per frame: the pieces the track was rendered in (0 samples = the engine was not 
 sent (L, R), the record's AMP words (ATK HOLD REL VOL BAL and the word after), and the peak the DSP sent back.  A table
 around each STOP and PLAY, and how long the output takes to fall under 1/1000 of its level before the STOP."""
 import os, sys, json, collections
-HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-import banco4
-from leggi3 import s24
+s24 = lambda hi, lo: (((hi << 8) | (lo >> 8)) ^ 0x800000) - 0x800000
+def pieces(au):
+    """the track record (as pieces): a header of 8 words (byte 3 = samples), its samples (L hi, L lo, R hi, R lo), again"""
+    o = 0; segs = []; Ls = []; Rs = []
+    while len(Ls) < 16 and o + 8 <= len(au):
+        n = au[o + 1] & 0xff; o += 8
+        for i in range(n):
+            if o + 4 > len(au): break
+            Ls.append(s24(au[o], au[o + 1])); Rs.append(s24(au[o + 2], au[o + 3])); o += 4
+        segs.append(n)
+    return segs, Ls, Rs
 def run(name, p):
     D = json.load(open(p)); fr = sorted(int(f) for f in D['voce']); rows = {}
     for f in fr:
-        hw = D['voce'][str(f)][0][1]; segs, Ls, Rs = banco4.pieces(D['audio'][str(f)][0][1])
+        hw = D['voce'][str(f)][0][1]; segs, Ls, Rs = pieces(D['audio'][str(f)][0][1])
         rb = D['rilettura'].get(str(f + 2)); o = max(abs(s24(rb[0][1][2 * j], rb[0][1][2 * j + 1])) for j in range(32)) if rb else None
         rows[f] = (tuple(segs), max(map(abs, Ls)) if Ls else 0, max(map(abs, Rs)) if Rs else 0, hw[:6], hw[7] == 0x3a5c and hw[8] == 0x6517, o)
     print('== corsa %s: %s' % (name, 'dEVILish in FX1 (voce sul DSP)' if name == 'D' else 'senza dEVILish (motore sul ColdFire)'))
@@ -38,7 +46,7 @@ def amp(name, p, what):
     for f in fr:
         hw = D['voce'][str(f)][0][1]; rb = D['rilettura'].get(str(f + 2))
         if not (hw[7] == 0x3a5c and hw[8] == 0x6517) or rb is None: continue
-        segs, Ls, Rs = banco4.pieces(D['audio'][str(f)][0][1]); sig += 1
+        segs, Ls, Rs = pieces(D['audio'][str(f)][0][1]); sig += 1
         if f < fr[0] + 60 or not any(Ls): continue          # the gain ahead of FX1 has settled; the oscillator is there
         o = max(abs(s24(rb[0][1][2 * j], rb[0][1][2 * j + 1])) for j in range(32)); n += 1; mute += o == 0; pk.append(o)
         w3[hw[3]] += 1; w5[hw[5]] += 1; w9[hw[9]] += 1
