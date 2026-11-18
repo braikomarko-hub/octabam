@@ -9,16 +9,20 @@
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
 ;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
-;      x:(r6+3) = the track's AMP VOL halfword (<< 8): the output is the voice x 4 x (VOL / $7f00)^2.
+;      x:(r6+3) = the level's halfword (<< 8; the engine's VOL x XVOL's law): the output is the voice x 4 x
+;      (it / $7f00)^2, reached a sixteenth of the way a sample (no steps a frame).
+;      x:(r6+4) = DRIV's gain G (Q12) as a halfword (<< 8): $100000 = DRIV 0, nothing; else x = y G and, above the
+;      knee, the output mixer's soft ceiling from a table (24 points a side, behind the BA662's two; ref/o3k.c).
 ;      x:(r6+1), x:(r6+2) = $3a5c00, $651700: the engine's signature in the voice record.  Without it the track is not
 ;      an OCTA-303: the audio is left exactly as it came (Marko, 17 Nov 2026).
 ;      A frame is taken only if the mark, the sum and the seven low-byte payloads (nothing above bit 7) all agree.
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
-; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 6 the output's gain (VOL^2); 7,8 the gain (48 bits); 9,$a its step;
-; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched); $20..$2f the decoded payloads.
+; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step;
+; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
+; $15 DRIV's word; $16 the output's level; $17 its step; $20..$2f the decoded payloads.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
-; agu_check.py checks the listing).  The ceiling's two tables (98 entries each) are in P.
+; agu_check.py checks the listing).  One table in P: the ceiling's two sides (98 entries each), then DRIV's two (24 each).
 ; CYCLES_FORWARD_BRANCHES
 init:
         move    #>$ffffff,m5                    ; not guaranteed linear at init (DSP.md)
@@ -76,11 +80,6 @@ proc:
                                                 ; untouched (2) by a first piece that had no signature: the pieces' records
                                                 ; disagree (each piece has its own r6, SONDA 5M), silence
 o3v_first:
-        move    (r1)+
-        move    x:(r1),x0                       ; AMP VOL
-        mpy     x0,x0,a
-        move    (r2)+n2
-        move    a,x:(r2)+                       ; (VOL / $8000)^2
 ; ---- the sixteen payloads: p = (y + y * 672 * 2^-23) >> 8 ----------------------------------------------------
         move    r0,r1
         move    r7,r2
@@ -163,20 +162,42 @@ o3v_asm:
         move    a0,x0
         move    x0,x:(r2)
         move    #>$a,n2
+        move    r6,r1
+        move    #>3,n1
         move    #>1,x0
         clr     b
         move    (r2)+n2                         ; r2 = $14, the frame's verdict
-        move    x0,x:(r2)                       ; 1 = taken: a later piece of this frame runs on these numbers
+        move    x0,x:(r2)+                      ; 1 = taken: a later piece of this frame runs on these numbers
+; ---- the frame's level and DRIV (a taken frame only): the level's step = (level^2 - now) >> 4 ---------------------
+        move    (r1)+n1
+        move    x:(r1)+,x0                      ; the level's halfword
+        mpy     x0,x0,a
+        move    x:(r1),y0                       ; DRIV's word
+        move    a,x1                            ; (it / $8000)^2, where the level goes
+        move    y0,x:(r2)+                      ; $15
+        move    x:(r2)+,b                       ; the level now
+        move    x1,a
+        sub     b,a
+        asr     #4,a,a
+        move    a1,x0
+        move    x0,x:(r2)-                      ; its step
+        move    x0,a
+        tst     a
+        bne     o3v_run
+        move    x1,x:(r2)                       ; no step left: the level itself
 o3v_run:
         move    #>7,n2
         move    #>$b,n5
         move    r7,r2
         move    r7,r5
         move    r7,r1                           ; r1 = s1
+        move    r7,r4
+        move    #>$15,n4
         move    (r2)+n2                         ; r2 = the gain, for the loop
         move    (r5)+n5                         ; r5 = g1
         move    r5,r3                           ; r3 = g1, kept
         move    #>2,n5
+        move    (r4)+n4                         ; r4 = DRIV's word, the level, its step
         do      n7,o3v_end
 ; ---- zero-input pass --------------------------------------------------------------------------------------
         move    x:(r1)+,x0
@@ -303,17 +324,19 @@ o3v_run:
         tlt     x0,a                            ; |y| above the table's end: the end
         move    a,y0
         asr     #14,a,a
-        move    a1,n5
-        move    #>$fab1e0,r5
         move    x1,b
         tst     b
         bge     o3v_pos
-        move    #>$fab2e0,r5                      ; the negative side's table
+        move    #>98,x0
+        add     x0,a                            ; the negative side's table follows
 o3v_pos:
+        move    a1,n5
+        move    #>$fab1e0,r5
         move    y0,a
         and     #>$3fff,a
         asl     #9,a,a
         move    a,x0                            ; the fraction, 23 bits
+        move    r5,r1                           ; the table's base, for DRIV (r1 is past lp2: free until the loop's end)
         move    (r5)+n5
         move    p:(r5)+,y0                      ; (fet76's two reads)
         move    p:(r5),b
@@ -327,8 +350,62 @@ o3v_pos:
         bge     o3v_sgn
         neg     a
 o3v_sgn:
+; ---- DRIV: x = y G; above the knee the mixer's soft ceiling, K + W tanh((|x| - K) / W) from the table -----------
+        move    x:(r4)+,y1                      ; DRIV's word; r4 on the level
+        move    #>$100000,b
+        cmp     y1,b
+        beq     o3v_koff                        ; DRIV 0: nothing
+        move    a,x0
+        mpy     x0,y1,a
+        asl     #3,a,a                          ; x = y G
+        move    a,x1                            ; x, limited: its sign and its size
+        move    x1,a
+        abs     a
+        move    #>818505,y0
+        move    #>196,y1                        ; the + side's table
+        move    x1,b
+        tst     b
+        bge     o3v_kside
+        move    #>454725,y0
+        move    #>220,y1
+o3v_kside:
+        sub     y0,a                            ; |x| - K
+        bge     o3v_ksat
+        add     y0,a                            ; under the knee: x itself
+        bra     o3v_ksgn
+o3v_ksat:
+        move    #>180224,x0
+        move    #>180224,b
+        cmp     a,b
+        tlt     x0,a                            ; past the table's end: the end
+        move    a,y0
+        asr     #13,a,a
+        add     y1,a
+        move    a1,n1
+        move    y0,a
+        and     #>$1fff,a
+        asl     #10,a,a
+        move    a,x0                            ; the fraction, 23 bits
+        move    (r1)+n1
+        move    p:(r1)+,y0
+        move    p:(r1),b
+        move    y0,a
+        sub     a,b
+        move    b,y1
+        mpy     x0,y1,a
+        add     y0,a
+o3v_ksgn:
+        move    x1,b
+        tst     b
+        bge     o3v_koff
+        neg     a
+o3v_koff:
         move    a,x0                            ; y
-        move    x:(r1),y1                       ; VOL^2: r1 is past lp2, on it
+        move    x:(r4)+,b                       ; the output's level += its step
+        move    x:(r4)-,y0
+        add     y0,b
+        move    b,x:(r4)-                       ; (r4 back on DRIV's word)
+        move    b,y1
         mpy     x0,y1,a
         asl     #3,a,a
         move    a,x0

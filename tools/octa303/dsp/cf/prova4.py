@@ -30,7 +30,7 @@ def reference(s, incc3):
               knobs=[(t, dict(kd)) for t, kd in s['knobs']])
     n = s['nsamp']; C = np.zeros((n // 16 + 1, 9), np.int32); X = np.zeros(n, np.int32)
     ip = lambda a: a.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
-    LD.o3_set_dtrace(ip(C), ip(X)); LD.o3_set_dref(1, (ctypes.c_int * 5)(24, 24, 24, 24, 24), 0); LD.o3_set_dvol(P3.VOL)
+    LD.o3_set_dtrace(ip(C), ip(X)); LD.o3_set_dref(1, (ctypes.c_int * 5)(24, 24, 24, 24, 24), 0); LD.o3_set_dvol(P3.VOL); LD.o3_set_ddrv(P3.DRV)
     try: y = MD.render_engine(ev, T7.M7, tables=T7.BLOB, knee=T7.KNEE)
     finally: rc = LD.o3_last_rc(); LD.o3_set_dref(0, None, 0); LD.o3_set_dtrace(None, None); LD.o3_set_dvol(0)
     assert rc == 0, rc
@@ -100,7 +100,7 @@ def check(s, e, built):
     F = np.zeros((nf, 52), np.int32)
     for f in range(nf):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
-        F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700; F[f, 35] = P3.VOL
+        F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700; F[f, 35] = P3.VOL; F[f, 36] = P3.DRV
     if not built:
         GH_SEEN.append(int(C[0][8]))
         lst, _ = P3.build(int(C[0][8])); ls = [l for l in lst.splitlines() if l[6:7] == ':']
@@ -125,13 +125,14 @@ def shell_chain(args, built):
     split at random), a START every 48 frames on a frame's first sample, accents alternating, AMP VOL as the frame
     builder would write it.  -> (name, samples, record errors, L differ, chain differ)"""
     gsel, nfr, tune, wave, seed, vol, df = args[:7]; xv = args[7] if len(args) > 7 else 0x7f00
-    stops = args[8] if len(args) > 8 else (); src = args[9] if len(args) > 9 else SRC_D
+    stops = args[8] if len(args) > 8 else (); src = args[9] if len(args) > 9 else SRC_D; driv = args[10] if len(args) > 10 else 0
+    gd = T7.o3out.driv_gain(driv)                    # DRIV's gain, Q12: the record's halfword 10
     stopped = lambda f: any(a <= f < b for a, b in stops)
     xt = XVT[xv >> 8] + (((XVT[(xv >> 8) + 1] - XVT[xv >> 8]) * (xv & 0xff)) >> 8)
     veff = min(vol * xt // 0x7f00, 0x7fff)            # what the insert is given: VOL x o3_xvt(XVOL) / 0x7f00 (o3_dwrite)
     r = Rig(src); rnd = random.Random(seed); C = r.cpu.consts; st = C['o3_state'] + C['ST_SIZE'] * T7.T; m = r.cpu.mem
     fld = lambda n: T7.s32(m.r(st + C[n], 'l'))
-    r.machine(T7.T, (wave, gsel, 64, 0, 0, 64)); r.voice(T7.T, True, 3); r.path(3, '/AUDIO/x.wav')
+    r.machine(T7.T, (wave, gsel, 64, 0, driv, 64)); r.voice(T7.T, True, 3); r.path(3, '/AUDIO/x.wav')
     rec = VREC + 64 * T7.T                              # the mock's ping 0
     t = None; L = []; R = []; retrig = []; goff = []; gprev = 1; acc0 = None; pnote = None; words_rec = []; bad = 0; cuts = []; zfr = []; zleft = 0; trw = 0; fseq = 0
     for f in range(nfr):
@@ -161,15 +162,15 @@ def shell_chain(args, built):
             if tr == 1 and trw != 1: zleft = C['O3_DQN']       # o3_dquiet: zeros from the frame the transport is seen running
             trw = tr; zfr.append(zleft > 0); zleft -= zleft > 0
             cuts.append(sp if sp < 16 else 0)
-            hw = [m.r(rec + 2 * i, 'w') for i in range(10)]
-            bad += hw[:6] != [0, 0x7f00, 0x7f00, 0x7f00, 0x4000, 0x7f00] or hw[7:10] != [0x3a5c, 0x6517, veff]
+            hw = [m.r(rec + 2 * i, 'w') for i in range(11)]
+            bad += hw[:6] != [0, 0x7f00, 0x7f00, 0x7f00, 0x4000, 0x7f00] or hw[7:11] != [0x3a5c, 0x6517, veff, gd]
             words_rec.append(hw)
     goff = [g - g % 16 for g in goff]
-    s = T7.scen('guscio GATE %s VOL %#x XVOL %#x%s' % ('303' if gsel else 'OFF', vol, xv, ' stop' if stops else ''), t, cut=70, res=100, env=90, dec=60, acc=acc0, wave=wave,
+    s = T7.scen('guscio GATE %s VOL %#x XVOL %#x DRIV %d%s' % ('303' if gsel else 'OFF', vol, xv, driv, ' stop' if stops else ''), t, cut=70, res=100, env=90, dec=60, acc=acc0, wave=wave,
                 gmode=1, pnote=pnote, retrig=retrig, gate_off=goff, kind='real')
-    P3.VOL_SAVE = P3.VOL; P3.VOL = veff << 8
+    P3.VOL_SAVE = P3.VOL; P3.VOL = veff << 8; P3.DRV = gd << 8
     try: y, Cm, X = reference(s, C['O3E_INCC3'])
-    finally: P3.VOL = P3.VOL_SAVE
+    finally: P3.VOL = P3.VOL_SAVE; P3.DRV = 0x100000
     nf = t // 16; n = nf * 16
     Lg = [gain(s24(v)) for v in L[:n]]; Rg = [gain(s24(v)) for v in R[:n]]
     d1 = sum(1 for i in range(n) if Lg[i] != int(X[i]))
@@ -177,7 +178,7 @@ def shell_chain(args, built):
     for f in range(nf):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
         hw = words_rec[len(words_rec) - nf + f]
-        for i in range(4): F[f, 32 + i] = hw[6 + i] << 8
+        for i in range(5): F[f, 32 + i] = hw[6 + i] << 8
     # o3_dquiet: the first O3_DQN frames after the transport is first seen running go out as zeros, L and R (the insert
     # refuses them: silence, its gain restarts).  The bench gets every frame in the pieces the shell rendered it in.
     zfr = zfr[len(zfr) - nf:]
@@ -193,7 +194,7 @@ def shell_chain(args, built):
         if zfr[f]: LD.o3d_bad(dst); continue
         Cf = np.array([int(v) for v in Cm[f][:7]] + [int(Cm[f][7]), int(Cm[f][8]), veff << 8], np.int32)
         Xf = np.ascontiguousarray(X[16 * f:16 * f + 16], np.int32); yo = np.zeros(16, np.int32)
-        LD.o3d_frame(dst, ip(Cf), ip(Xf), ip(yo), ip(kn_), ip(kp_)); ye[16 * f:16 * f + 16] = yo
+        LD.o3_set_ddrv(gd << 8); LD.o3d_frame(dst, ip(Cf), ip(Xf), ip(yo), ip(kn_), ip(kp_)); ye[16 * f:16 * f + 16] = yo
     d3 = int(sum(1 for i in range(n) if int(yl[i]) != int(ye[i]))) + zq + int(re.search(r'outside the audio block (\d+)', msg).group(1))
     # a STOP: the gate must be closed by the stop's second frame (unless a note started while stopped is sounding)
     return s['name'], n, bad, d1, d3, len(retrig), len(goff), goff, retrig
@@ -239,8 +240,10 @@ if __name__ == '__main__':
     SRC_S = source(local={'O3_DSP': 1, 'O3_STGN': 20})        # a note played while stopped: 20 frames, to see it end
     for a, src in (((0, 480, 0, 0, 31, 0x4000, None, 0x7f00, ()), SRC_D), ((1, 480, 3, 1, 32, 0x7f00, None, 0x4000, ()), SRC_D),
                    ((0, 480, 7, 0, 33, 0x5000, None, 0x2345, ()), SRC_D), ((1, 600, 0, 0, 34, 0x4000, None, 0x7f00, ((150, 260), (400, 460))), SRC_D),
-                   ((0, 600, 5, 1, 35, 0x6000, None, 0x6000, ((101, 300), (301, 420))), SRC_S)):
-        nm, n, bad, d1, d3, nr, ng, goff, retrig = shell_chain(a[:6] + (a[6] or T7.DFN,) + a[7:] + (src,), built)
+                   ((0, 600, 5, 1, 35, 0x6000, None, 0x6000, ((101, 300), (301, 420))), SRC_S),
+                   ((1, 480, 0, 0, 36, 0x7f00, None, 0x7f00, (), SRC_D, 127), SRC_D), ((0, 480, 9, 1, 37, 0x6800, None, 0x7000, (), SRC_D, 64), SRC_D),
+                   ((1, 480, -5, 0, 38, 0x7f00, None, 0x7f00, ((200, 280),), SRC_D, 100), SRC_D)):
+        nm, n, bad, d1, d3, nr, ng, goff, retrig = shell_chain(a[:6] + (a[6] or T7.DFN,) + a[7:9] + (src,) + a[10:], built)
         print('  %-40s campioni %6d (%d START, %d chiusure del gate) | foglietto o modo del gate sbagliato %d | L diversi %d | catena: campioni diversi %d' % (nm, n, nr, ng, bad, d1, d3))
         FAIL += bad + d1 + d3
         if a[8]:

@@ -39,7 +39,7 @@ def main(path, one=False, flat=False, D=None, quiet=False):
             gs.append(int(round(g)) if g is not None else G0.get(hw[3], G))
         w = np.zeros(52, np.int32)
         w[0:32:2] = [(Ls[i] * gs[i] + (1 << 22)) >> 23 for i in range(16)]; w[1:32:2] = [(Rs[i] * gs[i] + (1 << 22)) >> 23 for i in range(16)]
-        w[32] = hw[6] << 8; w[33] = hw[7] << 8; w[34] = hw[8] << 8; w[35] = hw[9] << 8
+        w[32] = hw[6] << 8; w[33] = hw[7] << 8; w[34] = hw[8] << 8; w[35] = hw[9] << 8; w[36] = hw[10] << 8
         rbk = D['rilettura'].get(str(f + 2))
         if rbk is not None and not sig and (any(Ls) or any(Rs)):
             o_ = rbk[0][1]; pk_ = max(abs(s24(o_[2 * j], o_[2 * j + 1])) for j in range(32))
@@ -79,7 +79,7 @@ def main(path, one=False, flat=False, D=None, quiet=False):
         if ok:
             c = [(pl[1 + 2 * k_] << 8) | pl[2 + 2 * k_] for k_ in range(7)]
             Cf = np.array(c + [(int(w[32]) >> 8) << 1, gen_module.GH, int(w[35])], np.int32); Xf = np.ascontiguousarray(w[0:32:2], np.int32)
-            LD.o3d_frame(st, ip(Cf), ip(Xf), ip(y), ip(kn), ip(kp))
+            LD.o3_set_ddrv(int(w[36])); LD.o3d_frame(st, ip(Cf), ip(Xf), ip(y), ip(kn), ip(kp))
         else: LD.o3d_bad(st); rz += 1
         rb = rb[0][1]; oL = [s24(rb[4 * j], rb[4 * j + 1]) for j in range(16)]; oR = [s24(rb[4 * j + 2], rb[4 * j + 3]) for j in range(16)]
         d = sum(1 for j in range(16) if oL[j] != int(y[j]) or oR[j] != int(y[j]))

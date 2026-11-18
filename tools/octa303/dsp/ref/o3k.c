@@ -123,6 +123,7 @@ int32_t o3_tr[8192][8], o3_troct;   /* debug: per control step G1..G4, kq, Dq, g
    every line below is one or two DSP56300 instructions on a 56-bit accumulator (here an int64 in units of a0's LSB),
    24-bit registers, fractional multiply ((x*y)<<1), `move a,x0` = a1 with saturation and no rounding. ---- */
 typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32_t g[4], kq, dq, gh, gv, vol;
+                 int32_t volc, vols, drv, raw;   /* 18 Nov 2026: the output's level (VOL^2) and its step a sample; DRIV's gain word; raw = y alone */
                  long long sat, big; } o3d_t;
 static int o3_dref = 0, o3_dbits[5] = {24, 24, 24, 24, 24};   /* bits kept: G, kq, Dq, gain, Gv */
 static long long o3_dsat = 0, o3_dbig = 0;
@@ -144,8 +145,40 @@ static inline int32_t o3d_out(o3d_t *d, int64_t a) {      /* move a,x0: a1, limi
     if (v > 8388607) { v = 8388607; d->sat++; } if (v < -8388608) { v = -8388608; d->sat++; }
     return (int32_t)v; }
 #define O3D_CV 4260619                      /* (32768 / 32512)^2 / 2, Q23 */
+/* 18 Nov 2026, DRIV on the DSP (a NEW reference: not the ColdFire stage's bits, its law).  The engine sends its gain
+   G (Q12, 4096 = DRIV 0 = nothing .. 12953) as a record halfword: drv = G << 8.  x = y G; above the knee K the
+   mixer's soft ceiling K + W tanh((|x| - K) / W), from a table of 24 points 8192 apart (tools/octa303/dsp/gen_module.py
+   drv_tables: the stage's own K and W, tools/octa303/o3out.py), linear between them. */
+#define O3D_DN 24
+#define O3D_DLIM (22 << 13)
+static int32_t o3d_tp[O3D_DN], o3d_tn[O3D_DN], o3d_kp, o3d_kn;
+static int32_t o3_ddrv = 0x100000;          /* DRIV's word of the renders and frames that follow (0x100000: nothing) */
+void o3d_set_drvtab(const int32_t *tp, const int32_t *tn, int32_t kp, int32_t kn) {
+    for (int i = 0; i < O3D_DN; i++) { o3d_tp[i] = tp[i]; o3d_tn[i] = tn[i]; } o3d_kp = kp; o3d_kn = kn; }
+void o3_set_ddrv(int32_t g) { o3_ddrv = g; }
 #define O3D_LD(x) ((int64_t)(x) << 24)
 #define O3D_MPY(x, y) (((int64_t)(x) * (int64_t)(y)) << 1)
+static long long o3d_dcnt[3];               /* DRIV: samples through it, above the + knee, above the - knee */
+static inline int32_t o3d_drv(o3d_t *d, int32_t r) {
+    int64_t a;
+    {
+        a = O3D_MPY(r, d->drv); a <<= 3;                                           /* x = y G */
+        int32_t x1 = o3d_out(d, a); int ng = x1 < 0;
+        a = O3D_LD(ng ? -(int64_t)x1 : (int64_t)x1);                                /* move x1,a / abs a */
+        int32_t K = ng ? o3d_kn : o3d_kp; const int32_t *D = ng ? o3d_tn : o3d_tp;
+        a -= O3D_LD(K); o3d_dcnt[0]++;
+        if (a >= 0) {
+            o3d_dcnt[1 + ng]++;
+            if (a > O3D_LD(O3D_DLIM)) a = O3D_LD(O3D_DLIM);
+            int32_t dd = o3d_out(d, a), di = dd >> 13, df = (dd & 0x1fff) << 10;
+            a = O3D_MPY(df, D[di + 1] - D[di]) + O3D_LD(D[di]);
+        } else a += O3D_LD(K);
+        r = o3d_out(d, ng ? -a : a);
+    }
+    return r;
+}
+long long o3d_get_dcnt(int k) { long long v = o3d_dcnt[k]; o3d_dcnt[k] = 0; return v; }
+int32_t o3d_drv_only(int32_t r, int32_t drv) { o3d_t d; memset(&d, 0, sizeof d); d.drv = drv; return drv == 0x100000 ? r : o3d_drv(&d, r); }
 static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, const int32_t *kpos) {
     int64_t a, b; int32_t x0, y0;
     a = O3D_LD(d->s1) - O3D_MPY(d->s1, d->g[0]);                                   /* zero-input pass */
@@ -175,22 +208,30 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
     int32_t t0 = T[ix], t1 = ix >= KN - 1 ? t0 : T[ix + 1];
     a = O3D_MPY(fr, t1 - t0) + O3D_LD(t0);
     int32_t r = o3d_out(d, neg ? -a : a);
-    if (!d->vol) return r;                       /* vol 0: the voice's y alone (the grids against today's model) */
+    if (d->raw) return r;                        /* the voice's y alone (the grids against today's model) */
+    if (d->drv != 0x100000) r = o3d_drv(d, r);   /* DRIV */
+    d->volc += d->vols;                          /* the output's level: += its step, every sample */
     /* the output for FX2 / AMP: y x 4 (today's y >> 6 as a 16-bit sample) x (VOL / 0x7f00)^2, the law of the gain the
        stock applies ahead of FX1 (SONDA 2: 0.25393 at 64, 0.06348 at 32, 0.99992 at 127).  vol = the AMP VOL halfword << 8 */
-    a = O3D_MPY(d->vol, d->vol); int32_t g = o3d_out(d, a);
-    a = O3D_MPY(r, g); a <<= 3; x0 = o3d_out(d, a);
+    a = O3D_MPY(r, d->volc); a <<= 3; x0 = o3d_out(d, a);
     a = O3D_MPY(x0, O3D_CV);
     return o3d_out(d, a);
 }
-/* the reference on its own (phase 3's stress tests): nf frames of 10 numbers (g1..g4 kq dq gt gv gh vol) and 16 L samples */
+/* a taken frame's first piece: the level's step toward VOL^2, a sixteenth of the way a sample; no step left: the
+   level itself.  DRIV's word is the frame's. */
+static inline void o3d_ctl(o3d_t *d) {
+    int32_t T = o3d_out(d, O3D_MPY(d->vol, d->vol)), st = (T - d->volc) >> 4;
+    d->vols = st; if (!st) d->volc = T;
+    d->drv = o3_ddrv;
+}
+/* the reference on its own (phase 3's stress tests): nf frames of 11 numbers (g1..g4 kq dq gt gv gh vol drv) and 16 L samples */
 long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
     o3d_t d; memset(&d, 0, sizeof d);
     for (int f = 0; f < nf; f++) {
-        const int32_t *c = C + 10 * f;
+        const int32_t *c = C + 11 * f; o3_ddrv = c[10];
         for (int j = 0; j < 4; j++) d.g[j] = c[j];
         d.kq = c[4]; d.dq = c[5]; d.gv = c[7]; d.gh = c[8]; d.vol = c[9];
-        d.dgain48 = (O3D_LD(c[6]) - d.gain48) >> 4;
+        d.dgain48 = (O3D_LD(c[6]) - d.gain48) >> 4; o3d_ctl(&d);
         for (int i = 0; i < 16; i++) out[16 * f + i] = o3d_sample(&d, ((int64_t)X[16 * f + i] << 24) >> 2, kneg, kpos);
     }
     return d.sat;
@@ -204,7 +245,7 @@ void o3d_frame(void *p, const int32_t *c, const int32_t *x, int32_t *out, const 
     o3d_t *d = p;
     for (int j = 0; j < 4; j++) d->g[j] = c[j];
     d->kq = c[4]; d->dq = c[5]; d->gv = c[7]; d->gh = c[8]; d->vol = c[9];
-    d->dgain48 = (O3D_LD(c[6]) - d->gain48) >> 4;
+    d->dgain48 = (O3D_LD(c[6]) - d->gain48) >> 4; o3d_ctl(d);
     for (int i = 0; i < 16; i++) out[i] = o3d_sample(d, ((int64_t)x[i] << 24) >> 2, kneg, kpos);
 }
 /* pseg: nseg parameter vectors of P_N doubles (segment 0 = the START, then one per retrig START);
@@ -236,7 +277,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                  st.pst = 0; st.ptgt = 0; is_note(&st, T, kseg, kseg); }
     const int32_t *kcur = kseg; int ki = 0;               /* v7.1: the knobs now, the next knob event */
     int32_t mx = 0;
-    o3d_t ds; memset(&ds, 0, sizeof ds); ds.vol = o3_dvol;
+    o3d_t ds; memset(&ds, 0, sizeof ds); ds.vol = o3_dvol; ds.raw = !o3_dvol;
     double GhD = M_PI * p[P_FH] / FS; GhD = GhD / (1.0 + GhD);
     double GvD = M_PI * p[P_FV] / FS; GvD = GvD / (1.0 + GvD);
     Gh = q31(GhD); Gv = q31(GvD);
@@ -328,7 +369,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                     if (Gx[1] != Gx[2] || Gx[2] != Gx[3]) o3_geq = 0;
                     ds.kq = o3d_q(kq >> 8, o3_dbits[1]); ds.dq = o3d_q(Dq >> 8, o3_dbits[2]);
                     ds.gh = Gh >> 8; ds.gv = o3d_q(Gv >> 8, o3_dbits[4]);
-                    ds.dgain48 = (O3D_LD(o3d_q(gq >> 8, o3_dbits[3])) - ds.gain48) >> 4;
+                    ds.dgain48 = (O3D_LD(o3d_q(gq >> 8, o3_dbits[3])) - ds.gain48) >> 4; o3d_ctl(&ds);
                     if (o3_dtr_c) { int32_t *r_ = o3_dtr_c + 9 * (i / CTL); for (int j = 0; j < 4; j++) r_[j] = ds.g[j]; r_[4] = ds.kq; r_[5] = ds.dq; r_[6] = o3d_q(gq >> 8, o3_dbits[3]); r_[7] = ds.gv; r_[8] = ds.gh; }
                 }
 #ifdef O3_TRACE

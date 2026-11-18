@@ -54,6 +54,16 @@ O3V_KNEG = (
     476553, 476654, 476749, 476839, 476923, 477002, 477077, 477148, 477215, 477279,
     477338, 477395, 477449, 477500, 477548, 477594, 477637, 477637,
 )
+O3V_DRVP = (
+    818505, 826600, 834142, 840722, 846138, 850390, 853603, 855963, 857661, 858863,
+    859705, 860290, 860695, 860975, 861166, 861298, 861388, 861450, 861492, 861521,
+    861541, 861555, 861564, 861570,
+)
+O3V_DRVN = (
+    454725, 462611, 468953, 473217, 475750, 477146, 477883, 478264, 478459, 478557,
+    478607, 478632, 478645, 478651, 478655, 478656, 478657, 478658, 478658, 478658,
+    478658, 478658, 478658, 478658,
+)
 # ---- o3v tables: end ----
 
 _PLAIN = Formatter.PLAIN
@@ -110,8 +120,8 @@ MODULE = Module(
     ),
     dsp=DspSection(
         asm="modules/devilish/devilish.asm",
-        ptable=O3V_KPOS,              # the BA662 ceiling's two tables (the engine's own, modules/octa303/octa303.s)
-        ptable2=O3V_KNEG,
+        ptable=O3V_KPOS + O3V_KNEG + O3V_DRVP + O3V_DRVN,   # the BA662 ceiling's two tables (the engine's own,
+                                      # modules/octa303/octa303.s), then DRIV's two (tools/octa303/dsp/gen_module.py)
         priority=27,                  # 20 is REMIX SWITCH's (both payloads), 22 DLCOPY's
         bus_role=BusRole.NONE,        # an insert; never on the bus
         ybase=YBase.NEVER,            # no buffers

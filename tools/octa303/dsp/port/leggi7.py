@@ -54,21 +54,35 @@ def lungo(p, stop=300, play=2700):
     first = next((f for f in range(play, play + 290) if (out.get(f) or 0) > ref / 100), None)
     print('   primo frame dopo il PLAY con l uscita sopra 1/100 del livello di prima: %s (PLAY + %s)' % (first, '-' if first is None else first - play))
 MED = {}
+def lsq(d, a, b):
+    """least squares b = r a over every read-back sample from frame 100 on, two runs of the same pattern -> (r, the
+    largest |b - r a|, frames whose sent L differ)"""
+    def load(n):
+        D = json.load(open(os.path.join(d, 'sonda4_%s_t5.json' % n))); o = {}; snt = {}
+        for f in D['rilettura']: w = D['rilettura'][f][0][1]; o[int(f)] = [s24(w[4 * i], w[4 * i + 1]) for i in range(16)]
+        for f in D['audio']: snt[int(f)] = pieces(D['audio'][f][0][1])[1]
+        return o, snt
+    A, As = load(a); B, Bs = load(b); num = den = 0
+    fr = [f for f in sorted(A) if f >= 100 and f in B]
+    for f in fr:
+        for x, y in zip(A[f], B[f]): num += x * y; den += x * x
+    r = num / den if den else 0.0
+    return r, max([abs(y - r * x) for f in fr for x, y in zip(A[f], B[f])] or [0]), sum(1 for f in As if f in Bs and As[f] != Bs[f])
 def amp(name, p, what, signed=True):
     """A / X / Y: the same pattern with no AMP lock, XVOL 64, VOL 32 -- per run: the record's words, how many frames
     the DSP mutes although the oscillator was sent (the numbers refused), and the level that comes back"""
-    D = json.load(open(p)); fr = sorted(int(f) for f in D['voce']); n = sig = mute = 0; pk = []; w5 = collections.Counter(); w9 = collections.Counter(); w3 = collections.Counter()
+    D = json.load(open(p)); fr = sorted(int(f) for f in D['voce']); n = sig = mute = 0; pk = []; w5 = collections.Counter(); w9 = collections.Counter(); w3 = collections.Counter(); w10 = collections.Counter()
     for f in fr:
         hw = D['voce'][str(f)][0][1]; rb = D['rilettura'].get(str(f + 2))
         if (signed and not (hw[7] == 0x3a5c and hw[8] == 0x6517)) or rb is None: continue
         segs, Ls, Rs = pieces(D['audio'][str(f)][0][1]); sig += 1
         if f < fr[0] + 60 or not any(Ls): continue          # the gain ahead of FX1 has settled; the oscillator is there
         o = max(abs(s24(rb[0][1][2 * j], rb[0][1][2 * j + 1])) for j in range(32)); n += 1; mute += o == 0; pk.append(o)
-        w3[hw[3]] += 1; w5[hw[5]] += 1; w9[hw[9]] += 1
+        w3[hw[3]] += 1; w5[hw[5]] += 1; w9[hw[9]] += 1; w10[hw[10]] += 1
     pk.sort(); MED[name] = pk[len(pk) // 2] if pk else None
     print('== corsa %s (%s): frame %s %d; contati (oscillatore mandato, dopo i primi 60) %d; il DSP tace in %d; uscita: mediana dei picchi %s, massimo %s' % (
         name, what, 'con la firma' if signed else 'letti (senza firma: motore sul ColdFire)', sig, n, mute, pk[len(pk) // 2] if pk else '-', pk[-1] if pk else '-'))
-    print('   foglietto: VOL (casella 3) %s; la parola dopo BAL (casella 5) %s; il VOL vero (casella 9) %s' % (dict(w3), dict(w5), dict(w9)))
+    print('   foglietto: VOL (casella 3) %s; la parola dopo BAL (casella 5) %s; il livello per l effetto (casella 9) %s; DRIV (casella 10) %s' % (dict(w3), dict(w5), dict(w9) if len(w9) < 9 else '%d valori' % len(w9), dict(w10)))
 def main(d):
     for name in 'DE':
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)
@@ -78,11 +92,21 @@ def main(d):
     if os.path.exists(p): lungo(p)
     else: print('== manca', p)
     for name, what, sg in (('A', 'nessun lock', True), ('X', 'XVOL 64 su ogni trig', True), ('Y', 'VOL 32 su ogni trig', True),
-                           ('F', 'senza dEVILish, nessun lock', False), ('W', 'senza dEVILish, XVOL 64 su ogni trig', False)):
+                           ('F', 'senza dEVILish, nessun lock', False), ('W', 'senza dEVILish, XVOL 64 su ogni trig', False),
+                           ('X16', 'XVOL 16', True), ('X32', 'XVOL 32', True), ('X96', 'XVOL 96', True),
+                           ('W16', 'senza dEVILish, XVOL 16', False), ('W32', 'senza dEVILish, XVOL 32', False), ('W96', 'senza dEVILish, XVOL 96', False),
+                           ('R', 'DRIV 100 in SETUP', True), ('V', 'VOL 127 / 32 a trig alterni', True)):
         p = os.path.join(d, 'sonda4_%s_t5.json' % name)
         if os.path.exists(p): amp(name, p, what, sg)
         else: print('== manca', p)
     for a, b, what in (('X', 'A', 'XVOL 64 / nessun lock, con dEVILish'), ('Y', 'A', 'VOL 32 / VOL 64, con dEVILish'), ('W', 'F', 'XVOL 64 / nessun lock, senza dEVILish')):
         if MED.get(a) is not None and MED.get(b): print('rapporto delle mediane %s / %s (%s): %.4f   [(64/127)^2 = %.4f, 64/127 = %.4f]' % (a, b, what, MED[a] / MED[b], (64 / 127) ** 2, 64 / 127))
+    import math
+    for v in (16, 32, 64, 96):                           # SONDA 9: XVOL's law, with the insert and without, by least squares
+        nx, nw = ('X', 'W') if v == 64 else ('X%d' % v, 'W%d' % v)
+        ok = lambda n: os.path.exists(os.path.join(d, 'sonda4_%s_t5.json' % n))
+        law = math.sin(math.pi / 2 * v / 128) / math.sin(math.pi / 2 * 127 / 128)
+        if ok(nx) and ok('A'): print('XVOL %3d con dEVILish   (%s / A): %.5f, scarto massimo %.1f, frame con il sinistro diverso %d   [legge sin(pi/2 x/128): %.5f]' % ((v, nx) + lsq(d, 'A', nx) + (law,)))
+        if ok(nw) and ok('F'): print('XVOL %3d senza dEVILish (%s / F): %.5f, scarto massimo %.1f, frame con il sinistro diverso %d   [legge sin(pi/2 x/128): %.5f]' % ((v, nw) + lsq(d, 'F', nw) + (law,)))
     return 0
 if __name__ == '__main__': sys.exit(main(sys.argv[1]))

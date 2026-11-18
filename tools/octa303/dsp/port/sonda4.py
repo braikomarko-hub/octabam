@@ -51,6 +51,12 @@ RUNS = {"D": dict(track=4, trigs=list(range(1, 17)), frames=1500, fam=FAM_T5, wa
         "W": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False, amp={"XVOL": 64}),
         # L (SONDA 8): a stop longer than GATE_IDLE (2048 frames), then PLAY: nothing may sound before the first START
         "L": dict(track=4, trigs=list(range(1, 17)), frames=3000, fam=FAM_T5, watch=False, at=[(300, KEY_STOP), (2700, FW_TRANSPORT)]),
+        # SONDA 9: XVOL's law at three more values, with the insert (X..) and without (W..); DRIV 100 from the machine's
+        # SETUP with the insert (R); VOL locked 127 / 32 on alternate trigs with the insert (V: the level's ramp)
+        **{f"X{v}": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, amp={"XVOL": v}) for v in (16, 32, 96)},
+        **{f"W{v}": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, dev=False, amp={"XVOL": v}) for v in (16, 32, 96)},
+        "R": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=False, setup={4: 100}),
+        "V": dict(track=4, trigs=list(range(1, 17)), frames=600, fam=FAM_T5, watch=False, amp=lambda t: {"VOL": 127 if t % 2 else 32}),
         "M": dict(track=4, trigs=[9], frames=1150, fam=FAM_T5, watch=False, dsp=True),
         "N": dict(track=4, trigs=list(range(1, 17)), frames=200, fam=FAM_T5, watch=False, dsp=True),
         "A": dict(track=4, trigs=list(range(1, 17)), frames=400, fam=FAM_T5, watch=True),
@@ -64,7 +70,7 @@ BLINE = re.compile(r"^(.) frame\s+(\d+) ch\s+\d+ core -?\d+ ram ([0-9a-f]{8})")
 KLINE = re.compile(r"kicked@([0-9.]+) done@([0-9.]+)")
 
 
-def fixture(src, out, T, trigs, solo, dev=True, amp=None):
+def fixture(src, out, T, trigs, solo, dev=True, amp=None, setup=None):
     d = prepare(src, out / "RIG")
     for path in sorted(d.glob("bank*.work")):
         def mutate(data):
@@ -72,11 +78,14 @@ def fixture(src, out, T, trigs, solo, dev=True, amp=None):
                 base = otp.PART_BASE + part * otp.PART_STRIDE + 9
                 data[base + 0x22 + T] = 1
                 data[base + 60 + 30 * T:base + 63 + 30 * T] = b"TB\x01"
+                # the machine's SETUP bytes (WAVE GATE FINE SLID DRIV ACCV): Part' + 0x1e0 + 30 * track (octa303.s, the
+                # machine's header comment; that 0x1e0 is already FLEX's six is read from there, not measured)
+                for k, v in (setup or {}).items(): data[base + 0x1e0 + 30 * T + k] = v
         otp._bank_write(d, int(path.stem[4:]), mutate, guard=False)
     spec = {"banks": "all",
             "parts": {"all": {"tracks": {str(T + 1): {"fx1": "DEVILISH" if dev else "NONE", "fx2": "NONE"}}}},
             "patterns": {"all": {"tracks": {"all": dict({"locks": {"all": "clear"}}, **({"trigs": "clear"} if solo else {})),
-                                            str(T + 1): dict({"trigs": trigs}, **({"locks": {"amp": {str(t): amp for t in trigs}}} if amp else {}))}}}}
+                                            str(T + 1): dict({"trigs": trigs}, **({"locks": {"amp": {str(t): (amp(t) if callable(amp) else amp) for t in trigs}}} if amp else {}))}}}}
     (out / "spec.json").write_text(json.dumps(spec))
     subprocess.run([sys.executable, str(ROOT / "tools/hw/ot_spec.py"), "apply", str(d), str(out / "spec.json")], check=True)
     for p in d.glob("project.*"):
@@ -92,7 +101,7 @@ def fixture(src, out, T, trigs, solo, dev=True, amp=None):
 
 def one(name, image, project, top):
     r_ = RUNS[name]; out = top / name; shutil.rmtree(out, ignore_errors=True); out.mkdir(parents=True)
-    card = fixture(project, out, r_["track"], r_["trigs"], name == "C", r_.get("dev", True), r_.get("amp"))
+    card = fixture(project, out, r_["track"], r_["trigs"], name == "C", r_.get("dev", True), r_.get("amp"), r_.get("setup"))
     dump = out / "blocchi.dump"
     cmd = [str(ROOT / "out/emu/ot_emu"), "--image", image, "--card", str(card), "--set", "OCTABAM", "--project", "RIG",
            "--sequencer", "--internal-clock", "--frames", str(r_["frames"]), "--load-ms", "90000", "--dsp",

@@ -205,8 +205,8 @@ class Rig:
         st = c['o3_state'] + c['ST_SIZE'] * track; prof = c['O3_PROF'] + 32 * track
         ok = [(CUR, CUR + 16 + 8 * n), (CURSOR, CURSOR + 4), (st, st + c['ST_SIZE']), (prof, prof + 32),
               (sp0 - 0x1000, sp0)] + [(c[k], c[k] + 4) for k in ('o3_pt0', 'o3_pt1', 'o3_pn', 'o3_pflag')]
-        if 'o3_dwrite' in c:                # O3_DSP: the insert's voice record, the first ten halfwords (o3_dwrite)
-            ok += [(VREC + pg * 0x200 + 64 * track, VREC + pg * 0x200 + 64 * track + 20) for pg in (0, 1)]
+        if 'o3_dwrite' in c:                # O3_DSP: the insert's voice record, the first eleven halfwords (o3_dwrite)
+            ok += [(VREC + pg * 0x200 + 64 * track, VREC + pg * 0x200 + 64 * track + 22) for pg in (0, 1)]
         stray = sorted({a for a, sz in writes if not any(lo <= a and a + SZB[sz] <= hi for lo, hi in ok)})
         assert not stray, 'skipped call: writes outside the block and the track state: %s' % [hex(a) for a in stray[:8]]
 
