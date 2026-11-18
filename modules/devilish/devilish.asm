@@ -376,10 +376,9 @@ o3v_sgn:
         move    #>220,y1
 o3v_kside:
         sub     y0,a                            ; |x| - K
-        bge     o3v_ksat
-        add     y0,a                            ; under the knee: x itself
-        bra     o3v_ksgn
-o3v_ksat:
+        move    #>0,x0
+        tst     a
+        tlt     x0,a                            ; under the knee: the table's first point, K (and |x| is the smaller)
         move    #>180224,x0
         move    #>180224,b
         cmp     a,b
@@ -399,8 +398,13 @@ o3v_ksat:
         sub     a,b
         move    b,y1
         mpy     x0,y1,a
-        add     y0,a
-o3v_ksgn:
+        add     y0,a                            ; the curve: never above |x| past the knee, K under it
+        move    a,x0
+        move    x0,b
+        move    x1,a
+        abs     a
+        cmp     a,b
+        tlt     x0,a                            ; the smaller of |x| and the curve (no branch: the cycle count's rule)
         move    x1,b
         tst     b
         bge     o3v_koff

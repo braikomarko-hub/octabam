@@ -63,7 +63,7 @@
 [
 "beq $",
 "beq $",
-"beq $188"
+"beq $18d"
 ],
 [
 "move (rN)+",
@@ -83,7 +83,7 @@
 [
 "bne $",
 "bne $",
-"bne $17f"
+"bne $184"
 ],
 [
 "move x:(rN),a",
@@ -113,7 +113,7 @@
 [
 "bra $",
 "bra $",
-"bra $188"
+"bra $18d"
 ],
 [
 "move #>,y1",
@@ -283,7 +283,7 @@
 [
 "do nN,$",
 "do nN,$",
-"do n7,$11a3"
+"do n7,$11a8"
 ],
 [
 "move x:(rN)+,y1",
@@ -459,6 +459,11 @@
 "add y1,a",
 "add D,A",
 "add y1,a"
+],
+[
+"move x0,b",
+"move D,A",
+"move x0,b"
 ],
 [
 "move x:(rN)+,y0",

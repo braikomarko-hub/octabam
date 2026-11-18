@@ -166,13 +166,14 @@ static inline int32_t o3d_drv(o3d_t *d, int32_t r) {
         int32_t x1 = o3d_out(d, a); int ng = x1 < 0;
         a = O3D_LD(ng ? -(int64_t)x1 : (int64_t)x1);                                /* move x1,a / abs a */
         int32_t K = ng ? o3d_kn : o3d_kp; const int32_t *D = ng ? o3d_tn : o3d_tp;
+        int64_t ax = a;                                                            /* |x| */
         a -= O3D_LD(K); o3d_dcnt[0]++;
-        if (a >= 0) {
-            o3d_dcnt[1 + ng]++;
-            if (a > O3D_LD(O3D_DLIM)) a = O3D_LD(O3D_DLIM);
-            int32_t dd = o3d_out(d, a), di = dd >> 13, df = (dd & 0x1fff) << 10;
-            a = O3D_MPY(df, D[di + 1] - D[di]) + O3D_LD(D[di]);
-        } else a += O3D_LD(K);
+        if (a >= 0) o3d_dcnt[1 + ng]++; else a = 0;                                /* under the knee: the first point, K */
+        if (a > O3D_LD(O3D_DLIM)) a = O3D_LD(O3D_DLIM);
+        int32_t dd = o3d_out(d, a), di = dd >> 13, df = (dd & 0x1fff) << 10;
+        a = O3D_MPY(df, D[di + 1] - D[di]) + O3D_LD(D[di]);
+        int32_t t = o3d_out(d, a);                                                 /* move a,x0: the curve, limited */
+        a = t < ax / O3D_LD(1) ? O3D_LD(t) : ax;                                    /* the smaller of |x| and the curve */
         r = o3d_out(d, ng ? -a : a);
     }
     return r;
