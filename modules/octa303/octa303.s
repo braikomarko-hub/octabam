@@ -2171,6 +2171,32 @@ o3_dquiet:
 |      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
 |      gv >> 1, the signature 0x3a5c 0x6517, the track's own VOL.  Clobbers d0, d1, a1.
 o3_dwrite:
+        move.l  E_UXV(%a3),%d0          | VOL x o3_xvt(XVOL) / 0x7f00: XVOL's own law, between two entries by its
+        move.l  %d0,%d1                 | low byte (an LFO's fraction)
+        lsr.l   #8,%d1
+        cmp.l   #127,%d1
+        bls     .Ldw_x
+        moveq   #127,%d1
+.Ldw_x:
+        lea     o3_xvt,%a1
+        lea     (%a1,%d1.l*2),%a1
+        mvz.w   (%a1),%d1
+        move.l  %d1,-(%sp)
+        mvz.w   2(%a1),%d1
+        sub.l   (%sp),%d1               | the step to the next entry (>= 0)
+        and.l   #0xff,%d0
+        muls.l  %d0,%d1
+        asr.l   #8,%d1
+        add.l   (%sp)+,%d1
+        move.l  E_UVOL(%a3),%d0         | both 0..0x7fff: the product fits 31 bits
+        muls.l  %d1,%d0
+        move.l  #0x7f00,%d1
+        divs.l  %d1,%d0
+        cmp.l   #0x7fff,%d0
+        ble     .Ldw_v
+        move.l  #0x7fff,%d0
+.Ldw_v:
+        move.l  %d0,-(%sp)
         bsr     o3_drbase
         clr.w   (%a1)
         move.l  #0x7f00,%d0
@@ -2188,15 +2214,7 @@ o3_dwrite:
         move.w  %d0,14(%a1)
         move.l  #0x6517,%d0
         move.w  %d0,16(%a1)
-        move.l  E_UVOL(%a3),%d0         | the level the insert applies: VOL x XVOL / 0x7f00 (it squares it)
-        move.l  E_UXV(%a3),%d1
-        muls.l  %d1,%d0                 | both 0..0x7fff: the product fits 31 bits
-        move.l  #0x7f00,%d1
-        divs.l  %d1,%d0
-        cmp.l   #0x7fff,%d0
-        ble     .Ldw_v
-        move.l  #0x7fff,%d0
-.Ldw_v:
+        move.l  (%sp)+,%d0              | the level the insert applies (it squares it)
         move.w  %d0,18(%a1)
         rts
         .endif
@@ -5218,6 +5236,31 @@ o3_lgate:                               | GATE's labels
 
 o3_df_neutral:
         .byte   25, 0, 0, 64, 0, 50, 0, 0, 1, 0, 0, 0
+        .if     O3_DSP
+        .align  4
+| O3_DSP, o3_dwrite: XVOL's level as the insert must be given it.  The stock gain of XVOL ahead of FX1 is
+| sin(pi/2 x/128) (the port, 18 Nov 2026: XVOL 64 = 0.70716 of XVOL 127, to 1 LSB, and 127 = 8387936 / 2^23); the
+| insert squares what it is given: 0x7f00 sqrt(sin(pi/2 x/128) / sin(pi/2 127/128)), x = 0..128.
+o3_xvt:
+        .short 0, 3602, 5093, 6238, 7202, 8051, 8818, 9524
+        .short 10179, 10794, 11375, 11928, 12454, 12959, 13443, 13910
+        .short 14361, 14797, 15219, 15629, 16027, 16414, 16791, 17159
+        .short 17517, 17868, 18210, 18544, 18871, 19192, 19505, 19812
+        .short 20113, 20408, 20697, 20981, 21260, 21533, 21801, 22064
+        .short 22323, 22577, 22826, 23072, 23312, 23549, 23781, 24010
+        .short 24234, 24455, 24672, 24885, 25094, 25300, 25502, 25701
+        .short 25896, 26088, 26277, 26462, 26644, 26823, 26999, 27171
+        .short 27340, 27506, 27670, 27830, 27987, 28141, 28292, 28441
+        .short 28586, 28728, 28868, 29005, 29139, 29270, 29399, 29524
+        .short 29647, 29767, 29885, 30000, 30112, 30221, 30328, 30432
+        .short 30533, 30632, 30728, 30822, 30913, 31001, 31087, 31171
+        .short 31251, 31329, 31405, 31478, 31549, 31617, 31682, 31745
+        .short 31806, 31863, 31919, 31972, 32022, 32070, 32116, 32159
+        .short 32199, 32237, 32273, 32306, 32337, 32365, 32391, 32414
+        .short 32435, 32453, 32469, 32483, 32494, 32502, 32508, 32512
+        .short 32513
+        .align  4
+        .endif
 o3_f_plus:
         .asciz  "+%d"
 o3_notes:                               | v7.0: o3_fmt_tune's names, two bytes each

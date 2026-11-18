@@ -112,6 +112,14 @@ def check(s, e, built):
 
 # ---- the shell's own call path (sy_render with the mock of OS 1.40C), O3_DSP = 1
 from harness import VREC, PINGW
+import math
+# XVOL's law as measured under the port (SONDA 8, 18 Nov 2026): the stock gain ahead of FX1 is sin(pi/2 x/128); the insert
+# squares what it is given.  The engine's table must be this one.
+XVT = [round(0x7f00 * math.sqrt(math.sin(math.pi / 2 * x / 128) / math.sin(math.pi / 2 * 127 / 128))) for x in range(129)]
+def xvt_in_source():
+    src = open(os.path.join(ROOT, 'modules', 'octa303', 'octa303.s')).read()
+    body = src[src.index('\no3_xvt:\n'):]; body = body[:body.index('.align')]
+    return [int(v) for l in body.split('\n') if '.short' in l for v in l.split('.short')[1].split(',')]
 def shell_chain(args, built):
     """the insert on FX1 (its knobs anything: not read), every frame an empty call [0,0) then the frame (half of them
     split at random), a START every 48 frames on a frame's first sample, accents alternating, AMP VOL as the frame
@@ -119,7 +127,8 @@ def shell_chain(args, built):
     gsel, nfr, tune, wave, seed, vol, df = args[:7]; xv = args[7] if len(args) > 7 else 0x7f00
     stops = args[8] if len(args) > 8 else (); src = args[9] if len(args) > 9 else SRC_D
     stopped = lambda f: any(a <= f < b for a, b in stops)
-    veff = min(vol * xv // 0x7f00, 0x7fff)            # what the insert is given: VOL x XVOL / 0x7f00 (o3_dwrite)
+    xt = XVT[xv >> 8] + (((XVT[(xv >> 8) + 1] - XVT[xv >> 8]) * (xv & 0xff)) >> 8)
+    veff = min(vol * xt // 0x7f00, 0x7fff)            # what the insert is given: VOL x o3_xvt(XVOL) / 0x7f00 (o3_dwrite)
     r = Rig(src); rnd = random.Random(seed); C = r.cpu.consts; st = C['o3_state'] + C['ST_SIZE'] * T7.T; m = r.cpu.mem
     fld = lambda n: T7.s32(m.r(st + C[n], 'l'))
     r.machine(T7.T, (wave, gsel, 64, 0, 0, 64)); r.voice(T7.T, True, 3); r.path(3, '/AUDIO/x.wav')
@@ -225,6 +234,7 @@ if __name__ == '__main__':
         nm, n, bad, d1, d3, nr, ng, _, _ = shell_chain(a[:6] + (df,), built)
         print('  %-28s campioni %6d (%d START, %d chiusure del gate) | frame con il foglietto sbagliato %d | L diversi %d | catena: campioni diversi %d' % (nm, n, nr, ng, bad, d1, d3))
         FAIL += bad + d1 + d3
+    xs = xvt_in_source(); print('tabella di XVOL nel motore = legge misurata (129 valori):', xs == XVT); FAIL += xs != XVT
     print('--- il guscio intero, effetto in FX1: GATE OFF in SETUP (forzato a 303), XVOL, STOP e PLAY, note da fermi')
     SRC_S = source(local={'O3_DSP': 1, 'O3_STGN': 20})        # a note played while stopped: 20 frames, to see it end
     for a, src in (((0, 480, 0, 0, 31, 0x4000, None, 0x7f00, ()), SRC_D), ((1, 480, 3, 1, 32, 0x7f00, None, 0x4000, ()), SRC_D),
