@@ -6,8 +6,8 @@
     python3 tools/octa303/dsp/port/forme_dsp.py out/dsp/payload_A.asm out/dsp/payload_B.asm
                                                     -> each form of forme_o3v.json: how many sites the stock payloads have
 
-A form = the instruction with its numbers removed: register numbers of rN / nN / mN, immediates, addresses, shift
-counts.  Two grains: 'stretta' keeps which data register (x0 x1 y0 y1 a b ...), 'larga' folds x0 x1 y0 y1 into D and
+A form = the instruction with its numbers removed: register numbers of rN / nN / mN, the values of immediates
+(short and long kept apart), addresses and branch targets, shift counts.  Two grains: 'stretta' keeps which data register (x0 x1 y0 y1 a b ...), 'larga' folds x0 x1 y0 y1 into D and
 a b a1 b1 a0 b0 into A.  It prints the insert's own forms and counts: nothing of the stock code."""
 import json, os, re, sys, collections
 HERE = os.path.dirname(os.path.abspath(__file__)); J = os.path.join(HERE, 'forme_o3v.json')
@@ -18,7 +18,9 @@ def ins(path):
         if t and not t.startswith('dc '): yield t
 def form(t, wide=False):
     t = re.sub(r'\b([rnm])[0-7]\b', r'\1N', t)
-    t = re.sub(r'#[<>]?\$?-?[0-9a-f]+', '#', t)
+    t = re.sub(r'#>\$?-?[0-9a-f]+', '#>', t)             # a long immediate (two words) is not the short one's form
+    t = re.sub(r'#<?\$?-?[0-9a-f]+', '#', t)
+    t = re.sub(r'\bfunc_[0-9a-f]+\b', '$', t)             # the disassembler's name for a branch target
     t = re.sub(r'(?<![a-z#])[<>]?\$[0-9a-f]+', '$', t)
     t = re.sub(r'\+\$?[0-9a-f]+\)', '+$)', t)
     if wide:

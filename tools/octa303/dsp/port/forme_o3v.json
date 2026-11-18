@@ -1,8 +1,8 @@
 {
 "forme": [
 [
-"move #,mN",
-"move #,mN",
+"move #>,mN",
+"move #>,mN",
 "move #>$ffffff,m5"
 ],
 [
@@ -31,8 +31,8 @@
 "move #$11,n5"
 ],
 [
-"move #,x0",
-"move #,D",
+"move #>,x0",
+"move #>,D",
 "move #>91614,x0"
 ],
 [
@@ -116,8 +116,8 @@
 "bra $184"
 ],
 [
-"move #,y1",
-"move #,D",
+"move #>,y1",
+"move #>,D",
 "move #>672,y1"
 ],
 [
@@ -161,8 +161,8 @@
 "move x:(r2),x0"
 ],
 [
-"and #,a",
-"and #,A",
+"and #>,a",
+"and #>,A",
 "and #>$7f00,a"
 ],
 [
@@ -186,8 +186,8 @@
 "add x0,a"
 ],
 [
-"and #,b",
-"and #,A",
+"and #>,b",
+"and #>,A",
 "and #>$ffff00,b"
 ],
 [
@@ -391,8 +391,8 @@
 "abs a"
 ],
 [
-"move #,b",
-"move #,A",
+"move #>,b",
+"move #>,A",
 "move #>1572864,b"
 ],
 [
@@ -421,8 +421,8 @@
 "move a1,n5"
 ],
 [
-"move #,rN",
-"move #,rN",
+"move #>,rN",
+"move #>,rN",
 "move #>6144,r5"
 ],
 [
@@ -451,8 +451,8 @@
 "cmp y1,b"
 ],
 [
-"move #,y0",
-"move #,D",
+"move #>,y0",
+"move #>,D",
 "move #>818505,y0"
 ],
 [

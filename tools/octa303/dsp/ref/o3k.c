@@ -123,7 +123,7 @@ int32_t o3_tr[8192][8], o3_troct;   /* debug: per control step G1..G4, kq, Dq, g
    every line below is one or two DSP56300 instructions on a 56-bit accumulator (here an int64 in units of a0's LSB),
    24-bit registers, fractional multiply ((x*y)<<1), `move a,x0` = a1 with saturation and no rounding. ---- */
 typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32_t g[4], kq, dq, gh, gv, vol;
-                 int32_t volc, vols, drv, raw;   /* 18 Nov 2026: the output's level (VOL^2) and its step a sample; DRIV's gain word; raw = y alone */
+                 int32_t volc, vols, drv, raw;   /* 18 Nov 2026: the output's level (VOL^2 x CV) and its step a sample; DRIV's gain word; raw = y alone */
                  long long sat, big; } o3d_t;
 static int o3_dref = 0, o3_dbits[5] = {24, 24, 24, 24, 24};   /* bits kept: G, kq, Dq, gain, Gv */
 static long long o3_dsat = 0, o3_dbig = 0;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OCTA303 vFable -- SONDA 10 (code written by Claude): the cases a normal use meets, under the port.
 
-    python3 tools/octa303/dsp/port/sonda10.py out/mainos_bus.bin --out DIR [--only P,U,K,Z]
+    python3 tools/octa303/dsp/port/sonda10.py out/mainos_bus.bin --out DIR [--only P,U,K]
 
   P  T5 = OCTA-303.  Parts 1 and 3: no insert; Parts 2 and 4: dEVILish on FX1.  While it plays the current pattern's
      Part is set to 2, to 1, to 2 (the stock routine 0x4004a8a4, docs/firmware/PARTS.md): the engine enters and
@@ -9,7 +9,6 @@
      travel in it, docs/firmware/DSP.md section 6).
   U  two voices: T2 (payload B) and T5 (payload A), dEVILish on FX1 of both, T2 an octave apart.
   K  T5 = OCTA-303, dEVILish on FX2 (FX1 none): the engine on the ColdFire, as ACIDF06.
-  Z  the project as it is on the card (no fixture): every track, 2000 frames.
 Per run and track a JSON as sonda4's (voce: the record's 32 halfwords, audio: the track's 168 words, rilettura: its 64),
 frame by frame.  The files hold what ran (samples, record words), no byte of the stock image."""
 import argparse, json, os, pathlib, re, shutil, subprocess, sys
@@ -25,8 +24,9 @@ ALL16 = list(range(1, 17))
 RUNS = {"P": dict(tracks=[4], frames=1700, fx={"1": ("NONE", "NONE"), "3": ("NONE", "NONE"), "2": ("DEVILISH", "NONE"), "4": ("DEVILISH", "NONE")},
                   at=[(500, PART_SET, 1), (900, PART_SET, 0), (1300, PART_SET, 1)], watch=True),
         "U": dict(tracks=[1, 4], frames=600, fx={"all": ("DEVILISH", "NONE")}, ptch={1: 76}),
-        "K": dict(tracks=[4], frames=400, fx={"all": ("NONE", "DEVILISH")}),
-        "Z": dict(tracks=list(range(8)), frames=2000, asis=True)}
+        "K": dict(tracks=[4], frames=400, fx={"all": ("NONE", "DEVILISH")})}
+# (no run of "the project as it is": ab_fixture.prepare, which stages a project for the port, makes every track FLEX
+#  with empty FX and clears every pattern's trigs and locks -- what would play is not the project.  That is the unit's.)
 
 def fixture(src, out, r_):
     d = prepare(src, out / "RIG")
@@ -101,7 +101,7 @@ def main():
     dot = pathlib.Path.home() / ".octabam_project"
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT") or (dot.read_text().strip() if dot.exists() else None))
     ap.add_argument("--out", default=str(ROOT / "out/octa303/sonda10"))
-    ap.add_argument("--only", default="P,U,K,Z")
+    ap.add_argument("--only", default="P,U,K")
     a = ap.parse_args()
     if not a.project: print("sonda 10: nessun progetto (OT_PROJECT o ~/.octabam_project)"); return 2
     if not (ROOT / "out/emu/ot_emu").exists(): print("sonda 10: manca l'emulatore (make emu-cf)"); return 2
