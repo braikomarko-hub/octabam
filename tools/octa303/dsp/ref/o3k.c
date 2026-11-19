@@ -208,8 +208,9 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
     int64_t a, b; int32_t x0, y0;
     {   /* FM (B2): g = G m, m = 2^((pq - 32) / 8) at pq = 32 + Yh F table steps (here Q15, halved: 2^20 the middle),
            within 0 .. pqmax / 2; m / 16 = (2^f / 2) x 2^e >> 7, f the place in the octave, e the octave; g = (G m/16) << 4.
-           FM 0: pq = 32, m = 1, g = G exactly */
+           FM 0: skipped, g = G as the frame set them (B2b: the insert branches over it; pqmax is not looked at) */
         int32_t y1, e;
+        if (d->F) {
         a = O3D_LD(1 << 20) + O3D_MPY(d->yh, d->F);
         if (a > O3D_LD(d->pqm)) a = O3D_LD(d->pqm);
         b = a >= 0 ? a : 0;                                                         /* clr b / max a,b */
@@ -220,6 +221,7 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
         a = O3D_LD(0x400000) + O3D_MPY(x0, y1);
         a = o3d_w56(a << e) >> 7; y1 = o3d_out(d, a);                               /* m / 16 */
         for (int j = 0; j < 4; j++) d->g[j] = o3d_out(d, o3d_w56(O3D_MPY(d->gs[j], y1) << 4));
+        }
     }
     a = O3D_LD(d->s1) - O3D_MPY(d->s1, d->g[0]);                                   /* zero-input pass */
     a -= O3D_LD(d->s2); x0 = o3d_out(d, a); a = O3D_LD(d->s2) + O3D_MPY(x0, d->g[1]);

@@ -26,7 +26,7 @@
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step; $b..$e the loop's g1..g4 (FM's
-; G m), $f gh, $10 gv, $11 gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
+; G m; the frame writes G there, which FM 0 keeps), $f gv, $10 gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
 ; $20..$2f the decoded payloads; from $30 the block r4 walks in the loop, in the order of use: FM's depth F,
 ; pqmax / 2, the cubic's c3 c2 c1, G1..G4, kq, dq, the ladder input's limit, its negative, its cubic's factor, the
 ; peak of y4^2 (SWP), Gm, sm, MUFF's limit, its negative, its factor, Gf5, shp (the 5 Hz high-pass), W (a bit every
@@ -42,34 +42,18 @@ init:
         do      #$4c,o3v_izero
         move    a,x:(r5)+
 o3v_izero:
-        move    #$f,n5
-        move    r7,r5
-        move    #>91614,x0
-        move    #>320130,y0
-        move    (r5)+n5
-        move    x0,x:(r5)                       ; gh, a constant of the laws ($f)
-        move    #$23,n5
+        move    #>320130,x0                      ; FM's cubic: c3, c2, c1
+        move    x0,x:(r7+$32)
         move    #>957597,x0
-        move    #>2915192,x1
-        move    (r5)+n5
-        move    y0,x:(r5)+                      ; FM's cubic: c3, c2, c1 ($32)
-        move    x0,x:(r5)+
-        move    x1,x:(r5)+
-        move    #$a,n5
-        move    #>88690,x0
-        move    #>2986,y0
-        move    (r5)+n5
-        move    x0,x:(r5)                       ; Gm, MUFF's one-pole ($3f)
-        move    #5,n5
-        move    #>$7fffff,x0
-        clr     a
-        move    (r5)+n5
-        move    y0,x:(r5)                       ; Gf5, FM's 5 Hz high-pass ($44)
-        move    #7,n5
-        clr     a
-        clr     b
-        move    (r5)+n5
-        move    x0,x:(r5)                       ; SWP's kgov = 1 ($4b)
+        move    x0,x:(r7+$33)
+        move    #>2915192,x0
+        move    x0,x:(r7+$34)
+        move    #>88690,x0                       ; Gm, MUFF's one-pole
+        move    x0,x:(r7+$3f)
+        move    #>2986,x0                      ; Gf5, FM's 5 Hz high-pass
+        move    x0,x:(r7+$44)
+        move    #>$7fffff,x0                    ; SWP's kgov = 1
+        move    x0,x:(r7+$4b)
         rts
 proc:
         move    #>$ffffff,m1
@@ -162,18 +146,16 @@ o3v_low:
         tst     b
         bne     o3v_bad
 ; ---- seven 23-bit numbers: (hi << 8) + lo ----------------------------------------------------------------
-        move    #$35,n5
-        move    r7,r2
-        move    r7,r5
-        clr     a
-        move    (r2)+n2                         ; r2 = payload 1
-        move    (r5)+n5                         ; r5 = G1
+        lua     (r7+$21),r2                     ; r2 = payload 1
+        lua     (r7+$35),r5                     ; r5 = G1
+        lua     (r7+$b),r1                      ; r1 = g1: G there too (g = G while FM is 0, the loop skips FM)
         do      #6,o3v_asm
         move    x:(r2)+,a
         asl     #8,a,a
         move    x:(r2)+,x0
         add     x0,a
         move    a1,x:(r5)+                      ; G1 G2 G3 G4 kq dq
+        move    a1,x:(r1)+                      ; (kq and dq land on gv and gt, written below)
 o3v_asm:
         move    x:(r2)+,a
         asl     #8,a,a
@@ -200,10 +182,10 @@ o3v_asm:
         and     #>$ffff00,a                     ; (an LFO's fraction never reaches gv)
         move    (r5)-n5                         ; r5 = F ($30)
         asr     #7,a,a                          ; gv
-        move    #$20,n5
+        move    #$21,n5
         move    b,x:(r5)
         move    y0,b                            ; gt
-        move    (r5)-n5                         ; r5 = gv ($10)
+        move    (r5)-n5                         ; r5 = gv ($f)
         move    a1,x:(r5)+                      ; (gv: a1 alone, positive)
         move    b,x:(r5)
 ; ---- the gain's step: (gt - gain) >> 4, 48 bits -----------------------------------------------------------
@@ -311,7 +293,8 @@ o3v_kg:
         move    y1,b
         cmp     b,a
         ble     o3v_nsw                         ; dq at its cap ($7fffff): the quotient would not fit, dq as it is
-        do      #24,o3v_dv                      ; (C is clear: the compare borrowed nothing)
+        andi    #$fe,ccr                        ; C = 0: the quotient's first bit
+        do      #24,o3v_dv
         div     x0,b
 o3v_dv:
         move    b0,x0
@@ -330,7 +313,7 @@ o3v_nsw:
         asr     #4,a,a
         move    (r2)-
         move    a1,x0
-        move    x0,x:(r2)+                      ; its step ($16)
+        move    x0,x:(r2)+                      ; its step ($49)
         move    x0,a
         tst     a
         bne     o3v_run
@@ -352,7 +335,10 @@ o3v_run:
 ; ---- FM: g = G m, m = 2^((pq - 32) / 8), pq = 32 + Yh F table steps (Q15 here, halved) within 0 .. pqmax: m / 16 =
 ;      (2^f / 2, a cubic in f, the place in the octave) x 2^e >> 7, e the octave; g = (G m/16) << 4.  FM 0: m = 1, g = G.
         move    x:(r4)-n4,x0                    ; Yh; r4 on F
-        move    x:(r4)+,y1                      ; F
+        move    x:(r4)+,b                       ; F
+        tst     b
+        beq     o3v_nfm                         ; FM 0: m = 1, g = G as the frame wrote them
+        move    b,y1
         move    #$10,a                          ; 2^20
         mac     x0,y1,a
         move    x:(r4)+,x0                      ; pqmax / 2
@@ -391,6 +377,8 @@ o3v_run:
         asl     #4,a,a
         move    a,x:(r5)+                       ; g4
         move    r3,r5
+o3v_nfm:
+        lua     (r7+$39),r4                     ; r4 = kq
 ; ---- zero-input pass --------------------------------------------------------------------------------------
         move    x:(r1)+,x0
         move    x0,a
@@ -479,14 +467,14 @@ o3v_run:
         add     a,b
         move    b,x:(r1)+
 ; ---- the loop's high-pass ---------------------------------------------------------------------------------
-        move    a,y0                            ; y4 (r5 on gh)
+        move    a,y0                            ; y4 (r5 on gv)
         mpy     y0,y0,b x:(r4),x0               ; SWP: the peak of y4^2 / 2^23
         cmp     x0,b
         tlt     x0,b
         move    b,x:(r4)+
         move    x:(r1),x1
         sub     x1,a
-        move    x:(r5)+,y1
+        move    #>91614,y1                       ; gh, a constant of the laws
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
