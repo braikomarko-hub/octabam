@@ -1071,6 +1071,9 @@ def main():
              # from the others the remix does not list (ACIDV91: no ATOMIZER, no demand loader)
              # FET76 on a new id; FLANGER given up to join the two runs (its 289 words)
              "acidtrack": ("SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS", "PLATE REV", "SPRING REV"),
+             # acidtrack + OCTA303 SEAM: COMPRESSOR, LO-FI and DJ EQ out for the seam's code (DJ EQ out: the P tables in X)
+             "acidhyb": ("SPATIALIZER", "EQUALIZER", "PHASER", "FLANGER", "CHORUS", "PLATE REV", "SPRING REV",
+                         "COMPRESSOR", "LO-FI", "DJ EQ"),
              "dl-probe": ("EQUALIZER",), "dl-probe-any": ("EQUALIZER",),   # DLPROBE takes EQUALIZER's id
              "ext-probe": ("EQUALIZER",),   # EXTPROBE takes EQUALIZER's id
              "stock-meter-a": ("PHASER",), "stock-meter-b": ("SPATIALIZER",),   # LOAD METER's DSP half in the given-up effect's words
