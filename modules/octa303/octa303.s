@@ -222,6 +222,12 @@
         .set    S_P2D2,480
         .set    S_P2D3,484
         .set    S_P2DA,488                      | and page 1's source address
+| v9.0 the hybrid (O3 SEAM): the track's block in o3_hyb
+        .set    H_U,0                           | u of each sample of the frame, 16 longs
+        .set    H_P,64                          | three pieces, 11 longs each: n c1 b k clg cli cll w2 gcomp amp step
+        .set    H_NP,196                        | pieces this frame
+        .set    H_START,200                     | the frame's first rendered sample + 1 (0: none yet)
+        .set    H_MODE,208                      | 1: the DSP has the voice (its states live there)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -652,6 +658,39 @@ sy_render:
         lsl.l   #3,%d0
         lea     (%a1,%d0.l),%a6
         moveq   #11,%d7                 | it holds the shift 11 (FM411, the VCO's >> 11) for the whole loop
+        .if     O3_SEAM
+        move.l  52(%sp),%d0             | v9.0 (O3 SEAM, the hybrid): the DSP renders the chain after u when the
+        lsl.l   #8,%d0                  | voice has no FM, no MUFF, no DIST and DRIV 0 (o3h.asm at the source seam);
+        lea     o3_hyb,%a2              | a2 = the track's hybrid block (the header is not read past this point)
+        add.l   %d0,%a2
+        tst.l   S_FMQ(%a3)
+        bne     .LHcf
+        tst.l   S_MUFF(%a3)
+        bne     .LHcf
+        tst.l   S_DIST(%a3)
+        bne     .LHcf
+        move.l  S_OSIN(%a3),%d0
+        cmp.l   #DRV_G0,%d0
+        beq     .LHrender
+.LHcf:
+        tst.l   H_MODE(%a2)             | back from the DSP: the ColdFire's chain starts from rest (its states
+        beq     .LHcf0                  | were not kept while the DSP had the voice)
+        clr.l   H_MODE(%a2)
+        moveq   #0,%d0
+        move.l  %d0,S_Y1(%a3)
+        move.l  %d0,S_Y2(%a3)
+        move.l  %d0,S_Y3(%a3)
+        move.l  %d0,S_Y4(%a3)
+        move.l  %d0,S_FB(%a3)
+        move.l  %d0,S_DC(%a3)
+        move.l  %d0,S_TONE(%a3)
+        move.l  %d0,S_OVCA(%a3)
+        move.l  %d0,S_MLO(%a3)
+        move.l  %d0,S_VP1(%a3)
+        move.l  %d0,S_VP2(%a3)
+        move.l  %d0,S_FBO(%a3)
+.LHcf0:
+        .endif
         tst.l   S_FMQ(%a3)              | v8.8: the neutral case runs .LFloop (same samples, fewer tests)
         bne     .Lloop
         tst.l   S_WAVE(%a3)
@@ -1332,6 +1371,265 @@ sy_render:
         move.l  %d6,(%a1)+
         cmpa.l  %a6,%a1                 | v8.4: to the end pointer (d7 holds 11)
         bne     .LFloop
+        .if     O3_SEAM
+| ---------------------------------------------------------------- v9.0 the hybrid: the ColdFire half
+| (coordination, 19 Nov 2026; tools/octa303/ibrido3/hyb.py is its model, the record's format in its docstring).
+| Each sample up to u (VCO, the input highpass, OVDR's gain, the noise) into the track's hybrid block; the control
+| words in pieces (a piece opens at the call and after each control step); at the frame's last call the record
+| goes into the track's source slot for o3h.asm.  amp is kept here as max(0, amp + n * step) per piece.
+.LHrender:
+        move.l  60(%sp),%d0             | this call's first sample; 0 = a new frame (its first call is [0, s) or
+        bne     .LHsame                 | [0, 16)): no pieces, no first sample yet (the record's write clears
+        clr.l   H_NP(%a2)               | them too: a frame whose first call was not ours starts clean)
+        clr.l   H_START(%a2)
+.LHsame:
+        tst.l   H_START(%a2)            | H_START = the frame's first rendered sample + 1 (0: none yet)
+        bne     .LHst
+        move.l  %d0,%d1
+        addq.l  #1,%d1
+        move.l  %d1,H_START(%a2)
+.LHst:
+        lsl.l   #2,%d0
+        lea     H_U(%a2),%a1
+        add.l   %d0,%a1
+        move.l  o3_pn,%d0               | its samples: to a6
+        lsl.l   #2,%d0
+        lea     (%a1,%d0.l),%a6
+        bsr     .LHopen
+.LHloop:
+        subq.l  #1,S_CS(%a3)
+        bne     .LHnoctl
+        bsr     .LHclose
+        moveq   #CS,%d0
+        move.l  %d0,S_CS(%a3)
+        bsr     o3_ctrl
+        bsr     .LHopen
+.LHnoctl:
+        move.l  S_INC(%a3),%d5          | VCO
+        move.l  S_PHASE(%a3),%d4
+        add.l   %d5,%d4
+        move.l  %d4,S_PHASE(%a3)
+        tst.l   S_WAVE(%a3)
+        bne     .LHsq
+        move.l  %d4,%d6                 | saw
+        lsr.l   %d7,%d6
+        sub.l   #0x100000,%d6
+        cmp.l   %d5,%d4                 | polyBLEP only within one increment of the wrap
+        bcs     .LHsb
+        move.l  %d4,%d0
+        neg.l   %d0
+        cmp.l   %d5,%d0
+        bcc     .LHosc
+.LHsb:
+        move.l  %d4,%d0
+        bsr     o3_blep
+        lsl.l   #5,%d0
+        sub.l   %d0,%d6
+        bra     .LHosc
+.LHsq:
+        move.l  %d4,%d6                 | v7.6: Q8's square (o3q8.py) = its cycle's smooth part (a table, 128
+        lsr.l   %d7,%d6                 | points, linear) + SQK * the saw (with its polyBLEP): the one hard edge
+                                        | is the saw's reset
+        sub.l   #0x100000,%d6
+        cmp.l   %d5,%d4
+        bcs     .LHqb
+        move.l  %d4,%d0
+        neg.l   %d0
+        cmp.l   %d5,%d0
+        bcc     .LHqn
+.LHqb:
+        move.l  %d4,%d0
+        bsr     o3_blep
+        lsl.l   #5,%d0
+        sub.l   %d0,%d6
+.LHqn:
+        FM78    %d6,S_SQK(%a3)
+        move.l  S_SQTP(%a3),%a0
+        move.l  %d4,%d0
+        moveq   #25,%d1
+        lsr.l   %d1,%d0                 | i = phase >> 25
+        move.w  (%a0,%d0.l*2),%d2
+        ext.l   %d2                     | c0
+        addq.l  #1,%d0
+        moveq   #127,%d1
+        and.l   %d1,%d0
+        move.w  (%a0,%d0.l*2),%d3
+        ext.l   %d3
+        sub.l   %d2,%d3                 | c1 - c0
+        move.l  %d4,%d1
+        lsr.l   #8,%d1
+        lsr.l   #2,%d1
+        and.l   #0x7FFF,%d1             | fr = (phase >> 10) & 0x7FFF
+        muls.l  %d1,%d3
+        asr.l   #8,%d3
+        asr.l   #7,%d3
+        add.l   %d3,%d2
+        lsl.l   #5,%d2
+        add.l   %d2,%d6
+        move.l  %d6,%d0                 | the 303's square has softer edges than Q8's alone: a one-pole
+        sub.l   S_SQL(%a3),%d0          | (fitted, as v6.9); the step clamped so the multiply fits 32 bits
+        CLAMP   %d0,-SQL_DLIM,SQL_DLIM
+        FM411   %d0,K_SQLP(%a5)
+        add.l   S_SQL(%a3),%d0
+        move.l  %d0,S_SQL(%a3)
+        move.l  %d0,%d6
+.LHosc:
+        move.l  %d6,%d0                 | VCO->VCF coupling highpass, level
+        sub.l   S_HP(%a3),%d0
+        FM411   %d0,K_PREHP(%a5)
+        add.l   S_HP(%a3),%d0
+        move.l  %d0,S_HP(%a3)
+        sub.l   %d0,%d6
+        tst.l   S_GINQ15(%a3)           | OVDR: up to normal, v6.1's product exactly...
+        beq     .LHov
+        FM78    %d6,S_GIN(%a3)
+        bra     .LHov2
+.LHov:
+        asr.l   #6,%d6                  | ...above it, to 66.6x (Q10)
+        muls.l  S_GIN(%a3),%d6
+        asr.l   #4,%d6
+.LHov2:
+        moveq   #2,%d0                  | SWP 1/0: the analogue noise floor (~-84 dB), so the filter
+        cmp.l   S_SWP(%a3),%d0          | can self-oscillate with no VCO
+        beq     .LHnz9
+        move.l  S_NZ(%a3),%d0
+        bne     .LHnz0
+        move.l  #0x1D872B41,%d0
+.LHnz0:
+        move.l  %d0,%d1
+        lsr.l   #1,%d0
+        btst    #0,%d1
+        beq     .LHnz1
+        eor.l   #0xD0000001,%d0
+.LHnz1:
+        move.l  %d0,S_NZ(%a3)
+        btst    #0,%d0
+        beq     .LHnzm
+        add.l   #64,%d6
+        bra     .LHnz9
+.LHnzm:
+        sub.l   #64,%d6
+.LHnz9:
+        move.l  %d6,(%a1)+              | u
+        addq.l  #1,(%a4)                | the piece's n
+        cmpa.l  %a6,%a1
+        bne     .LHloop
+        bsr     .LHclose
+        moveq   #16,%d0
+        cmp.l   64(%sp),%d0             | the frame's last call: the record
+        bne     .Ldone
+        move.l  52(%sp),%d0             | 0x80001c90 + (ping & 1) * 0xa80 + 336 * track (ab_render's slot)
+        move.l  #336,%d1
+        muls.l  %d1,%d0
+        add.l   #0x80001c90,%d0
+        moveq   #1,%d1
+        and.l   56(%sp),%d1
+        beq     .LHr0
+        add.l   #0xa80,%d0
+.LHr0:
+        move.l  %d0,%a0
+        move.l  %d0,%a6
+        move.l  #0xA303,%d0
+        move.w  %d0,(%a0)+              | w0 the signature
+        moveq   #1,%d0                  | w1 a new voice: the DSP's states from zero
+        tst.l   H_MODE(%a2)
+        beq     .LHr1
+        moveq   #0,%d0
+.LHr1:
+        move.w  %d0,(%a0)+
+        move.l  #0x0303,%d0
+        move.w  %d0,(%a0)+              | w2 the signature
+        move.l  H_NP(%a2),%d1
+        move.l  %d1,%d0
+        lsl.l   #8,%d0
+        add.l   H_START(%a2),%d0
+        subq.l  #1,%d0
+        move.w  %d0,(%a0)+              | w3 start | pieces << 8
+        lea     H_P(%a2),%a4
+.LHr2:
+        move.l  (%a4)+,%d0              | n c1 b k clg cli: halves
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0              | cll: high half, low half
+        swap    %d0
+        move.w  %d0,(%a0)+
+        swap    %d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0              | w2 gcomp
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0              | amp: high half, low half
+        swap    %d0
+        move.w  %d0,(%a0)+
+        swap    %d0
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0              | ampstep (signed, 16 bits)
+        move.w  %d0,(%a0)+
+        subq.l  #1,%d1
+        bne     .LHr2
+        lea     88(%a6),%a0             | w44: u, sixteen longs (high half first)
+        lea     H_U(%a2),%a4
+        moveq   #16,%d1
+.LHr3:
+        move.l  (%a4)+,(%a0)+
+        subq.l  #1,%d1
+        bne     .LHr3
+        moveq   #1,%d0
+        move.l  %d0,H_MODE(%a2)
+        clr.l   H_NP(%a2)               | the next frame starts clean
+        clr.l   H_START(%a2)
+        bra     .Ldone
+| .LHopen: a new piece, a4 = it: n = 0 and this sample's control words.  Clobbers d0 (keeps the rest).
+.LHopen:
+        move.l  H_NP(%a2),%d0
+        cmp.l   #3,%d0                  | (three at most a frame: the call's, the control step's, the second
+        bcs     .LHo1                   | call's; a fourth would write past the block: keep the third)
+        moveq   #2,%d0
+        subq.l  #1,H_NP(%a2)
+.LHo1:
+        addq.l  #1,H_NP(%a2)
+        mulu.w  #44,%d0
+        lea     H_P(%a2),%a4
+        add.l   %d0,%a4
+        moveq   #0,%d0
+        move.l  %d0,(%a4)
+        move.l  S_C1(%a3),4(%a4)
+        move.l  S_B(%a3),8(%a4)
+        move.l  S_K(%a3),12(%a4)
+        move.l  S_CLG(%a3),16(%a4)
+        move.l  S_CLI(%a3),20(%a4)
+        move.l  S_CLL(%a3),24(%a4)
+        move.l  S_W2(%a3),28(%a4)
+        move.l  S_GCOMP(%a3),32(%a4)
+        move.l  S_AMP(%a3),36(%a4)
+        move.l  S_AMPSTEP(%a3),40(%a4)
+        rts
+| .LHclose: the piece a4 ends: amp = max(0, amp + n * step); an empty piece is dropped.  Clobbers d0, d1.
+.LHclose:
+        move.l  (%a4),%d0
+        bne     .LHc1
+        subq.l  #1,H_NP(%a2)
+        rts
+.LHc1:
+        move.l  40(%a4),%d1
+        muls.l  %d0,%d1
+        add.l   36(%a4),%d1
+        bpl     .LHc2
+        moveq   #0,%d1
+.LHc2:
+        move.l  %d1,S_AMP(%a3)
+        rts
+        .endif
 .Ldone:
         tst.l   o3_pflag                | stopwatch: a call that ran the sample loop adds its times to its track's row
         beq     .Lpf_x
@@ -6803,6 +7101,10 @@ o3_pflag: .long 0
         .align  4
 o3_state:
         .fill   ST_SIZE*NTRACKS, 1, 0
+        .if     O3_SEAM
+o3_hyb:                                 | v9.0: the hybrid's block a track (H_*), 256 bytes
+        .fill   256*NTRACKS, 1, 0
+        .endif
 o3_desc:
         .fill   O3_DLEN, 1, 0                   | v7.0: the machine's record (v7.9: the TB303* sample's clone is gone)
         .align  4

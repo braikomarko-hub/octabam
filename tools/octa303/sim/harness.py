@@ -32,19 +32,22 @@ def hooks_flags():
     return next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
                 and any(getattr(t, 'id', None) == 'FLAGS' for t in n.targets)).values()
 
-def remix_inc(devilish=True):
+def remix_inc(devilish=True, seam=False):
     """What the build writes as remix.inc (modules/octa303/manifest.py remix_inc): OCTA303
-    alone, so every HOOKS flag 0 (its own bytes)."""
+    alone, so every HOOKS flag 0 (its own bytes); O3_SEAM 1 with OCTA303 SEAM (the hybrid)."""
     return ('        .set    DEVIL_ID, 0x%x\n' % (DEVIL_ID if devilish else 0x100)
+            + '        .set    O3_SEAM, %d\n' % (1 if seam else 0)
             + ''.join('        .set    %s, 0\n' % f for f in hooks_flags()))
 
-def _unflag(s):
+def _unflag(s, seam=False):
     """The .if / .else / .endif blocks on a HOOKS flag resolved as OCTA303 alone builds them (every
-    flag 0): cfsim has no conditional assembly."""
+    flag 0), and on O3_SEAM as asked: cfsim has no conditional assembly."""
     flags, out, keep = set(hooks_flags()), [], [True]
     for line in s.split('\n'):
         tok = line.split('|')[0].split()
         if tok[:1] == ['.if']:
+            if tok[1:] == ['O3_SEAM']:
+                keep.append(bool(seam)); continue
             if tok[1:] and tok[1] not in flags and all(keep):    # nested in a dropped block: any symbol
                 raise ValueError('cfsim harness: .if on ' + ' '.join(tok[1:]) + ', not a HOOKS flag')
             keep.append(False)
@@ -56,10 +59,10 @@ def _unflag(s):
             out.append(line)
     return '\n'.join(out)
 
-def source(devilish=True):
+def source(devilish=True, seam=False):
     s = open(SRC_PATH).read()
     assert s.count('.include "remix.inc"') == 1
-    return _unflag(s.replace('        .include "remix.inc"', remix_inc(devilish).rstrip('\n'), 1))
+    return _unflag(s.replace('        .include "remix.inc"', remix_inc(devilish, seam).rstrip('\n'), 1), seam)
 
 class Rig:
     def __init__(self, src=None):

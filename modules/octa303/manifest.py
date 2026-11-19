@@ -35,11 +35,13 @@ DEVIL_ID = 0x10
 
 
 def remix_inc(modules, remix=None):
-    """remix.inc for octa303.s: dEVILish's FX id when the remix carries it.
+    """remix.inc for octa303.s: dEVILish's FX id when the remix carries it; O3_SEAM = 1 with OCTA303 SEAM
+    (modules/octa303-seam: the hybrid, the chain after u on the DSP at the source seam).
 
     The build calls include(modules, remix) (schema.Linked.include); the remix is not needed here."""
     from remix import hooks_flags
     return ("        .set    DEVIL_ID, 0x%x\n" % (DEVIL_ID if "DEVILISH" in modules else 0x100)
+            + "        .set    O3_SEAM, %d\n" % (1 if "OCTA303 SEAM" in modules else 0)
             + hooks_flags.inc("OCTA303", modules))
 
 
