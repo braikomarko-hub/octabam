@@ -23,6 +23,8 @@ B2b (halfword 11 latched and in the sum, FM skipped at 0; thresholds soglie_B2b.
       ColdFire) the same too (thresholds 2 and 7)
   t12 a foreign halfword 11 (0x3200, 0, 20 random values) is refused exactly like a wrong sum in the same frames (3)
   t13 the ColdFire's cost against d24e7173: engine and shell within + 10 instructions a frame (6)
+C1 (20 Nov 2026): the older commits' engines are built with this tree's generated block (old_source, with_tables_now):
+these parts prove code; the knob laws' change is proven against a4691b8d by prova7.py.
 Run tools/octa303/dsp/build.sh first.  `prova6.py t3` (etc.): that part only."""
 import os, sys, random, subprocess, collections, ctypes, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
@@ -135,8 +137,17 @@ def host(F, binf, proc):
     r = subprocess.run([P3.HOST, binf, '%x' % P3.ORG, '%x' % P3.ORG, '%x' % proc, P3.WORK + '/ytab.bin', 'p%x' % P3.PTP, SCR + '/in.bin', SCR + '/out.bin'], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     return np.fromfile(SCR + '/out.bin', np.int32).reshape(-1, 33)[:, :32]
-def old_source(rev=BASE, dsp=1):
-    p = SCR + '/octa303_%s.s' % rev; open(p, 'w').write(git_show('modules/octa303/octa303.s', rev))
+GEN = ('| ---- o3e generated:', '| ---- o3e generated: end')
+def with_tables_now(src):
+    """C1 (20 Nov 2026): src's code with this tree's generated block (gen_o3e_v7.py: the tables, the scalars, the knee
+    tables).  The blocks of 73f0188f, d24e7173 and a4691b8d are byte-identical, so until a knob law moves this is the
+    commit's own source; t3, t10, t11, t13 prove code, and a law's change is proven against its own commit (prova7.py)"""
+    cur = open(os.path.join(P3.ROOT, 'modules', 'octa303', 'octa303.s')).read()
+    blk = lambda s: s[s.index(GEN[0]):s.index(GEN[1], s.index(GEN[0])) + len(GEN[1])]
+    return src.replace(blk(src), blk(cur))
+def old_source(rev=BASE, dsp=1, own_tables=False):
+    p = SCR + '/octa303_%s%s.s' % (rev, '_own' if own_tables else ''); s = git_show('modules/octa303/octa303.s', rev)
+    open(p, 'w').write(s if own_tables else with_tables_now(s))
     save = harness.SRC_PATH; harness.SRC_PATH = p
     try: return harness.source(local={'O3_DSP': dsp})
     finally: harness.SRC_PATH = save
