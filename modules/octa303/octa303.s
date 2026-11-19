@@ -351,6 +351,11 @@ sy_render:
 .Lfirst:
         tst.l   S_LATCHED(%a3)
         beq     .Lstock                 | not an OCTA303 track (or its first note's frame): stock
+        .if     O3_DSP                  | an empty call [0,0) renders nothing and reads no knob (the frame's next call
+        move.l  64(%sp),%d0             | does: the record is still the frame builder's)
+        cmp.l   60(%sp),%d0
+        beq     .Lskip
+        .endif
         bsr     o3_params               | a first call [0,n): this call's knobs, as .Lnorest did
 .Lskip:
         move.l  64(%sp),%d0
