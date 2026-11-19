@@ -5,7 +5,7 @@
 ;      two calls, see o3v_first).  L = the oscillator (x << 2, through the gain ahead of FX1).
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
-;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
+;      bits 7..0); 15 = the sum of payloads 1..14 and of halfword 11 (below), 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
 ;      x:(r6+3) = the level's halfword (<< 8; the engine's VOL x XVOL's law): the output is the voice x 4 x
 ;      (it / $7f00)^2, reached a sixteenth of the way a sample (no steps a frame).
 ;      x:(r6+4) = DRIV's gain G (Q12) as a halfword (<< 8): $100000 = DRIV 0, nothing; else x = y G and, above the
@@ -18,7 +18,8 @@
 ;      the four g = G m, m from the output's 5 Hz high-pass held every 4th sample.  SWP: the ladder input's cubic soft
 ;      clip, and the governor of the self-oscillation, here (it needs y4): the engine sends kq and dq without it
 ;      (tools/octa303/dsp/ref/o3k.c, o3d_*).
-;      A frame is taken only if the mark, the sum and the six low-byte payloads 2..12 (nothing above bit 7) all agree.
+;      A frame is taken only if the mark, the sum and the six low-byte payloads 2..12 (nothing above bit 7) all agree:
+;      a halfword 11 that is not the one the engine summed is refused like a wrong sum (B2b).
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step; $b..$e the loop's g1..g4 (FM's
@@ -136,6 +137,9 @@ o3v_dec:
         move    x:(r2)+,x0
         add     x0,b
 o3v_sum:
+        move    x:(r6+5),a                      ; halfword 11 (<< 8) is in the sum too
+        asr     #8,a,a
+        add     a,b
         move    #>$7fff,x0
         and     x0,b
         move    x:(r2),x0

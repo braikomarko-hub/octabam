@@ -36,14 +36,15 @@ def build(gh):
     for l in open(WORK+'/o3v.sym') if os.path.exists(WORK+'/o3v.sym') else []: k,v=l.split(); lab[k]=int(v,16)
     return r.stdout, lab
 def frames(C,X,mark=0x7fff):
-    """C: frames of 13 numbers (wide()); the halfword 11 into the record, FM's depth into payload 14's bits 8..14"""
+    """C: frames of 13 numbers (wide()); the halfword 11 into the record (and into the sum, B2b), FM's depth into
+    payload 14's bits 8..14"""
     n=len(C); F=np.zeros((n,52),np.int32)
     for f in range(n):
         g1,g2,g3,g4,kq,dq,gt,gv,gh,vol,drv,hw,fm=[int(v) for v in C[f][:13]]
         pay=[mark]
         for c in (g1,g2,g3,g4,kq,dq,gt): assert 0<=c<(1<<23); pay+=[c>>8,c&0xff]
         assert 0<=fm<128 and 0<=hw<32768; pay[14]|=fm<<8
-        pay.append(sum(pay[1:])&0x7fff)
+        pay.append((sum(pay[1:])+hw)&0x7fff)
         assert gv%2==0 and gv<(1<<16)
         F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700; F[f,35]=vol; F[f,36]=drv; F[f,37]=hw<<8
     return F

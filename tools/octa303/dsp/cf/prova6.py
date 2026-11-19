@@ -131,6 +131,10 @@ def old_source():
     save = harness.SRC_PATH; harness.SRC_PATH = p
     try: return harness.source(local={'O3_DSP': 1})
     finally: harness.SRC_PATH = save
+def oldsum(F):
+    """frames as an insert before B2b takes them: payload 15 without halfword 11"""
+    F = F.copy(); F[:, 31] = [P3.send((P4.decode(F[f, 31]) - (int(F[f, 37]) >> 8)) & 0x7fff) for f in range(len(F))]
+    return F
 class EngOld(T7.Eng):
     def __init__(self, src):
         self.rig = P4.Rig(src); c = self.cpu = self.rig.cpu; self.C = c.consts; self.st = self.C['o3_state'] + self.C['ST_SIZE'] * T7.T
@@ -144,7 +148,7 @@ def t3():
     CASES = [(0,0,127,0),(0,127,127,1),(127,0,127,1),(127,127,127,0),(64,64,64,0),(40,100,64,1),(90,127,0,0),(20,64,127,1),(0,0,127,1),(127,127,127,1),(64,127,64,1),(127,100,0,0)]
     for c in CASES:
         y, C, X = P3.ref(P3.ev(*c)); F = P3.frames(C, X)
-        a, b = host(F, newb, built()[0]), host(F, SCR + '/o3v_old.bin', oproc); d += int((a != b).sum()); n += a.size
+        a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_old.bin', oproc); d += int((a != b).sum()); n += a.size
     for seed, loud in ((1, True), (2, True), (3, False), (4, False)):
         r = np.random.default_rng(seed); nf = 4000
         C = np.zeros((nf, 13), np.int32); C[:, 9] = r.integers(0, 0x7fff, nf) * 256; C[:, 11] = P3.HW0
@@ -154,7 +158,7 @@ def t3():
         F = P3.frames(C, X)
         for k in (0, 1, 7, 15):
             F[:, 51] = k if k else r.integers(0, 16, nf)
-            a, b = host(F, newb, built()[0]), host(F, SCR + '/o3v_old.bin', oproc); d += int((a != b).sum()); n += a.size
+            a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_old.bin', oproc); d += int((a != b).sum()); n += a.size
     print('   (a) the insert, prova3\'s inputs (whole frames and in pieces): %d words, %d differ' % (n, d)); FAIL += d
     # (b) the engine alone: prova4's engine scenarios and prova5's patterns -- L, R and gv the same
     SRC_OLD = old_source()

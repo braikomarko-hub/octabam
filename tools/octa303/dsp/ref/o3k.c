@@ -124,7 +124,9 @@ int32_t o3_tr[8192][8], o3_troct;   /* debug: per control step G1..G4, kq, Dq, g
    24-bit registers, fractional multiply ((x*y)<<1), `move a,x0` = a1 with saturation and no rounding. ---- */
 typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32_t g[4], kq, dq, gh, gv, vol;
                  int32_t volc, vols, drv, raw;   /* 18 Nov 2026: the output's level (VOL^2 x CV) and its step a sample; DRIV's gain word; raw = y alone */
-                 int32_t hw, fm;                 /* B2 (19 Nov 2026): the record's halfword 11 and FM's depth (payload 14's bits 8..14), as sent */
+                 int32_t hw, fm;                 /* B2 (19 Nov 2026): the record's halfword 11 and FM's depth (payload 14's bits 8..14), as sent
+                                                    (B2b: hw is in payload 15's sum; the insert refuses a frame whose hw is not; the
+                                                    reference takes the frames it is given and does not check sums) */
                  int32_t sm, lm, nlm, km;        /* MUFF: the 150 Hz one-pole's state; the frame's limit, its negative, the cubic's factor */
                  int32_t F, pqm, gs[4], lu, nlu, shp, w, yh;   /* FM: its depth x 64680, pqmax / 2, the G's; the ladder input's
                                                     limit, its negative; the 5 Hz high-pass, the 4th samples' bits, the held source */

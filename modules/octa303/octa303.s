@@ -2201,8 +2201,7 @@ o3_dquiet:
 | ---- o3_dwrite (O3_DSP; d2 = track, a3 = state), after a call that rendered: the voice record for the insert.
 |      AMP ATK / HOLD / REL := 0, 0x7f00, 0x7f00 (CX OSC's override) and VOL := 0x7f00, BAL := 0x4000, XVOL := 0x7f00: the gain ahead
 |      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
-|      gv >> 1, the signature 0x3a5c 0x6517, the level (VOL x XVOL's law), DRIV's gain; B2: halfword 11, FM's ceiling
-|      (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 | SWP above ACID (tools/octa303/dsp/voice/o3v.asm.in).
+|      gv >> 1, the signature 0x3a5c 0x6517, the level (VOL x XVOL's law), DRIV's gain; B2: halfword 11 (o3e_pay).
 |      With the insert, FM, SWP and MUFF are its (the class's per-sample loops never run for it).
 |      Clobbers d0, d1, a1.
 o3_dwrite:
@@ -2253,20 +2252,7 @@ o3_dwrite:
         move.w  %d0,18(%a1)
         move.l  S_OSIN(%a3),%d0         | DRIV's gain (Q12, 4096 = DRIV 0 .. 12953): the insert's output stage
         move.w  %d0,20(%a1)
-        move.l  E_MUFF(%a3),%d0         | halfword 11 (B2)
-        add.l   %d0,%d0
-        move.l  E_PQMAX(%a3),%d1        | FM's ceiling, pqmax >> 10 (FM off: 4095)
-        tst.l   E_FMON(%a3)
-        bne     .Ldw_f
-        move.l  #4095<<10,%d1
-.Ldw_f:
-        lsr.l   #7,%d1
-        and.l   #0x7ff8,%d1
-        or.l    %d1,%d0
-        tst.l   E_SWP(%a3)              | SWP above ACID: the insert's soft clip and governor
-        beq     .Ldw_s
-        addq.l  #1,%d0
-.Ldw_s:
+        move.l  E_HW11(%a3),%d0         | halfword 11, as the control step made it (o3e_pay)
         move.w  %d0,22(%a1)
         rts
         .endif
@@ -2648,6 +2634,8 @@ O3_DRV_TH:
         .set    E_UXV,   E_BASE+740     | O3_DSP: the track's own AMP XVOL halfword, as the frame builder wrote it
         .set    E_XZ,    E_BASE+748     | O3_DSP: frames still to go out as zeros after the insert has gone (o3_xquiet)
         .set    E_STG,   E_BASE+744     | O3_DSP: frames a note started with the sequencer stopped still sounds (o3_gate)
+        .set    E_HW11,  E_BASE+752     | O3_DSP: the record's halfword 11 of the last control step (o3e_pay)
+        .set    E_HWK,   E_BASE+756     | O3_DSP: its part from the knobs (o3e_kC)
         .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
@@ -3090,15 +3078,14 @@ O3_DRV_TH:
         bne     \ls
         bra     .Le_end
         .endm
-        .macro  E_PAY1 src              | one 23-bit number as two payloads: (bits 22..8), (bits 7..0); d3 += both
+        .macro  E_PAY1 src              | one 23-bit number (src >> 8) as two payloads: (bits 22..8), (bits 7..0); d3 += both
         move.l  \src(%a3),%d0
-        lsr.l   #8,%d0
         move.l  %d0,%d1
-        lsr.l   #8,%d1
-        add.l   %d1,%d3
-        swap    %d1
-        move.w  #0x8000,%d1
+        move.w  #0x8000,%d1             | (bits 22..8): src's top half
         move.l  %d1,(%a0)+
+        swap    %d1
+        add.l   %d1,%d3                 | (and 2^31: only d3's 15 low bits count)
+        lsr.l   #8,%d0
         and.l   #0xff,%d0
         add.l   %d0,%d3
         swap    %d0
@@ -3538,7 +3525,9 @@ o3e_sil:                                | silence: d7 zero samples, the state un
         .if     O3_DSP
 | ---- o3e_pay (O3_DSP): the frame's sixteen payloads from the control step's numbers, each a 15-bit p sent as the
 |      24-bit sample p * 256 + 128: the mark 0x7fff, g1 g2 g3 g4 kq dq gt (two each), the sum of the fourteen.
-|      B2: payload 14 carries FM's depth in its bits 8..14.  Clobbers d0, d1, d3, a0.
+|      B2: payload 14 carries FM's depth in its bits 8..14; halfword 11 (E_HW11, o3_dwrite writes it), FM's ceiling
+|      (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 | SWP above ACID, once a frame and in the sum too (B2b: the insert
+|      refuses a halfword 11 that is not this one; E_HWK, its part from the knobs, is o3e_kC's).  Clobbers d0, d1, d3, a0.
 o3e_pay:
         moveq   #1,%d0
         move.l  %d0,E_PAYOK(%a3)
@@ -3558,6 +3547,16 @@ o3e_pay:
         add.l   %d0,%d3
         swap    %d0
         add.l   %d0,-4(%a0)
+        move.l  E_HWK(%a3),%d0          | halfword 11: the knobs' part, and with FM pqmax >> 10 above it
+        tst.l   E_FMON(%a3)
+        beq     .Lpy_f
+        move.l  E_PQMAX(%a3),%d1
+        lsr.l   #7,%d1
+        and.l   #0x7ff8,%d1
+        or.l    %d1,%d0
+.Lpy_f:
+        move.l  %d0,E_HW11(%a3)
+        add.l   %d0,%d3
         and.l   #0x7fff,%d3
         swap    %d3
         move.w  #0x8000,%d3
@@ -4460,6 +4459,18 @@ o3e_ova:                                | {raw, a at raw (Q24), the step down pe
 .LkC4:
         move.l  %d0,E_MUFF(%a3)
         or.l    %d0,%d5
+        .if     O3_DSP
+        add.l   %d0,%d0                 | halfword 11's part from the knobs (o3e_pay): MUFF << 1 | SWP above ACID,
+        tst.l   E_SWP(%a3)              | and FM off: FM's ceiling field at its largest
+        beq     .LkC6
+        addq.l  #1,%d0
+.LkC6:
+        tst.l   E_FMON(%a3)
+        bne     .LkC7
+        or.l    #4095<<3,%d0
+.LkC7:
+        move.l  %d0,E_HWK(%a3)
+        .endif
         moveq   #2,%d0
         and.l   E_WAVE(%a3),%d0         | +D: the note's WAVE bit 1
         move.l  %d0,E_DPON(%a3)

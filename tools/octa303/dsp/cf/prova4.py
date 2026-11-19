@@ -77,15 +77,11 @@ def run_engine(s, e):
         if not s['gmode']: e.w('S_GLVL', 32767)
         e.w('E_FS', t % 16); e.w('E_DSPW', 1)         # what the shell does before a call
         l, r_, st = e.render(c - t); L += l; R += r_; steps += st
-        if c % 16 == 0: gv.append(e.r('E_GV')); HWS.append(hw11(e.r))
+        if c % 16 == 0: gv.append(e.r('E_GV')); HWS.append(e.r('E_HW11') if 'E_HW11' in e.C else None)   # (None: an engine before B2b)
         t = c
     return L, R, gv, steps
 
-HWS = []                                              # run_engine: halfword 11 of each frame, as o3_dwrite would write it
-def hw11(r):
-    """o3_dwrite's halfword 11 from the engine's state (B2): FM's ceiling (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 |
-    SWP above ACID (the shell's own o3_dwrite is checked in shell_chain)"""
-    return ((r('E_PQMAX') >> 10 if r('E_FMON') else 4095) << 3) | (r('E_MUFF') << 1) | (r('E_SWP') > 0)
+HWS = []                                              # run_engine: halfword 11 of each frame, as o3_dwrite writes it (E_HW11)
 def decode(y):                                        # the insert's decode of one R sample
     y = int(y); return ((y << 24) + ((y * 672) << 1)) >> 32
 
@@ -102,7 +98,7 @@ def check(s, e, built):
         for c in C[f][:7]: want += [int(c) >> 8, int(c) & 0xff]
         want.append(sum(want[1:]) & 0x7fff)
         want[14] |= int(C[f][12]) << 8                 # B2: FM's depth above gt's low byte
-        want[15] = sum(want[1:15]) & 0x7fff
+        want[15] = (sum(want[1:15]) + int(C[f][11])) & 0x7fff   # B2b: halfword 11 in the sum
         d2 += (p != want) + ((gv[f] >> 8) != int(C[f][7])) + (HWS[f] != int(C[f][11]))
     F = np.zeros((nf, 52), np.int32)
     for f in range(nf):
