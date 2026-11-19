@@ -26,24 +26,30 @@ for tag, img in (('cf', a), ('hyb', b)):
     res[tag] = (w.getnchannels(), w.getsampwidth(), w.readframes(w.getnframes())); w.close()
 (ca, sa, da), (cb, sb, db) = res['cf'], res['hyb']
 print('formats', (ca, sa), (cb, sb), 'bytes', len(da), len(db))
-import numpy as np
 def dec(d, ch, sw):
-    b = np.frombuffer(d[:len(d) // (ch * sw) * ch * sw], dtype=np.uint8).reshape(-1, ch, sw).astype(np.int32)
-    v = b[..., 0] | (b[..., 1] << 8) | (b[..., 2] << 16) if sw == 3 else b[..., 0] | (b[..., 1] << 8)
-    top = 1 << (8 * sw - 1)
-    return np.where(v & top, v - 2 * top, v)
+    """per channel, the signed samples (no numpy: the Mac's venv may not have it)"""
+    n = len(d) // (ch * sw); top = 1 << (8 * sw - 1)
+    out = []
+    for c in range(ch):
+        v = [int.from_bytes(d[(k * ch + c) * sw:(k * ch + c + 1) * sw], 'little') for k in range(n)]
+        out.append([x - 2 * top if x & top else x for x in v])
+    return out
 A, B = dec(da, ca, sa), dec(db, cb, sb)
-n = min(len(A), len(B)); A, B = A[:n], B[:n]
-bad = not A.any()                      # silence on both would pass vacuously
+n = min(len(A[0]), len(B[0]))
+bad, sounded = False, False
 for c in range(ca):
-    a, b = A[:, c], B[:, c]
-    if not a.any() and not b.any(): continue
-    d = np.nonzero(a != b)[0]
-    best = min(range(-48, 49), key=lambda L: int(np.abs(a[max(0, -L):n - max(0, L)] - b[max(0, L):n - max(0, -L)]).max()))
-    e = np.abs(a[max(0, -best):n - max(0, best)] - b[max(0, best):n - max(0, -best)])
-    print('channel %d: %d frames, non-zero %d / %d, differing %d (first at %s); best lag %+d samples: max |d| %d, differing %d'
-          % (c, n, int((a != 0).sum()), int((b != 0).sum()), len(d), d[0] if len(d) else '-', best, int(e.max()), int((e != 0).sum())))
-    bad |= bool(e.any()) or not a.any()
+    a, b = A[c][:n], B[c][:n]
+    if not any(a) and not any(b): continue
+    first = next(k for k in range(n) if a[k] or b[k]); w0, w1 = max(0, first - 100), min(n, first + 20000)
+    def err(L, lo=w0, hi=w1):
+        return sum(1 for k in range(max(lo, -L), min(hi, n - L)) if a[k] != b[k + L])
+    best = min(range(-48, 49), key=err)
+    e = err(best, 0, n)
+    nd = sum(1 for k in range(n) if a[k] != b[k])
+    print('channel %d: %d frames, non-zero %d / %d, differing at lag 0: %d; best lag %+d samples: differing %d'
+          % (c, n, sum(1 for x in a if x), sum(1 for x in b if x), nd, best, e))
+    sounded = True; bad = bad or e != 0
+bad = bad or not sounded               # silence on both would pass vacuously
 # PASS: every sounding channel equal word for word at one constant lag (19 Nov 2026: +5 samples; the stock source's
 # interpolator ring delays the ColdFire's samples, the seam writes X:0 directly)
 print('port_ab: ' + ('PASS' if not bad else 'FAIL'))
