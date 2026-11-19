@@ -33,9 +33,14 @@ python3 tools/octa303/ibrido/cmp.py full
 
 ## Measured (19 Nov 2026, emulator only; nothing on a unit)
 - The cut: identical to ref303 on 208 notes x 20,000 samples.
-- The chain on the emulator against ref303: **0 differing samples** in 13,384,960 (208 judge notes x 55,125 + 40
-  random runs with split frames, knob jumps, saw and square) and in all 159 synthetic runs that stay in the engine's
-  domain (the other 41 drive a state past 2^23 on purpose: out of the engine's range).
-- 302 P words (the chain and its soft clip; no glue). 269.7 emulator instructions a sample, mean, the piece's
-  prologue included (emulator instructions, not chip cycles).
-- Largest stored value at the player's corners (`extreme.py`): y1 at 0.39 of 2^23.
+- The chain on the emulator against ref303, **0 differing samples** in:
+  - 13,384,960 music samples (208 judge notes x 55,125 + 40 random runs with split frames, knob jumps, saw and square);
+  - 680,080 synthetic samples (`synth.py`: amp at 0 and huge, the VCA clamp, the output clamp, both pin-6 ends);
+  - 5 x 460,800 samples of the review's OVDR sweep (`ovdr_vectors.py`, OVDR 25/45/60/80/127): `u` reaches 6.2 x 2^23
+    and y1 1.6 x 2^23, so `u` travels as two words and the ladder's states are 32-bit (a1 + a2).
+- 323 P words (the chain and its soft clip; no glue); Y: the two pin-6 tables, 516 words; X: 16 state words a voice.
+- Emulator instructions a sample: mean 290.7 (music), worst piece 310 a sample. Not chip cycles: not measured.
+- Scope: DRIV 0, MUFF off, DIST off, FM 0 (dEVILish absent or with only OVDR moved). DRIV != 0 is not written; FM
+  cannot run in pieces (it needs the previous sample's VCA output on the ColdFire).
+- For the glue (not written): the chain sets m1, m2 linear and does not restore them; it needs m0, m6, m7 linear,
+  n7 >= 1 (a `do` of 0 runs 65,536 times) and 3 hardware stack levels.

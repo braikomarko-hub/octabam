@@ -25,7 +25,7 @@ for run in range(RUNS):
         for k in range(n):
             u = R.clamp(u + rnd.randint(-(1 << 20), 1 << 20), -(1 << 22), 1 << 22) if rnd.random() < 0.9 else rnd.choice([-(1 << 22), 1 << 22, 0])
             out = S.dsp_chain(st, u)
-            if any(abs(getattr(st, f)) >= (1 << 23) for f in ('fb', 'y1', 'y2', 'y3', 'y4', 'vp1', 'vp2', 'dc', 'amp')): dom += 1; fd.write('%d %d\n' % (run, p))
+            if any(abs(getattr(st, f)) >= (1 << 23) for f in ('fb', 'vp1', 'vp2', 'dc', 'amp')): dom += 1; fd.write('%d %d\n' % (run, p))
             us.append(u); vs.append(R.clamp(out >> T.SHIFT_OUT, -32767, 32767))
         fi.write(struct.pack('<27i', n | (0x100 if p == 0 else 0), *(us + [0] * (16 - n)), *[x & 0xffffff for x in ctl]))
         fe.write(struct.pack('<16i', *(vs + [0] * (16 - n)))); ns += n

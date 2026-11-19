@@ -1,7 +1,7 @@
 // o3chost -- coordination, 19 Nov 2026 (code written by Claude): runs gen_o3c.py's chain on the vendored dsp56300
 // emulator core, piece by piece, with its own blocks (nothing of the stock payload).
 //   o3chost blob.bin org entry ytab.bin in.bin out.bin dis.txt
-// in.bin, per piece: int32 n (1..16), int32 u[16], int32 ctl[10].  out.bin, per piece: int32 v[16], int32 instructions.
+// in.bin, per piece: int32 n (1..16, +0x100: a new voice), int32 u[16] (two DSP words each: low 24 bits, high byte), int32 ctl[10].  out.bin, per piece: int32 v[16], int32 instructions.
 // ytab.bin: int32 words at Y:0x800.  The voice's state block starts dirty (0x555555) and init is the first piece's
 // job? No: the chain has no init; the bench zeroes the state block once, as a new voice (ref303's Track()).
 #include <cstdio>
@@ -56,17 +56,17 @@ int main(int argc, char** argv) {
         int32_t w[27]; memcpy(w, &in[o], PC);
         const int n = w[0] & 0xff;
         if (w[0] & 0x100) for (TWord k = 0; k < 0x20; ++k) dsp.memWrite(MemArea_X, STATE + k, 0);   // a new voice
-        for (int k = 0; k < 16; ++k) dsp.memWrite(MemArea_X, AUDIO + k, (TWord)w[1 + k] & 0xffffff);
+        for (int k = 0; k < 16; ++k) { dsp.memWrite(MemArea_X, AUDIO + 2 * k, (TWord)w[1 + k] & 0xffffff); dsp.memWrite(MemArea_X, AUDIO + 2 * k + 1, (TWord)(w[1 + k] >> 24) & 0xffffff); }
         for (int k = 0; k < 10; ++k) dsp.memWrite(MemArea_X, CTL + k, (TWord)w[17 + k] & 0xffffff);
-        for (int g = 0; g < 8; ++g) dsp.memWrite(MemArea_X, AUDIO + n + g, 0x123456 + g);
+        for (int g = 0; g < 8; ++g) dsp.memWrite(MemArea_X, AUDIO + 2 * n + g, 0x123456 + g);
         scramble(dsp);
         dsp.regs().r[0].var = AUDIO; dsp.regs().r[6].var = CTL; dsp.regs().r[7].var = STATE; dsp.regs().n[7].var = n;
         uint64_t c = 0;
         if (!runToRts(dsp, entry, c)) { fprintf(stderr, "did not return (piece %zu)\n", o / PC); return 1; }
-        for (int g = 0; g < 8; ++g) if ((mem.get(MemArea_X, AUDIO + n + g) & 0xffffff) != (TWord)(0x123456 + g)) { ++over; break; }
+        for (int g = 0; g < 8; ++g) if ((mem.get(MemArea_X, AUDIO + 2 * n + g) & 0xffffff) != (TWord)(0x123456 + g)) { ++over; break; }
         if (c > mx) mx = c; tot += c; ns += n;
         int32_t out[17];
-        for (int k = 0; k < 16; ++k) { TWord v = mem.get(MemArea_X, AUDIO + k) & 0xffffff; out[k] = (int32_t)(v << 8) >> 8; }
+        for (int k = 0; k < 16; ++k) { TWord v = mem.get(MemArea_X, AUDIO + 2 * k) & 0xffffff; out[k] = (int32_t)(v << 8) >> 8; }
         out[16] = (int32_t)c; fwrite(out, 4, 17, fo);
         if (getenv("O3C_STATES")) { static FILE* fs = fopen(getenv("O3C_STATES"), "wb"); int32_t sv[12];
             for (int q = 0; q < 12; ++q) { TWord v = mem.get(MemArea_X, STATE + q) & 0xffffff; sv[q] = (int32_t)(v << 8) >> 8; } fwrite(sv, 4, 12, fs); fflush(fs); }
