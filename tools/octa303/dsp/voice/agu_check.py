@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OCTA303 vFable (code written by Claude): the address-register rule of docs/contributing/MODULES.md ("Rules for DSP
 code, each established on hardware"): two data moves between WRITING an address register (rN, nN, mN, by a move) and
-USING it in an addressing mode; no M-register write inside the sample loop.  Reads a dsp_asm -list listing.
+USING it in an addressing mode (a `lua` writes one too); no M-register write inside the sample loop.  Reads a dsp_asm -list listing.
     python3 agu_check.py out/octa303/dsp/o3v.lst      -> the sites that break the rule (exit 1 if any)"""
 import re, sys
 def check(path):
@@ -14,7 +14,7 @@ def check(path):
         m = re.match(r'do (\S+),\$?>?\$?([0-9a-f]+)', t)
         if m and m.group(1).startswith('n'): loop = (i, int(m.group(2), 16))
         if loop and int(ad, 16) >= loop[1]: loop = None
-        w = re.match(r'move \S+,([rnm])([0-7])$', t)                 # a move whose destination is an address register
+        w = re.match(r'(?:move|lua) \S+,([rnm])([0-7])$', t)          # a move (or a lua) whose destination is an address register
         if not w: continue
         kind, k = w.groups()
         if kind == 'm' and loop: bad.append((ad, t, 'an M register written inside the sample loop'))

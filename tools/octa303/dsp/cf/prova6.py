@@ -17,14 +17,21 @@ The thresholds were written before the results (the vFable notes, soglie_B2.md);
       the ceiling the reference predicts (DRIV's table x the level)
   t7  SWP's governor on the DSP: the peak of |y4| after the first second (RES 127, SELF) at most 1.25 x 3 x 2^20
   t10 the ColdFire's cost of the new numbers: instructions a frame (cfsim), the engine and the shell, against 73f0188f
+B2b (halfword 11 latched and in the sum, FM skipped at 0; thresholds soglie_B2b.md, written first):
+  t11 the output the same as d24e7173's (its engine and insert, from git): the insert on prova3's inputs, the engine on
+      t2's and t3's scenarios, the shell on t2's runs; the build without O3_DSP and the FX2 path (the engine on the
+      ColdFire) the same too (thresholds 2 and 7)
+  t12 a foreign halfword 11 (0x3200, 0, 20 random values) is refused exactly like a wrong sum in the same frames (3)
+  t13 the ColdFire's cost against d24e7173: engine and shell within + 10 instructions a frame (6)
 Run tools/octa303/dsp/build.sh first.  `prova6.py t3` (etc.): that part only."""
 import os, sys, random, subprocess, collections, ctypes, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-PARTS = sys.argv[1:] or ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't7b', 't10']; sys.argv[1:] = []
+PARTS = sys.argv[1:] or ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't7b', 't10', 't11', 't12', 't13']; sys.argv[1:] = []
 import prova5 as P5
 P4 = P5.P4; P3 = P4.P3; T7 = P4.T7; DFN = T7.DFN; INCC3 = P5.INCC3
 import harness
 BASE = '73f0188f'                                     # B1, the commit B2 starts from
+PREV = 'd24e7173'                                     # B2, the commit B2b starts from
 IMPL = collections.OrderedDict([('MUFF', (9, (0, 1, 2))), ('FM', (1, (0, 1, 40, 127))), ('SWP', (7, (0, 1, 2)))])   # the B2 knobs on the DSP: df index, the values tried
 SCR = os.path.join(P3.WORK, 'b2'); os.makedirs(SCR, exist_ok=True)
 STEP = 5504
@@ -107,16 +114,18 @@ def t2():
     return tot + sh
 
 # ---- t3: 73f0188f's engine and insert, from git
-def git_show(path):
-    return subprocess.run(['git', 'show', '%s:%s' % (BASE, path)], capture_output=True, text=True, cwd=P3.ROOT, check=True).stdout
-def old_insert():
-    src = git_show('tools/octa303/dsp/voice/o3v.asm.in')
+def git_show(path, rev=BASE):
+    return subprocess.run(['git', 'show', '%s:%s' % (rev, path)], capture_output=True, text=True, cwd=P3.ROOT, check=True).stdout
+def old_insert(rev=BASE):
+    """rev's insert, assembled -> its proc (the binary: SCR/o3v_<rev>.bin)"""
+    src = git_show('tools/octa303/dsp/voice/o3v.asm.in', rev)
+    if rev == PREV: src = P3.gen_module.subst(src, pt=str(P3.PTP), ab=str(P3.AB), gh=P3.gen_module.GH)
     for k, v in (('@GH@', str(P3.gen_module.GH)), ('@LIM@', str((P3.KN - 1) << 14)), ('@PT@', str(P3.PTP)), ('@CV@', str(P3.CV)), ('@AB@', str(P3.AB)),
                  ('@DKP@', str(P3.DKP)), ('@DKN@', str(P3.DKN)), ('@DLIM@', str(P3.gen_module.DLIM))):
         src = src.replace(k, v)
     assert '@' not in src
-    open(SCR + '/o3v_old.asm', 'w').write(src)
-    r = subprocess.run([P3.DA, '-in', SCR + '/o3v_old.asm', '-org', '%x' % P3.ORG, '-out', SCR + '/o3v_old.bin', '-list'], capture_output=True, text=True)
+    open(SCR + '/o3v_%s.asm' % rev, 'w').write(src)
+    r = subprocess.run([P3.DA, '-in', SCR + '/o3v_%s.asm' % rev, '-org', '%x' % P3.ORG, '-out', SCR + '/o3v_%s.bin' % rev, '-list'], capture_output=True, text=True)
     assert 'assembled' in r.stdout, r.stdout[-500:]
     ls = [l for l in r.stdout.splitlines() if l[6:7] == ':']; k = [i for i, l in enumerate(ls) if ' rts' in l][0]
     return int(ls[k + 1][:6], 16)
@@ -126,15 +135,24 @@ def host(F, binf, proc):
     r = subprocess.run([P3.HOST, binf, '%x' % P3.ORG, '%x' % P3.ORG, '%x' % proc, P3.WORK + '/ytab.bin', 'p%x' % P3.PTP, SCR + '/in.bin', SCR + '/out.bin'], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     return np.fromfile(SCR + '/out.bin', np.int32).reshape(-1, 33)[:, :32]
-def old_source():
-    p = SCR + '/octa303_old.s'; open(p, 'w').write(git_show('modules/octa303/octa303.s'))
+def old_source(rev=BASE, dsp=1):
+    p = SCR + '/octa303_%s.s' % rev; open(p, 'w').write(git_show('modules/octa303/octa303.s', rev))
     save = harness.SRC_PATH; harness.SRC_PATH = p
-    try: return harness.source(local={'O3_DSP': 1})
+    try: return harness.source(local={'O3_DSP': dsp})
     finally: harness.SRC_PATH = save
 def oldsum(F):
     """frames as an insert before B2b takes them: payload 15 without halfword 11"""
     F = F.copy(); F[:, 31] = [P3.send((P4.decode(F[f, 31]) - (int(F[f, 37]) >> 8)) & 0x7fff) for f in range(len(F))]
     return F
+def engine_diff(s, src):
+    """the engine now against the one of src on scenario s: L, gv, and R, where payload 15 is src's + halfword 11 (B2b)
+    -> (words that differ, samples)"""
+    a = P4.run_engine(s, P4.EngD()); hw = list(P4.HWS); b = P4.run_engine(s, EngOld(src))
+    if len(a[0]) != len(b[0]): return 1, len(a[0])
+    d = sum(x != y for x, y in zip(a[0], b[0])) + sum(x != y for x, y in zip(a[2], b[2]))
+    for i, (x, y) in enumerate(zip(a[1], b[1])):                 # each R long: p << 16 | 0x8000
+        d += x != y if i % 16 != 15 else (x >> 16) & 0x7fff != ((y >> 16) + hw[i // 16]) & 0x7fff
+    return d, len(a[0])
 class EngOld(T7.Eng):
     def __init__(self, src):
         self.rig = P4.Rig(src); c = self.cpu = self.rig.cpu; self.C = c.consts; self.st = self.C['o3_state'] + self.C['ST_SIZE'] * T7.T
@@ -148,7 +166,7 @@ def t3():
     CASES = [(0,0,127,0),(0,127,127,1),(127,0,127,1),(127,127,127,0),(64,64,64,0),(40,100,64,1),(90,127,0,0),(20,64,127,1),(0,0,127,1),(127,127,127,1),(64,127,64,1),(127,100,0,0)]
     for c in CASES:
         y, C, X = P3.ref(P3.ev(*c)); F = P3.frames(C, X)
-        a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_old.bin', oproc); d += int((a != b).sum()); n += a.size
+        a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_%s.bin' % BASE, oproc); d += int((a != b).sum()); n += a.size
     for seed, loud in ((1, True), (2, True), (3, False), (4, False)):
         r = np.random.default_rng(seed); nf = 4000
         C = np.zeros((nf, 13), np.int32); C[:, 9] = r.integers(0, 0x7fff, nf) * 256; C[:, 11] = P3.HW0
@@ -158,7 +176,7 @@ def t3():
         F = P3.frames(C, X)
         for k in (0, 1, 7, 15):
             F[:, 51] = k if k else r.integers(0, 16, nf)
-            a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_old.bin', oproc); d += int((a != b).sum()); n += a.size
+            a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_%s.bin' % BASE, oproc); d += int((a != b).sum()); n += a.size
     print('   (a) the insert, prova3\'s inputs (whole frames and in pieces): %d words, %d differ' % (n, d)); FAIL += d
     # (b) the engine alone: prova4's engine scenarios and prova5's patterns -- L, R and gv the same
     SRC_OLD = old_source()
@@ -173,10 +191,8 @@ def t3():
             df = list(DFN); df[j] = v; use.append(P5.pattern('%s %d' % (nm, v), df, wave=j % 2, acc0=0 if nm == 'SATK' else 120))
     de = ne = 0
     for s in use:
-        a = P4.run_engine(s, P4.EngD()); b = P4.run_engine(s, EngOld(SRC_OLD))
-        de += sum(x != y for x, y in zip(a[0], b[0])) + sum(x != y for x, y in zip(a[1], b[1])) + sum(x != y for x, y in zip(a[2], b[2])) + (len(a[0]) != len(b[0]))
-        ne += len(a[0])
-    print('   (b) the engine, %d scenarios (prova4\'s and prova5\'s), %d samples: L, R, gv differ %d' % (len(use), ne, de)); FAIL += de
+        d, n = engine_diff(s, SRC_OLD); de += d; ne += n
+    print('   (b) the engine, %d scenarios (prova4\'s and prova5\'s), %d samples: L, R (payload 15: + halfword 11), gv differ %d' % (len(use), ne, de)); FAIL += de
     # (c) the shell (o3_dwrite, the record, the calls in pieces), prova4's runs: the old engine + the old insert against the new ones
     ds = ns = 0
     for a in ((1, 480, 0, 0, 11, 0x4000, 0x7f00, (), 0), (1, 480, 12, 1, 12, 0x7f00, 0x7f00, (), 0), (1, 480, 5, 0, 13, 0x2000, 0x7f00, (), 0),
@@ -186,7 +202,7 @@ def t3():
         new = a[:6] + (DFN, a[6], a[7], P4.SRC_D, a[8], {}); old = new[:9] + (SRC_OLD,) + new[10:]
         P4.shell_chain(new, built()); on = P4.TRACE['out'].copy()
         P4.shell_chain(old, built()); Fo = P4.TRACE['F']
-        oo = host(Fo, SCR + '/o3v_old.bin', oproc)[:, 0::2].reshape(-1)
+        oo = host(Fo, SCR + '/o3v_%s.bin' % BASE, oproc)[:, 0::2].reshape(-1)
         ds += int((on != oo).sum()) + (len(on) != len(oo)); ns += len(on)
     print('   (c) the shell, 8 runs, %d samples: the output differs in %d' % (ns, ds)); FAIL += ds
     print('   -> %s' % ('PASS' if FAIL == 0 else 'FAIL'))
@@ -318,9 +334,9 @@ def t7b():
         16 * nf, d, info[0], info[1], info[2], info[3], 'PASS' if ok else 'FAIL'))
     return 0 if ok else 1
 
-def t10():
-    print('t10. the ColdFire\'s instructions a frame (cfsim): the engine (o3e_params + o3e_render) | the shell (every sy_render call), against %s' % BASE)
-    SRC_OLD = old_source(); FAIL = 0
+def t10(base=BASE, lim=60, shell=False):
+    print('%s. the ColdFire\'s instructions a frame (cfsim): the engine (o3e_params + o3e_render) | the shell (every sy_render call), against %s' % ('t10' if base == BASE else 't13', base))
+    SRC_OLD = old_source(base); FAIL = 0
     kinds = [('B2 neutral', DFN), ('MUFF SOFT', DFN[:9] + (1,) + DFN[10:])]
     if 'FM' in IMPL: kinds.append(('FM 127', DFN[:1] + (127,) + DFN[2:]))
     if 'SWP' in IMPL: kinds.append(('SWP SELF', DFN[:7] + (2,) + DFN[8:]))
@@ -331,11 +347,95 @@ def t10():
             L, R, gv, steps = P4.run_engine(P5.pattern('cost', df, nsamp=1380 * 16), e)
             P4.shell_chain((1, 300, 0, 0, 71, 0x6000, df, 0x7f00, (), src), built())
             r.append((16.0 * steps / len(L), float(np.mean(P4.TRACE['steps']))))
-        de, ds = r[0][0] - r[1][0], r[0][1] - r[1][1]; FAIL += de > 60   # the threshold is the engine's (as prova5's 7.)
-        print('   %-12s now %.1f | %.1f   %s %.1f | %.1f   + %.1f | + %.1f (threshold + 60 on the engine): %s%s' % (kind, r[0][0], r[0][1], BASE, r[1][0], r[1][1], de, ds,
-              'PASS' if de <= 60 else 'FAIL', '' if kind == 'B2 neutral' else
+        de, ds = r[0][0] - r[1][0], r[0][1] - r[1][1]
+        ok = de <= lim and (ds <= lim or not shell); FAIL += not ok     # B2's threshold is the engine's (as prova5's 7.); B2b's both
+        print('   %-12s now %.1f | %.1f   %s %.1f | %.1f   %+.1f | %+.1f (threshold + %d on the engine%s): %s%s' % (kind, r[0][0], r[0][1], base, r[1][0], r[1][1], de, ds,
+              lim, ' and the shell' if shell else '', 'PASS' if ok else 'FAIL', '' if kind == 'B2 neutral' or base != BASE else
               '  (the shell: %s had this knob forced neutral on the DSP path; now its control step runs too)' % BASE))
     return FAIL
+
+# ---- B2b
+def t11():
+    print('t11. the output against %s (its engine and its insert, from git)' % PREV)
+    oproc = old_insert(PREV); ob = SCR + '/o3v_%s.bin' % PREV; newb = P3.WORK + '/o3v.bin'; FAIL = 0
+    # (a) the insert: prova3's 12 cases and its 4 stress runs (MUFF, FM, SWP and FM's ceiling at random), whole and in pieces
+    d = n = nr = 0; why = []
+    CASES = [(0,0,127,0),(0,127,127,1),(127,0,127,1),(127,127,127,0),(64,64,64,0),(40,100,64,1),(90,127,0,0),(20,64,127,1),(0,0,127,1),(127,127,127,1),(64,127,64,1),(127,100,0,0)]
+    runs = [P3.frames(*P3.ref(P3.ev(*c))[1:]) for c in CASES]
+    for seed, loud in ((1, True), (2, True), (3, False), (4, False)):
+        r = np.random.default_rng(seed); nf = 4000                                     # prova3.stress's coefficients
+        C = np.zeros((nf, 13), np.int32); C[:, 9] = r.integers(0, 0x7fff, nf) * 256
+        C[:, 11] = (r.integers(0, 4096, nf) << 3) | (r.integers(0, 3, nf) << 1) | (r.random(nf) < 0.5); C[:, 12] = r.integers(0, 128, nf) * (r.random(nf) < 0.7)
+        C[:, 0:4] = r.integers(1, int(0.98 * 2 ** 23), (nf, 4)); C[:, 4] = r.integers(0, 120 * 65536, nf); C[:, 5] = r.integers(1, 2 ** 23, nf)
+        C[:, 6] = r.integers(0, 2 ** 23, nf); C[:, 7] = r.integers(0, 2 ** 15, nf) * 2; C[:, 8] = P3.gen_module.GH; C[:, 10] = P3.drvw(r, nf)
+        X = r.integers(-2 ** 23, 2 ** 23, 16 * nf).astype(np.int32) if loud else r.integers(-2 ** 21, 2 ** 21, 16 * nf).astype(np.int32)
+        runs.append(P3.frames(C, X))
+    for F in runs:
+        for k in (0, 1, 7, 15):
+            F[:, 51] = k
+            a, b = host(F, newb, built()[0]), host(oldsum(F), ob, oproc); w = (a != b).any(axis=1)
+            d += int((a != b).sum()); n += a.size
+            FAIL += int(w.sum()); nr += 1
+            if w.any():                                          # FM 0 with FM's ceiling below the middle (pqmax / 2 < 2^20: the
+                off = (np.array([P4.decode(v) >> 8 for v in F[:, 29]]) == 0) & (F[:, 37] >> 11 < 2048)    # engine never sends it):
+                why.append(bool(off.any()) and int(np.argmax(off)) <= int(np.argmax(w)))   # one at or before the first frame that differs?
+    print('   (a) the insert, prova3\'s inputs (whole and in pieces), %d runs: %d words, %d differ; frames that differ %d; runs that differ'
+          ' %d, of which the first frame that differs is at or after a frame with FM 0 and FM\'s ceiling below the middle (never sent by the'
+          ' engine: FM 0 now skips FM, the ceiling is not looked at) in %d' % (
+              nr, n, d, FAIL, len(why), sum(why)))
+    # (b) the engine: t2's and t3's scenarios -- L and gv the same, R the same but payload 15, which is d24e7173's + halfword 11
+    SRC_PREV = old_source(PREV); use = [pattern(nm, df, res=res, wave=w) for nm, df, res, drv, w in cases() if not drv]
+    for j, nm in P5.NAMES.items(): use.append(P5.pattern(nm, tuple(64 if i == j else v for i, v in enumerate(DFN)), wave=j % 2))
+    de = ne = 0
+    for s_ in use:
+        d, n = engine_diff(s_, SRC_PREV); de += d; ne += n
+    print('   (b) the engine, %d scenarios, %d samples: L, gv, R (payload 15: + halfword 11) differ %d' % (len(use), ne, de)); FAIL += de
+    # (c) the shell (o3_dwrite, the record, calls in pieces, a B2 knob moved): t2's runs
+    ds = ns = 0
+    for k, (nm, df, res, drv, w) in enumerate(cases()[::4]):
+        mv = {} if k % 2 else {100 + 9 * i: tuple(random.Random(80 + k + i).randrange(128) for _ in range(6)) + tuple(df[6:]) for i in range(4)}
+        if not k % 3:
+            j, vals = list(IMPL.values())[k % len(IMPL)]; d2 = list(df); d2[j] = vals[(vals.index(df[j]) + 1) % len(vals) if df[j] in vals else 1]
+            mv[150] = tuple(d2)
+        new = (1, 300, 0, w, 90 + k, 0x5a80, tuple(df), 0x7f00, (), P4.SRC_D, drv, mv); old = new[:9] + (SRC_PREV,) + new[10:]
+        P4.shell_chain(new, built()); on = P4.TRACE['out'].copy()
+        P4.shell_chain(old, built()); oo = host(P4.TRACE['F'], ob, oproc)[:, 0::2].reshape(-1)
+        ds += int((on != oo).sum()) + (len(on) != len(oo)); ns += len(on)
+    print('   (c) the shell, %d runs, %d samples: the output differs in %d (no run moves page 2 between a frame\'s two calls)' % (len(cases()[::4]), ns, ds)); FAIL += ds
+    # (d) threshold 7: the build without O3_DSP, and the FX2 path (the engine's own loops) with it: L and R the same
+    dx = nx = 0
+    for dsp in (0, 1):
+        new = P4.SRC_D if dsp else harness.source(local={'O3_DSP': 0}); old = old_source(PREV, dsp)
+        for s_ in use[::3]:
+            a = T7.run_engine(s_, EngOld(new)); b = T7.run_engine(s_, EngOld(old))
+            dx += (a[0] != b[0]) + (a[1] != b[1]); nx += len(a[0])
+    print('   (d) without O3_DSP and on the FX2 path, %d samples: L, R differ %d' % (nx, dx)); FAIL += dx
+    print('   -> %s' % ('PASS' if FAIL == 0 else 'FAIL'))
+    return FAIL
+
+def t12():
+    print('t12. a foreign halfword 11 against a wrong sum in the same frames (the insert, FM 40, MUFF SOFT, SWP WHST)')
+    df = list(DFN); df[1] = 40; df[9] = 1; df[7] = 1
+    y, C, X = P4.reference(pattern('t12', df), INCC3); F = P3.frames(C, X); nf = len(F); hw = F[:, 37] >> 8
+    vals = [0x3200, 0] + [int(v) for v in np.random.default_rng(1212).integers(0, 32768, 20)]
+    sub = np.random.default_rng(12).random(nf) < 0.3
+    FAIL = same = 0; first = None
+    for v in vals:
+        for mask in (np.arange(nf) > 0, sub):                    # every frame after the first good one; a third of them
+            m = mask & (hw != v); same += int((mask & (hw == v)).sum())
+            A = F.copy(); A[m, 37] = v << 8
+            B = F.copy(); B[m, 31] = [P3.send((P4.decode(B[f, 31]) + 1) & 0x7fff) for f in np.nonzero(m)[0]]
+            for k in (0, 7):
+                A[:, 51] = B[:, 51] = k
+                a, b = host(A, P3.WORK + '/o3v.bin', built()[0]), host(B, P3.WORK + '/o3v.bin', built()[0])
+                FAIL += int((a != b).sum())
+                if first is None: first = int((a[m] == 0).all()), int(m.sum())
+    print('   %d values x (every frame after the first, a third of the frames) x (whole, cut at 7): %d words differ; frames where'
+          ' the value was the engine\'s own (left as they were) %d; the first run\'s %d foreign frames all silent: %s -> %s' % (
+              len(vals), FAIL, same, first[1], bool(first[0]), 'PASS' if FAIL == 0 else 'FAIL'))
+    return FAIL
+
+def t13(): return t10(PREV, 10, True)
 
 if __name__ == '__main__':
     FAIL = 0
