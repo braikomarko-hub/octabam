@@ -30,7 +30,7 @@ OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
 | SRC | CUT | cutoff, the 303's CUTOFF FREQ law |
 | SRC | RES | resonance |
 | SRC | ENV | env mod |
-| SRC | DEC | decay, ~0.16–2.5 s |
+| SRC | DEC | decay, ~0.19–2.3 s (0 = an accent's decay, as on the 303) |
 | SRC | ACC | the ACCENT knob, applied on the steps with an ACC lock |
 | SETUP | WAVE | SAW, SQR, SAW+D, SQR+D, RSAW, RSQR, RSAWD, RSQRD (+D: a distortion pedal after the VCA; R: the filter as Roland's factory trims it, +0.575 octave; without R, Din Sync's 303) |
 | SETUP | GATE | OFF: the AMP page shapes the note; 303: the 303's own gate, 3.5 of 6 clocks, tied into a slide |

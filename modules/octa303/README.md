@@ -41,7 +41,7 @@ the rest unsigned by the Part validator.
 | 1 | CUT | 0..127 | cutoff, the 303's CUTOFF FREQ law |
 | 2 | RES | 0..127 | resonance (self-oscillation only with dEVILish's SWP) |
 | 3 | ENV | 0..127 | ENV MOD (audio taper, as the Roland service notes) |
-| 4 | DEC | 0..127 | DECAY (the service notes: MIN 200 ms, MAX 2.5 s to 10 %) |
+| 4 | DEC | 0..127 | DECAY: 186 ms .. 2.29 s to 10 % (the tables' decay of the MEG; the service notes: MIN 200 ms, MAX 2.5 s). DEC 0 is an accented note's decay, as on the 303, where an accent decays as with the Decay pot fully anti-clockwise |
 | 5 | ACC | 0..127 | the ACCENT knob, applied on the notes that carry an ACC lock |
 
 A new OCTA-303 track starts at TUNE C3, CUT RES ENV DEC 64, ACC 0.
