@@ -663,6 +663,11 @@ sy_render:
         lsl.l   #8,%d0                  | voice has no FM, no MUFF, no DIST and DRIV 0 (o3h.asm at the source seam);
         lea     o3_hyb,%a2              | a2 = the track's hybrid block (the header is not read past this point)
         add.l   %d0,%a2
+        tst.l   60(%sp)                 | a frame's first call (start 0), whichever half renders it: no pieces, no
+        bne     .LHnf                   | first sample yet (review 19 Nov: a frame whose last call went to the
+        clr.l   H_NP(%a2)               | ColdFire left them stale for the next one)
+        clr.l   H_START(%a2)
+.LHnf:
         tst.l   S_FMQ(%a3)
         bne     .LHcf
         tst.l   S_MUFF(%a3)
@@ -690,6 +695,12 @@ sy_render:
         move.l  %d0,S_VP2(%a3)
         move.l  %d0,S_FBO(%a3)
 .LHcf0:
+        moveq   #16,%d0                 | the frame's last call on the ColdFire: no record, nothing kept
+        cmp.l   64(%sp),%d0
+        bne     .LHcf1
+        clr.l   H_NP(%a2)
+        clr.l   H_START(%a2)
+.LHcf1:
         .endif
         tst.l   S_FMQ(%a3)              | v8.8: the neutral case runs .LFloop (same samples, fewer tests)
         bne     .Lloop

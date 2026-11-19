@@ -75,7 +75,7 @@ def scen(seed, frames, devil=False, mix=False):
     for f in range(frames):
         start = None
         if f == 0 or rnd.random() < 0.05:
-            start = rnd.choice([0, 0, 0, 5, 11])
+            start = rnd.choice([0, 0, 0, rnd.randint(1, 15)])
             w = W(rnd.randint(-12, 24), rnd.randint(0, 127), rnd.randint(0, 127), rnd.randint(0, 127),
                     rnd.randint(0, 127), rnd.choice([0, 0, 64, 127]))
             su = [rnd.choice([0, 1, 4, 5]) if not mix else rnd.choice([0, 1, 2, 3, 4, 5]), 0,
@@ -96,6 +96,14 @@ for nm, kw in (('saw_square', {}), ('devilish_smooth', {'devil': True}), ('mixed
         tot += n; recs += nr
         if mm: bad = 'seed %d: %s' % (seed, mm); break
     check('seam_' + nm, bad is None, ('%d samples, %d records' % (tot, recs)) if bad is None else bad)
+# review 19 Nov: a frame whose first call is hybrid and last is not (a START of a DIST note at 11), then a START of
+# a saw note at 5 whose first call is the ColdFire's: the pieces of the first must not reach the second's record
+sv = [0, 0, 64, 0, 0, 64]; sd = [2, 0, 64, 0, 0, 64]
+st_sc = [(W(0, 60, 90, 80, 50), 0, 0, None, sv)] + [(W(0, 60, 90, 80, 50), None, 0, None, sv)] * 6 + \
+        [(W(3, 60, 90, 80, 50), 11, 0, None, sd), (W(3, 60, 90, 80, 50), 5, 0, None, sv)] + \
+        [(W(3, 60, 90, 80, 50), None, 0, None, sv)] * 6
+n, nr, mm = run(st_sc)
+check('seam_stale_pieces_after_a_coldfire_frame', mm is None, '%d samples, %d records' % (n, nr) if mm is None else mm)
 n, nr, mm = run(scen(5, FRAMES), seam=False)
 check('no_seam_build_unchanged', mm is None and nr == 0, '%d samples' % n if mm is None else mm)
 print('test_seam_cf: %s' % ('OK' if not fails else '%d FAILED' % len(fails)))

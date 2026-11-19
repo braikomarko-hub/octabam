@@ -10,7 +10,7 @@ REMIX = Remix(
                "TAPE ECHO left out; not yet on the unit in this form. Before: ACIDV77 (24 Oct 2026, the author's MKI: "
                "OCTA303 v7.1, dEVILish, MORPH v1, DISTORX, dB666, TAPE ECHO, BRAIN) 'works perfectly'; ACIDV68..ACIDV71 "
                "(October 2026): hours of live use with two or three OCTA-303 tracks, dEVILish, DISTORX and dB666",
-    doc="aCiDhYb: the hybrid OCTA303 (filter, VCA and output on the DSP) + dEVILish + dEVILish + MORPH (track + UP/DOWN: the scene morph by itself) + DISTORX (BOSS SD-1 + Pro Co RAT + Turbo RAT) + dB666 (side-chain from any track) + FET76 (the UREI 1176LN limiter, for the master after dB666) + LOAD METER + USB AUDIO OUT MASTER + BRAIN (FX presets from the card; switch remixes from the card); DARK REV the one reverb.",
+    doc="aCiDhYb: the hybrid OCTA303 (filter, VCA and output on the DSP) + dEVILish + MORPH (track + UP/DOWN: the scene morph by itself) + DISTORX (BOSS SD-1 + Pro Co RAT + Turbo RAT) + dB666 (side-chain from any track) + FET76 (the UREI 1176LN limiter, for the master after dB666) + LOAD METER + USB AUDIO OUT MASTER + BRAIN (FX presets from the card; switch remixes from the card); DARK REV the one reverb.",
     modules=('OCTA303', 'OCTA303 SEAM', 'DEVILISH', 'MORPH', 'STORE', 'USB', 'BRAIN', 'MEMORY', 'FILTER',
              'COMB FILTER', 'DELAY', 'DARK REV', 'DISTORX', 'DB666', 'FET76',
              'LOAD METER'),

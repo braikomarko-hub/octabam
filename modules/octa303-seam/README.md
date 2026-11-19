@@ -23,5 +23,15 @@ FX1 and FX2. A voice with FM, MUFF, a DIST carrier or DRIV ≠ 0 plays on the Co
 | the image's placed words (`placed.py`) | equal to `o3h.asm` assembled there; table and jsr in place |
 | ColdFire half in cfsim (`test_seam_cf.py`) | every record equal to the model, the model's sound equal to `ref303` |
 | the same project under the port, aCiDtRacK vs aCiDhYb (`port_ab.py`) | main out equal word for word at a constant 5-sample lag |
-| P words | 535 a payload |
+| P words | 536 a payload |
 | cycles a sample, one voice (sam/main `interlock_scan.py` model, not a measurement) | ~523 mean, ~549 worst |
+
+## Known limits (review, 19 Nov 2026)
+
+- **`make cycles` does not count it** (hook sections are not in the figure). One voice costs about as much as
+  DISTORX + FET76 together on that core: put one hybrid 303 in T1–T4 and one in T5–T8, not two on the same half,
+  until it is measured on the unit.
+- **A note that switches between the DSP and the ColdFire** (a DIST, DRIV, FM or MUFF note next to a plain one)
+  loses the samples of the frame it switches in: the old note's tail is cut there (a click is possible).
+- **The P tables of DISTORX, dB666 and FET76** move to the stock curve bank (X:$4840..) in a remix without DJ EQ,
+  and are read with `x:(` there: the same data, a place stock's DJ EQ reads every sample; not yet run on a unit.

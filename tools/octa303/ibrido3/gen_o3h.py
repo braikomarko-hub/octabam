@@ -191,6 +191,7 @@ e('beq     oh11r')
 e('move    #>$221,x0')                 # payload B: P:0x1a4 -> P:0x221
 lab('oh11r')
 e('move    x0,ssh')
+e('nop')                               # (stock never returns right after a write to ssh)
 e('rts')
 # ================================================================== the chain, one piece
 lab('oh10c')

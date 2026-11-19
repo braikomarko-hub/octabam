@@ -145,6 +145,7 @@ oh08d:
         move    #>$221,x0
 oh11r:
         move    x0,ssh
+        nop
         rts
 oh10c:
         move    x:(r6+10),x0
