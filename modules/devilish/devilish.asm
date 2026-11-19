@@ -15,20 +15,25 @@
 ;      knee, the output mixer's soft ceiling from a table (24 points a side, behind the BA662's two; ref/o3k.c).
 ;      x:(r6+1), x:(r6+2) = $3a5c00, $651700: the engine's signature in the voice record.  Without it the track is not
 ;      an OCTA-303: the audio is left exactly as it came (Marko, 17 Nov 2026).
+;      x:(r6+5) = halfword 11 (B2, 19 Nov 2026), << 8: bits 14..3 FM's ceiling pqmax >> 10, bits 2..1 MUFF (0 OFF,
+;      1 SOFT, 2 HARD), bit 0 SWP above ACID.  MUFF: after the ceiling, y = low + h, low the 150 Hz one-pole of y, h the
+;      rest limited by the mode (tools/octa303/dsp/ref/o3k.c, o3d_sample).
 ;      A frame is taken only if the mark, the sum and the seven low-byte payloads (nothing above bit 7) all agree.
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step;
 ; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
-; $15 DRIV's word; $16 the output level's step; $17 the level; $20..$2f the decoded payloads.
+; $20..$2f the decoded payloads; from $3e the block r4 walks in the loop: Gm, sm (MUFF's one-pole), MUFF's limit, its
+; negative, its cubic's factor; $43 DRIV's word, $44 the output level's step, $45 the level.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
-; agu_check.py checks the listing).  One table in P: the ceiling's two sides (98 entries each), then DRIV's two (24 each).
+; agu_check.py checks the listing).  One table in P (its base in n3): the ceiling's two sides (98 entries each), DRIV's
+; two (24 each), then the modes' limits and factors (MUFF OFF, SOFT, HARD, OFF).
 ; CYCLES_FORWARD_BRANCHES
 init:
         move    #>$ffffff,m5                    ; not guaranteed linear at init (DSP.md)
         move    r7,r5
         clr     a
-        do      #$30,o3v_izero
+        do      #$46,o3v_izero
         move    a,x:(r5)+
 o3v_izero:
         move    #$11,n5
@@ -37,6 +42,11 @@ o3v_izero:
         clr     a
         move    (r5)+n5
         move    x0,x:(r5)+                      ; gh, a constant of the laws
+        move    #$2c,n5
+        move    #>88690,x0
+        clr     a
+        move    (r5)+n5
+        move    x0,x:(r5)                       ; Gm, MUFF's one-pole ($3e)
         rts
 proc:
         move    #>$ffffff,m1
@@ -44,6 +54,7 @@ proc:
         move    #>$ffffff,m3
         move    #>$ffffff,m4
         move    #>$ffffff,m5
+        move    #>$fab1e0,n3                       ; the table, for the loop and the frame's modes
         move    n7,a                            ; (a call of no samples: the dispatcher skips it; a do of 0 would not)
         tst     a
         beq     o3v_pass
@@ -167,19 +178,37 @@ o3v_asm:
         move    #>1,x0
         clr     b
         move    (r2)+n2                         ; r2 = $14, the frame's verdict
-        move    x0,x:(r2)+                      ; 1 = taken: a later piece of this frame runs on these numbers
-; ---- the frame's level and DRIV (a taken frame only): the level's step = (level^2 - now) >> 4 ---------------------
+        move    x0,x:(r2)                       ; 1 = taken: a later piece of this frame runs on these numbers
+; ---- the frame's level, DRIV and MUFF (a taken frame only): the level's step = (level^2 - now) >> 4 -----------------
         move    (r1)+n1
+        move    #$2c,n2
         move    x:(r1)+,x0                      ; the level's halfword
         mpy     x0,x0,a
         move    #>4260619,y1
         move    a,x0                            ; (it / $8000)^2
         mpy     x0,y1,a                         ; x ($8000 / $7f00)^2 / 2: with the loop's << 3, the voice x 4
-        move    x:(r1),y0                       ; DRIV's word
+        move    x:(r1)+,y0                      ; DRIV's word
         move    a,x1                            ; where the level goes
-        move    y0,x:(r2)+                      ; $15
+        move    x:(r1),a                        ; halfword 11
+        asr     #8,a,a
+        and     #>6,a                           ; MUFF's mode x 2: its pair in the table
+        move    #>244,x0
+        add     x0,a
+        move    a1,n5
+        move    n3,r5
+        move    (r2)+n2                         ; r2 = MUFF's limit ($40)
+        clr     a
+        move    (r5)+n5
+        move    p:(r5)+,x0                      ; the limit
+        move    p:(r5)+,y1                      ; the cubic's factor
+        move    x0,x:(r2)+
+        move    x0,a
+        neg     a
+        move    a,x:(r2)+                       ; its negative
+        move    y1,x:(r2)+
+        move    y0,x:(r2)+                      ; DRIV's word ($43)
         move    (r2)+
-        move    x:(r2),b                        ; the level now ($17)
+        move    x:(r2),b                        ; the level now ($45)
         move    x1,a
         sub     b,a
         asr     #4,a,a
@@ -197,12 +226,13 @@ o3v_run:
         move    r7,r5
         move    r7,r1                           ; r1 = s1
         move    r7,r4
-        move    #$15,n4
+        move    #$3e,n4
         move    (r2)+n2                         ; r2 = the gain, for the loop
         move    (r5)+n5                         ; r5 = g1
         move    r5,r3                           ; r3 = g1, kept
         move    #2,n5
-        move    (r4)+n4                         ; r4 = DRIV's word, the level's step, the level
+        move    (r4)+n4                         ; r4 = the block of MUFF and DRIV
+        move    #6,n4                           ; (a sample's end: from the level's step back to its start)
         do      n7,o3v_end
 ; ---- zero-input pass --------------------------------------------------------------------------------------
         move    x:(r1)+,x0
@@ -336,7 +366,7 @@ o3v_run:
         add     x0,a                            ; the negative side's table follows
 o3v_pos:
         move    a1,n5
-        move    #>$fab1e0,r5
+        move    n3,r5
         move    y0,a
         and     #>$3fff,a
         asl     #9,a,a
@@ -355,6 +385,37 @@ o3v_pos:
         bge     o3v_sgn
         neg     a
 o3v_sgn:
+; ---- MUFF: low = y's one-pole at 150 Hz, h = y - low (24 bits each), limited to the mode's +-L, then h - h f^2 with
+;      f = (h K) << 4 (SOFT: the cubic soft clip, L = sqrt 2 Sm, saturating at 314,572; HARD: L = 314,572, K = 0; OFF:
+;      no limit, K = 0, y as it came); y = low + h
+        move    a,y0                            ; y
+        move    x:(r4)+,y1                      ; Gm
+        move    x:(r4),x1                       ; sm
+        sub     x1,a
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        move    b,x:(r4)+
+        move    a,x1                            ; low
+        move    y0,a
+        sub     x1,a                            ; h
+        move    x:(r4)+,x0
+        cmp     x0,a
+        tgt     x0,a
+        move    x:(r4)+,x0
+        cmp     x0,a
+        tlt     x0,a
+        move    a,x0
+        move    x:(r4)+,y1
+        mpy     x0,y1,b
+        asl     #4,b,b
+        move    b,y0                            ; f (y is in x1 + h now; y1 y1 is not a multiplier pair)
+        mpy     y0,y0,b
+        move    b,y1
+        mac     -x0,y1,a
+        add     x1,a                            ; y
 ; ---- DRIV: x = y G; above the knee the mixer's soft ceiling, K + W tanh((|x| - K) / W) from the table -----------
         move    x:(r4)+,y1                      ; DRIV's word; r4 on the level's step
         move    y1,b
@@ -416,7 +477,7 @@ o3v_koff:
         add     y0,b
         move    b,x:(r4)-
         move    b,y1
-        move    (r4)-                           ; (r4 back on DRIV's word)
+        move    (r4)-n4                         ; (r4 back on the block's start)
         mpy     x0,y1,a
         asl     #3,a,a
         move    a,x0

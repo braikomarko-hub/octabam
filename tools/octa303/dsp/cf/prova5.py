@@ -91,12 +91,13 @@ def main():
             nm, n, bad, d1, d3 = P4.shell_chain(a, built)[:5]
             print('   %s%s: samples %d | record wrong %d | L differ %d | chain differ %d' % (df, ' page 1 moving' if mv else '', n, bad, d1, d3))
             FAIL += bad + d1 + d3
-        print('4. FM, SWP, MUFF, +D moved on the DSP path: the shell\'s output against the same with them neutral')
+        print('4. the knobs not on the DSP yet (of FM, SWP: %s; +D) moved on the DSP path: the shell\'s output against the same with them neutral' % (P4.NEUT,))
         for i, base in enumerate((DFN, (100, 0, 60, 30, 70, 90, 40, 0, 2, 0, 1, 1), (10, 0, 0, 64, 0, 50, 0, 0, 0, 0, 0, 1))):
             for fm, sw, mu, dp in ((127, 2, 2, 2), (60, 1, 1, 0), (1, 2, 0, 2)):
+                fm = fm if 1 in P4.NEUT else 0; sw = sw if 7 in P4.NEUT else 0; mu = mu if 9 in P4.NEUT else 0
                 moved = base[:1] + (fm,) + base[2:7] + (sw,) + base[8:9] + (mu,) + base[10:]
                 out = []
-                for d, w, mv in ((base, i % 2, {}), (moved, i % 2 + dp, {200: moved[:1] + (127 - fm,) + moved[2:]})):
+                for d, w, mv in ((base, i % 2, {}), (moved, i % 2 + dp, {200: moved[:1] + ((127 - fm) if 1 in P4.NEUT else 0,) + moved[2:]})):
                     P4.shell_chain((1, 300, 0, w, 61 + i, 0x6000, d, 0x7f00, (), P4.SRC_D, 0, mv), built)
                     out.append(dict(P4.TRACE))
                 nd = sum(a != b for k in ('L', 'R') for a, b in zip(out[0][k], out[1][k])); nk = sum(a != b for a, b in zip(out[0]['kq'], out[1]['kq']))

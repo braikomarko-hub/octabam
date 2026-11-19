@@ -124,6 +124,8 @@ int32_t o3_tr[8192][8], o3_troct;   /* debug: per control step G1..G4, kq, Dq, g
    24-bit registers, fractional multiply ((x*y)<<1), `move a,x0` = a1 with saturation and no rounding. ---- */
 typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32_t g[4], kq, dq, gh, gv, vol;
                  int32_t volc, vols, drv, raw;   /* 18 Nov 2026: the output's level (VOL^2 x CV) and its step a sample; DRIV's gain word; raw = y alone */
+                 int32_t hw, fm;                 /* B2 (19 Nov 2026): the record's halfword 11 and FM's depth (payload 14's bits 8..14), as sent */
+                 int32_t sm, lm, nlm, km;        /* MUFF: the 150 Hz one-pole's state; the frame's limit, its negative, the cubic's factor */
                  long long sat, big; } o3d_t;
 static int o3_dref = 0, o3_dbits[5] = {24, 24, 24, 24, 24};   /* bits kept: G, kq, Dq, gain, Gv */
 static long long o3_dsat = 0, o3_dbig = 0;
@@ -138,6 +140,16 @@ static int32_t o3_dvol = 0;                 /* the VOL word of the renders throu
 void o3_set_dvol(int32_t v) { o3_dvol = v; }
 static int32_t *o3_dtr_c = 0, *o3_dtr_x = 0;   /* phase 3: [step][9] g1..g4 kq dq gt gv gh; [sample] the L sample */
 void o3_set_dtrace(int32_t *c, int32_t *x) { o3_dtr_c = c; o3_dtr_x = x; }
+static int32_t *o3_dtr_h = 0;                  /* B2: [step][2] the record's halfword 11, FM's depth */
+void o3_set_dtrace2(int32_t *h) { o3_dtr_h = h; }
+/* B2 (19 Nov 2026, written by Claude): MUFF, FM and SWP on the DSP.  A NEW reference again (the laws of o3k.c core()'s
+   integer path, computed as the insert computes them: 24-bit registers, a 56-bit accumulator).  The constants are
+   tools/octa303/dsp/gen_module.py's (o3d_set_consts: the numbers the insert is built with):
+     k[0..5] the frame's limit and cubic factor by MUFF's mode (off, SOFT, HARD); k[6] Gm, the 150 Hz one-pole */
+#define O3D_NK 32
+static int32_t o3d_k[O3D_NK];
+void o3d_set_consts(const int32_t *k, int n) { for (int i = 0; i < n && i < O3D_NK; i++) o3d_k[i] = k[i]; }
+#define O3D_HW0 (4095 << 3)                 /* halfword 11 with every B2 feature neutral (FM off: the largest pqmax) */
 static int o3_geq = 1;
 int o3_get_geq(void) { return o3_geq; }
 static inline int32_t o3d_out(o3d_t *d, int64_t a) {      /* move a,x0: a1, limited, not rounded */
@@ -208,7 +220,20 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
     const int32_t *T = neg ? kneg : kpos;
     int32_t t0 = T[ix], t1 = ix >= KN - 1 ? t0 : T[ix + 1];
     a = O3D_MPY(fr, t1 - t0) + O3D_LD(t0);
-    int32_t r = o3d_out(d, neg ? -a : a);
+    if (neg) a = -a;
+    {   /* MUFF (B2): low = the one-pole at 150 Hz of y; h = y - low (both 24 bits), limited to +-lm, then h - h f^2 with
+           f = (h km) << 4: SOFT the cubic soft clip (lm = sqrt 2 Sm, km = 1 / (16 sqrt 6 Sm)), HARD the plain limit at
+           314,572, off no limit and f = 0 (y exactly as it came) */
+        int32_t y0 = o3d_out(d, a), x0, x1, y1; int64_t b;
+        a -= O3D_LD(d->sm); x0 = o3d_out(d, a); a = O3D_MPY(x0, o3d_k[6]); b = a; a += O3D_LD(d->sm); b += a; d->sm = o3d_out(d, b);
+        x1 = o3d_out(d, a);                                                        /* low */
+        a = O3D_LD(y0) - O3D_LD(x1);                                               /* h */
+        if (a > O3D_LD(d->lm)) a = O3D_LD(d->lm);
+        if (a < O3D_LD(d->nlm)) a = O3D_LD(d->nlm);
+        x0 = o3d_out(d, a); b = O3D_MPY(x0, d->km) << 4; y1 = o3d_out(d, b); b = O3D_MPY(y1, y1); y1 = o3d_out(d, b);
+        a -= O3D_MPY(x0, y1); a += O3D_LD(x1);
+    }
+    int32_t r = o3d_out(d, a);
     if (d->raw) return r;                        /* the voice's y alone (the grids against today's model) */
     if (d->drv != 0x100000) r = o3d_drv(d, r);   /* DRIV */
     d->volc += d->vols;                          /* the output's level: += its step, every sample */
@@ -223,14 +248,17 @@ static inline void o3d_ctl(o3d_t *d) {
     int32_t T = o3d_out(d, O3D_MPY(o3d_out(d, O3D_MPY(d->vol, d->vol)), O3D_CV)), st = (T - d->volc) >> 4;   /* the level: x CV once a frame */
     d->vols = st; if (!st) d->volc = T;
     d->drv = o3_ddrv;
+    int mm = (d->hw >> 1) & 3;                   /* B2: MUFF's mode (halfword 11, bits 2..1; 3 is never sent: off) */
+    if (mm == 3) mm = 0;
+    d->lm = o3d_k[2 * mm]; d->nlm = -d->lm; d->km = o3d_k[2 * mm + 1];
 }
-/* the reference on its own (phase 3's stress tests): nf frames of 11 numbers (g1..g4 kq dq gt gv gh vol drv) and 16 L samples */
+/* the reference on its own (phase 3's stress tests): nf frames of 13 numbers (g1..g4 kq dq gt gv gh vol drv hw fm) and 16 L samples */
 long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
     o3d_t d; memset(&d, 0, sizeof d);
     for (int f = 0; f < nf; f++) {
-        const int32_t *c = C + 11 * f; o3_ddrv = c[10];
+        const int32_t *c = C + 13 * f; o3_ddrv = c[10];
         for (int j = 0; j < 4; j++) d.g[j] = c[j];
-        d.kq = c[4]; d.dq = c[5]; d.gv = c[7]; d.gh = c[8]; d.vol = c[9];
+        d.kq = c[4]; d.dq = c[5]; d.gv = c[7]; d.gh = c[8]; d.vol = c[9]; d.hw = c[11]; d.fm = c[12];
         d.dgain48 = (O3D_LD(c[6]) - d.gain48) >> 4; o3d_ctl(&d);
         for (int i = 0; i < 16; i++) out[16 * f + i] = o3d_sample(&d, ((int64_t)X[16 * f + i] << 24) >> 2, kneg, kpos);
     }
@@ -241,12 +269,16 @@ long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, cons
 void *o3d_new(void) { return calloc(1, sizeof(o3d_t)); }
 void o3d_free(void *p) { free(p); }
 void o3d_bad(void *p) { o3d_t *d = p; d->gain48 = 0; d->dgain48 = 0; }          /* a refused frame: the gain restarts */
-void o3d_frame(void *p, const int32_t *c, const int32_t *x, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
-    o3d_t *d = p;
+void o3d_frame2(void *p, const int32_t *c, const int32_t *x, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
+    o3d_t *d = p;   /* B2: c = g1..g4 kq dq gt gv gh vol hw fm */
     for (int j = 0; j < 4; j++) d->g[j] = c[j];
-    d->kq = c[4]; d->dq = c[5]; d->gv = c[7]; d->gh = c[8]; d->vol = c[9];
+    d->kq = c[4]; d->dq = c[5]; d->gv = c[7]; d->gh = c[8]; d->vol = c[9]; d->hw = c[10]; d->fm = c[11];
     d->dgain48 = (O3D_LD(c[6]) - d->gain48) >> 4; o3d_ctl(d);
     for (int i = 0; i < 16; i++) out[i] = o3d_sample(d, ((int64_t)x[i] << 24) >> 2, kneg, kpos);
+}
+void o3d_frame(void *p, const int32_t *c, const int32_t *x, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
+    int32_t c2[12]; for (int j = 0; j < 10; j++) c2[j] = c[j]; c2[10] = O3D_HW0; c2[11] = 0;   /* the B1 frame: B2 neutral */
+    o3d_frame2(p, c2, x, out, kneg, kpos);
 }
 /* pseg: nseg parameter vectors of P_N doubles (segment 0 = the START, then one per retrig START);
    segstart[j]: the sample where segment j begins (segstart[0] = 0); slat/slst: nsl slide events (sample, target in
@@ -369,7 +401,9 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                     if (Gx[1] != Gx[2] || Gx[2] != Gx[3]) o3_geq = 0;
                     ds.kq = o3d_q(kq >> 8, o3_dbits[1]); ds.dq = o3d_q(Dq >> 8, o3_dbits[2]);
                     ds.gh = Gh >> 8; ds.gv = o3d_q(Gv >> 8, o3_dbits[4]);
+                    ds.fm = 0; ds.hw = O3D_HW0 | (r_muff << 1);   /* B2: halfword 11 (pqmax >> 10, MUFF, SWP) and FM's depth */
                     ds.dgain48 = (O3D_LD(o3d_q(gq >> 8, o3_dbits[3])) - ds.gain48) >> 4; o3d_ctl(&ds);
+                    if (o3_dtr_h) { o3_dtr_h[2 * (i / CTL)] = ds.hw; o3_dtr_h[2 * (i / CTL) + 1] = ds.fm; }
                     if (o3_dtr_c) { int32_t *r_ = o3_dtr_c + 9 * (i / CTL); for (int j = 0; j < 4; j++) r_[j] = ds.g[j]; r_[4] = ds.kq; r_[5] = ds.dq; r_[6] = o3d_q(gq >> 8, o3_dbits[3]); r_[7] = ds.gv; r_[8] = ds.gh; }
                 }
 #ifdef O3_TRACE
@@ -475,7 +509,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
             }
         }
         if (o3_dref) {
-            if (!csint || r_fm || r_gov || r_muff || (F & F_DP)) return -7;   /* B1: OVDR (above, and is_step's x G^-0.5) but no FM, SWP, MUFF, +D */
+            if (!csint || r_fm || r_gov || (F & F_DP)) return -7;   /* B1: OVDR (above, and is_step's x G^-0.5); B2: MUFF; no FM, SWP, +D */
             if (x >= 2097152 || x < -2097152) return -8;                           /* x << 2 must fit a 24-bit sample */
             /* the L channel: the sample x << 2 through the gain ahead of FX1 at VOL 0x7F00 (SONDA 2: 8387936 / 2^23, rounded:
                measured on positive samples; taken as floor(v G / 2^23 + 1/2) for negative ones too), then asr #2 on the accumulator */

@@ -21,6 +21,7 @@ L = m._lib; L.o3_get_dsat.restype = ctypes.c_longlong; L.o3_get_dbig.restype = c
 sys.path.insert(0, os.path.join(ROOT, 'tools', 'octa303', 'dsp')); import gen_module
 DKP, DKN, DTP, DTN = gen_module.drv()                 # DRIV on the DSP: the knees and the two tables (18 Nov 2026)
 L.o3d_set_drvtab((ctypes.c_int32 * 24)(*DTP), (ctypes.c_int32 * 24)(*DTN), DKP, DKN)
+_K = gen_module.consts(); L.o3d_set_consts((ctypes.c_int32 * len(_K))(*_K), len(_K))   # B2: MUFF, FM, SWP's constants
 STEP = 5088   # 16 x 318 samples: about 130 BPM sixteenths
 # (semitones from C2, accent, slide into next, rest)
 PAT = [(0,0,0,0),(0,1,0,0),(12,0,1,0),(7,0,0,0),(0,0,0,1),(3,1,0,0),(15,0,1,0),(12,1,0,0),

@@ -2201,7 +2201,9 @@ o3_dquiet:
 | ---- o3_dwrite (O3_DSP; d2 = track, a3 = state), after a call that rendered: the voice record for the insert.
 |      AMP ATK / HOLD / REL := 0, 0x7f00, 0x7f00 (CX OSC's override) and VOL := 0x7f00, BAL := 0x4000, XVOL := 0x7f00: the gain ahead
 |      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
-|      gv >> 1, the signature 0x3a5c 0x6517, the level (VOL x XVOL's law), DRIV's gain.  Clobbers d0, d1, a1.
+|      gv >> 1, the signature 0x3a5c 0x6517, the level (VOL x XVOL's law), DRIV's gain; B2: halfword 11, FM's ceiling
+|      (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 | SWP above ACID (tools/octa303/dsp/voice/o3v.asm.in).
+|      Clobbers d0, d1, a1.
 o3_dwrite:
         move.l  E_UXV(%a3),%d0          | VOL x o3_xvt(XVOL) / 0x7f00: XVOL's own law, between two entries by its
         move.l  %d0,%d1                 | low byte (an LFO's fraction)
@@ -2250,6 +2252,10 @@ o3_dwrite:
         move.w  %d0,18(%a1)
         move.l  S_OSIN(%a3),%d0         | DRIV's gain (Q12, 4096 = DRIV 0 .. 12953): the insert's output stage
         move.w  %d0,20(%a1)
+        move.l  E_MUFF(%a3),%d0         | halfword 11 (B2)
+        add.l   %d0,%d0
+        add.l   #4095<<3,%d0
+        move.w  %d0,22(%a1)
         rts
         .endif
 | ---- o3_params: this call's knobs into the engine's inputs (R_*), then the engine's o3e_params.
@@ -2329,11 +2335,10 @@ o3_params:
         subq.l  #1,%d1
         bge     .Lp_c2
         .if     O3_DSP
-        tst.l   E_DSPW(%a3)             | the insert on FX1: FM, SWP and MUFF are not on the DSP yet: neutral (0), for
-        beq     .Lp_nd                  | the START and the class too
+        tst.l   E_DSPW(%a3)             | the insert on FX1: FM and SWP are not on the DSP yet: neutral (0), for the
+        beq     .Lp_nd                  | START and the class too (B2: MUFF is)
         clr.b   R_DF+1(%a3)
         clr.b   R_DF+7(%a3)
-        clr.b   R_DF+9(%a3)
 .Lp_nd:
         .endif
         moveq   #0,%d0

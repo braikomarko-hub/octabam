@@ -28,13 +28,13 @@ def reference(s, incc3):
               nsamp=s['nsamp'], fase=0.0, retrig=[(r[0], r[1], (r[2] if len(r) > 2 else 0) / 256.0) for r in s['retrig']],
               slides=[(t, d / 256.0) for t, d in s['slides']], gate_off=list(s['gate_off']) or None,
               knobs=[(t, dict(kd)) for t, kd in s['knobs']])
-    n = s['nsamp']; C = np.zeros((n // 16 + 1, 9), np.int32); X = np.zeros(n, np.int32)
+    n = s['nsamp']; C = np.zeros((n // 16 + 1, 9), np.int32); X = np.zeros(n, np.int32); H = np.zeros((n // 16 + 1, 2), np.int32)
     ip = lambda a: a.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
-    LD.o3_set_dtrace(ip(C), ip(X)); LD.o3_set_dref(1, (ctypes.c_int * 5)(24, 24, 24, 24, 24), 0); LD.o3_set_dvol(P3.VOL); LD.o3_set_ddrv(P3.DRV)
+    LD.o3_set_dtrace(ip(C), ip(X)); LD.o3_set_dtrace2(ip(H)); LD.o3_set_dref(1, (ctypes.c_int * 5)(24, 24, 24, 24, 24), 0); LD.o3_set_dvol(P3.VOL); LD.o3_set_ddrv(P3.DRV)
     try: y = MD.render_engine(ev, T7.M7, tables=T7.BLOB, knee=T7.KNEE)
-    finally: rc = LD.o3_last_rc(); LD.o3_set_dref(0, None, 0); LD.o3_set_dtrace(None, None); LD.o3_set_dvol(0)
+    finally: rc = LD.o3_last_rc(); LD.o3_set_dref(0, None, 0); LD.o3_set_dtrace(None, None); LD.o3_set_dtrace2(None); LD.o3_set_dvol(0)
     assert rc == 0, rc
-    return [int(v) for v in y], C[:n // 16], X
+    return [int(v) for v in y], P3.wide(C[:n // 16], H[:n // 16]), X
 
 GH_SEEN = []
 SRC_D = source(local={'O3_DSP': 1})
@@ -65,7 +65,7 @@ def run_engine(s, e):
     if not s['gmode']: e.w('S_GLVL', 32767)
     e.w('S_OSIN', T7.o3out.driv_gain(0))
     put_knobs(kn, ptgt); e.start(s['acc'], s['wave'], s['pnote'])
-    L, R, gv, steps = [], [], [], 0; t = 0
+    L, R, gv, steps = [], [], [], 0; t = 0; HWS.clear()
     for c in cuts:
         if t in sl_at: ptgt = s['pnote'] + sl_at[t]
         if t in go_at: e.w('S_GATE', 0)
@@ -77,10 +77,15 @@ def run_engine(s, e):
         if not s['gmode']: e.w('S_GLVL', 32767)
         e.w('E_FS', t % 16); e.w('E_DSPW', 1)         # what the shell does before a call
         l, r_, st = e.render(c - t); L += l; R += r_; steps += st
-        if c % 16 == 0: gv.append(e.r('E_GV'))
+        if c % 16 == 0: gv.append(e.r('E_GV')); HWS.append(hw11(e.r))
         t = c
     return L, R, gv, steps
 
+HWS = []                                              # run_engine: halfword 11 of each frame, as o3_dwrite would write it
+def hw11(r):
+    """o3_dwrite's halfword 11 from the engine's state (B2): FM's ceiling (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 |
+    SWP above ACID (the shell's own o3_dwrite is checked in shell_chain)"""
+    return (4095 << 3) | (r('E_MUFF') << 1)
 def decode(y):                                        # the insert's decode of one R sample
     y = int(y); return ((y << 24) + ((y * 672) << 1)) >> 32
 
@@ -96,11 +101,13 @@ def check(s, e, built):
         want = [0x7fff]
         for c in C[f][:7]: want += [int(c) >> 8, int(c) & 0xff]
         want.append(sum(want[1:]) & 0x7fff)
-        d2 += (p != want) + ((gv[f] >> 8) != int(C[f][7]))
+        want[14] |= int(C[f][12]) << 8                 # B2: FM's depth above gt's low byte
+        want[15] = sum(want[1:15]) & 0x7fff
+        d2 += (p != want) + ((gv[f] >> 8) != int(C[f][7])) + (HWS[f] != int(C[f][11]))
     F = np.zeros((nf, 52), np.int32)
     for f in range(nf):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
-        F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700; F[f, 35] = P3.VOL; F[f, 36] = P3.DRV
+        F[f, 32] = ((gv[f] >> 8) >> 1) << 8; F[f, 33] = 0x3a5c00; F[f, 34] = 0x651700; F[f, 35] = P3.VOL; F[f, 36] = P3.DRV; F[f, 37] = HWS[f] << 8
     if not built:
         GH_SEEN.append(int(C[0][8]))
         lst, _ = P3.build(int(C[0][8])); ls = [l for l in lst.splitlines() if l[6:7] == ':']
@@ -121,6 +128,7 @@ def xvt_in_source():
     body = src[src.index('\no3_xvt:\n'):]; body = body[:body.index('.align')]
     return [int(v) for l in body.split('\n') if '.short' in l for v in l.split('.short')[1].split(',')]
 TRACE = {}                                            # the last shell_chain: L, R, kq and the instructions of each frame
+NEUT = (1, 7)                                         # B2: FM and SWP still forced neutral with the insert on FX1 (MUFF is on the DSP)
 def shell_chain(args, built):
     """the insert on FX1 (its knobs read, B1: FM, SWP, MUFF, +D forced neutral), every frame an empty call [0,0) then the frame (half of them
     split at random), a START every 48 frames on a frame's first sample, accents alternating, AMP VOL as the frame
@@ -128,7 +136,7 @@ def shell_chain(args, built):
     gsel, nfr, tune, wave, seed, vol, df = args[:7]; xv = args[7] if len(args) > 7 else 0x7f00
     stops = args[8] if len(args) > 8 else (); src = args[9] if len(args) > 9 else SRC_D; driv = args[10] if len(args) > 10 else 0
     dfat = args[11] if len(args) > 11 else {}; df0 = df; kev = []; kqs = []; stf = []
-    neut = lambda d: tuple(0 if j in (1, 7, 9) else v for j, v in enumerate(d))   # B1: FM, SWP, MUFF neutral
+    neut = lambda d: tuple(0 if j in NEUT else v for j, v in enumerate(d))   # what the engine still forces neutral on the DSP's path
     gd = T7.o3out.driv_gain(driv)                    # DRIV's gain, Q12: the record's halfword 10
     stopped = lambda f: any(a <= f < b for a, b in stops)
     xt = XVT[xv >> 8] + (((XVT[(xv >> 8) + 1] - XVT[xv >> 8]) * (xv & 0xff)) >> 8)
@@ -137,7 +145,7 @@ def shell_chain(args, built):
     fld = lambda n: T7.s32(m.r(st + C[n], 'l'))
     r.machine(T7.T, (wave, gsel, 64, 0, driv, 64)); r.voice(T7.T, True, 3); r.path(3, '/AUDIO/x.wav')
     rec = VREC + 64 * T7.T                              # the mock's ping 0
-    t = None; L = []; R = []; retrig = []; goff = []; gprev = 1; acc0 = None; pnote = None; words_rec = []; bad = 0; cuts = []; zfr = []; zleft = 0; trw = 0; fseq = 0
+    hws = []; pays = []; t = None; L = []; R = []; retrig = []; goff = []; gprev = 1; acc0 = None; pnote = None; words_rec = []; bad = 0; cuts = []; zfr = []; zleft = 0; trw = 0; fseq = 0
     for f in range(nfr):
         if f in dfat:
             df = dfat[f]; assert t is not None
@@ -168,8 +176,9 @@ def shell_chain(args, built):
             if tr == 1 and trw != 1: zleft = C['O3_DQN']       # o3_dquiet: zeros from the frame the transport is seen running
             trw = tr; zfr.append(zleft > 0); zleft -= zleft > 0
             cuts.append(sp if sp < 16 else 0)
-            hw = [m.r(rec + 2 * i, 'w') for i in range(11)]
+            hw = [m.r(rec + 2 * i, 'w') for i in range(12)]
             bad += hw[:6] != [0, 0x7f00, 0x7f00, 0x7f00, 0x4000, 0x7f00] or hw[7:11] != [0x3a5c, 0x6517, veff, gd]
+            hws.append(hw[11]); pays.append(fld('E_FMON'))
             words_rec.append(hw); kqs.append(fld('E_KQ')); stf.append(fst)
     goff = [g - g % 16 for g in goff]
     s = T7.scen('guscio GATE %s VOL %#x XVOL %#x DRIV %d%s' % ('303' if gsel else 'OFF', vol, xv, driv, ' stop' if stops else ''), t, cut=70, res=100, env=90, dec=60, acc=acc0, wave=wave & ~2,
@@ -184,7 +193,7 @@ def shell_chain(args, built):
     for f in range(nf):
         F[f, 0:32:2] = Lg[16 * f:16 * f + 16]; F[f, 1:32:2] = Rg[16 * f:16 * f + 16]
         hw = words_rec[len(words_rec) - nf + f]
-        for i in range(5): F[f, 32 + i] = hw[6 + i] << 8
+        for i in range(6): F[f, 32 + i] = hw[6 + i] << 8
     # o3_dquiet: the first O3_DQN frames after the transport is first seen running go out as zeros, L and R (the insert
     # refuses them: silence, its gain restarts).  The bench gets every frame in the pieces the shell rendered it in.
     zfr = zfr[len(zfr) - nf:]
@@ -198,11 +207,12 @@ def shell_chain(args, built):
     kn_ = np.ascontiguousarray(MD.KNEG, np.int32); kp_ = np.ascontiguousarray(MD.KPOS, np.int32); ye = np.zeros(n, np.int32)
     for f in range(nf):
         if zfr[f]: LD.o3d_bad(dst); continue
-        Cf = np.array([int(v) for v in Cm[f][:7]] + [int(Cm[f][7]), int(Cm[f][8]), veff << 8], np.int32)
+        Cf = np.array([int(v) for v in Cm[f][:7]] + [int(Cm[f][7]), int(Cm[f][8]), veff << 8, int(Cm[f][11]), int(Cm[f][12])], np.int32)
+        bad += (hws[len(hws) - nf + f] != int(Cm[f][11]))
         Xf = np.ascontiguousarray(X[16 * f:16 * f + 16], np.int32); yo = np.zeros(16, np.int32)
-        LD.o3_set_ddrv(gd << 8); LD.o3d_frame(dst, ip(Cf), ip(Xf), ip(yo), ip(kn_), ip(kp_)); ye[16 * f:16 * f + 16] = yo
+        LD.o3_set_ddrv(gd << 8); LD.o3d_frame2(dst, ip(Cf), ip(Xf), ip(yo), ip(kn_), ip(kp_)); ye[16 * f:16 * f + 16] = yo
     d3 = int(sum(1 for i in range(n) if int(yl[i]) != int(ye[i]))) + zq + int(re.search(r'outside the audio block (\d+)', msg).group(1))
-    TRACE.update(L=L[:n], R=R[:n], kq=kqs[len(kqs) - nf:], steps=stf[len(stf) - nf:])
+    TRACE.update(L=L[:n], R=R[:n], kq=kqs[len(kqs) - nf:], steps=stf[len(stf) - nf:], F=F, zfr=zfr, out=yl)
     # a STOP: the gate must be closed by the stop's second frame (unless a note started while stopped is sounding)
     return s['name'], n, bad, d1, d3, len(retrig), len(goff), goff, retrig
 

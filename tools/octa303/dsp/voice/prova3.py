@@ -2,7 +2,7 @@
 import sys, os, subprocess, ctypes, numpy as np
 HERE=os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, os.path.join(HERE,'..','ref'))
 from grid import *
-WORK=OUT
+WORK=os.environ.get('O3_WORK') or OUT; os.makedirs(WORK,exist_ok=True)   # O3_WORK: a run's own files (two runs at once)
 DA=os.environ.get('O3_DSP_ASM') or os.path.join(os.environ.get('O3_DSP56300', os.path.join(ROOT,'vendor','dsp56300')),'build','source','dsp_host','dsp_asm')
 HOST=os.path.join(OUT,'o3host')
 AB=0x5000                          # the bench's audio block (o3host AUDIO); the unit's is X:0
@@ -10,16 +10,23 @@ G=8387936; KN=97; PTP=0x1800; ORG=0x1000; CV=4260619; VOL=0x400000      # the AM
 DRV=0x100000      # DRIV's word of the tests: 0x100000 = DRIV 0 (the knees and the tables: grid.py, gen_module.drv)
 def drvw(r,nf):   # DRIV's word for nf frames: a third at DRIV 0, the rest G = 4097..12953 (Q12) << 8, held as the rest is
     g=r.integers(4097,12954,nf)*256; g[r.random(nf)<0.33]=0x100000; return g
+HW0=4095<<3      # halfword 11 with MUFF, FM, SWP neutral (B2: FM's ceiling field at its largest)
 def ref(e):
-    n=e['nsamp']; C=np.zeros((n//16+1,9),np.int32); X=np.zeros(n,np.int32); L.o3_set_dvol(VOL); L.o3_set_ddrv(DRV)
+    n=e['nsamp']; C=np.zeros((n//16+1,9),np.int32); X=np.zeros(n,np.int32); H=np.zeros((n//16+1,2),np.int32); L.o3_set_dvol(VOL); L.o3_set_ddrv(DRV)
     L.o3_set_dtrace(C.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), X.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)))
+    L.o3_set_dtrace2(H.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)))
     L.o3_set_dref(1,(ctypes.c_int*5)(24,24,24,24,24),0)
-    y=m.render_engine(e,M); rc=L.o3_last_rc(); L.o3_set_dref(0,None,0); L.o3_set_dtrace(None,None); L.o3_set_dvol(0); assert rc==0
-    return y,C[:n//16],X
+    y=m.render_engine(e,M); rc=L.o3_last_rc(); L.o3_set_dref(0,None,0); L.o3_set_dtrace(None,None); L.o3_set_dtrace2(None); L.o3_set_dvol(0); assert rc==0
+    return y,wide(C[:n//16],H[:n//16]),X
+def wide(C,H,vol=None,drv=None):
+    """the reference's trace (g1..g4 kq dq gt gv gh) and its halfword 11 / FM depth -> the 13 numbers of a frame
+    (g1..g4 kq dq gt gv gh vol drv hw fm, o3k.c o3d_run)"""
+    W=np.zeros((len(C),13),np.int32); W[:,:9]=C[:,:9]; W[:,9]=VOL if vol is None else vol; W[:,10]=DRV if drv is None else drv
+    W[:,11:13]=H; return W
 def send(p):                      # a 15-bit payload through the gain ahead of FX1
     assert 0<=p<32768; return (((p<<8)|0x80)*G+(1<<22))>>23
 def build(gh):
-    src=open(HERE+'/o3v.asm.in').read().replace('@GH@',str(gh)).replace('@LIM@',str((KN-1)<<14)).replace('@PT@',str(PTP)).replace('@CV@',str(CV)).replace('@AB@',str(AB)).replace('@DKP@',str(DKP)).replace('@DKN@',str(DKN)).replace('@DLIM@',str(gen_module.DLIM))
+    src=gen_module.subst(open(HERE+'/o3v.asm.in').read(),pt=str(PTP),ab=str(AB),gh=gh)
     open(WORK+'/o3v.asm','w').write(src)
     r=subprocess.run([DA,'-in',WORK+'/o3v.asm','-org','%x'%ORG,'-out',WORK+'/o3v.bin','-list'],capture_output=True,text=True)
     open(WORK+'/o3v.lst','w').write(r.stdout+r.stderr)
@@ -29,17 +36,19 @@ def build(gh):
     for l in open(WORK+'/o3v.sym') if os.path.exists(WORK+'/o3v.sym') else []: k,v=l.split(); lab[k]=int(v,16)
     return r.stdout, lab
 def frames(C,X,mark=0x7fff):
+    """C: frames of 13 numbers (wide()); the halfword 11 into the record, FM's depth into payload 14's bits 8..14"""
     n=len(C); F=np.zeros((n,52),np.int32)
     for f in range(n):
-        g1,g2,g3,g4,kq,dq,gt,gv,gh=[int(v) for v in C[f][:9]]
+        g1,g2,g3,g4,kq,dq,gt,gv,gh,vol,drv,hw,fm=[int(v) for v in C[f][:13]]
         pay=[mark]
         for c in (g1,g2,g3,g4,kq,dq,gt): assert 0<=c<(1<<23); pay+=[c>>8,c&0xff]
+        assert 0<=fm<128 and 0<=hw<32768; pay[14]|=fm<<8
         pay.append(sum(pay[1:])&0x7fff)
         assert gv%2==0 and gv<(1<<16)
-        F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700; F[f,35]=int(C[f][9]) if len(C[f])>9 else VOL; F[f,36]=int(C[f][10]) if len(C[f])>10 else DRV
+        F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700; F[f,35]=vol; F[f,36]=drv; F[f,37]=hw<<8
     return F
 def run_host(F,proc,init):
-    kp=np.concatenate([m.KPOS,[m.KPOS[-1]],m.KNEG,[m.KNEG[-1]],DTP,DTN]).astype(np.int32); kp.tofile(WORK+'/ytab.bin')
+    kp=np.concatenate([m.KPOS,[m.KPOS[-1]],m.KNEG,[m.KNEG[-1]],DTP,DTN,gen_module.mode_consts()]).astype(np.int32); kp.tofile(WORK+'/ytab.bin')
     F.astype(np.int32).tofile(WORK+'/in.bin')
     r=subprocess.run([HOST,WORK+'/o3v.bin','%x'%ORG,'%x'%init,'%x'%proc,WORK+'/ytab.bin','p%x'%PTP,WORK+'/in.bin',WORK+'/out.bin'],capture_output=True,text=True)
     assert r.returncode==0, r.stdout+r.stderr
@@ -49,7 +58,8 @@ DC=[]
 def stress(seed, nf=4000, loud=True):
     """random coefficients and (loud) full-scale L samples: the limiting moves and the table's end are exercised"""
     r=np.random.default_rng(seed); gh=GH
-    C=np.zeros((nf,11),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
+    C=np.zeros((nf,13),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
+    C[:,11]=HW0|(r.integers(0,3,nf)<<1)                # B2: MUFF's mode at random
     C[:,0:4]=r.integers(1,int(0.98*2**23),(nf,4)); C[:,4]=r.integers(0,120*65536,nf); C[:,5]=r.integers(1,2**23,nf)
     C[:,6]=r.integers(0,2**23,nf); C[:,7]=r.integers(0,2**15,nf)*2; C[:,8]=gh
     C[:,10]=drvw(r,nf)
@@ -120,7 +130,7 @@ if __name__=='__main__':
     import re as _re
     def outside(msg): return int(_re.search(r'outside the audio block (\d+)', msg).group(1))
     r=np.random.default_rng(11); nf=1500
-    C=np.zeros((nf,11),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
+    C=np.zeros((nf,13),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256; C[:,11]=HW0|(r.integers(0,3,nf)<<1)
     C[:,0:4]=r.integers(1,int(0.98*2**23),(nf,4)); C[:,4]=r.integers(0,120*65536,nf); C[:,5]=r.integers(1,2**23,nf)
     C[:,6]=r.integers(0,2**23,nf); C[:,7]=r.integers(0,2**15,nf)*2; C[:,8]=GH
     C[:,10]=drvw(r,nf)

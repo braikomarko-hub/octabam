@@ -64,6 +64,9 @@ O3V_DRVN = (
     478607, 478632, 478645, 478651, 478655, 478656, 478657, 478658, 478658, 478658,
     478658, 478658, 478658, 478658,
 )
+O3V_MODES = (
+    8388607, 0, 471858, 5381308, 314572, 0, 8388607, 0,
+)
 # ---- o3v tables: end ----
 
 _PLAIN = Formatter.PLAIN
@@ -120,8 +123,9 @@ MODULE = Module(
     ),
     dsp=DspSection(
         asm="modules/devilish/devilish.asm",
-        ptable=O3V_KPOS + O3V_KNEG + O3V_DRVP + O3V_DRVN,   # the BA662 ceiling's two tables (the engine's own,
-                                      # modules/octa303/octa303.s), then DRIV's two (tools/octa303/dsp/gen_module.py)
+        ptable=O3V_KPOS + O3V_KNEG + O3V_DRVP + O3V_DRVN + O3V_MODES,   # the BA662 ceiling's two tables (the engine's
+                                      # own, modules/octa303/octa303.s), DRIV's two, the B2 modes' limits and factors
+                                      # (tools/octa303/dsp/gen_module.py)
         priority=27,                  # 20 is REMIX SWITCH's (both payloads), 22 DLCOPY's
         bus_role=BusRole.NONE,        # an insert; never on the bus
         ybase=YBase.NEVER,            # no buffers
