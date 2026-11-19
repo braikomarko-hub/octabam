@@ -16,15 +16,18 @@
 ;      x:(r6+1), x:(r6+2) = $3a5c00, $651700: the engine's signature in the voice record.  Without it the track is not
 ;      an OCTA-303: the audio is left exactly as it came (Marko, 17 Nov 2026).
 ;      x:(r6+5) = halfword 11 (B2, 19 Nov 2026), << 8: bits 14..3 FM's ceiling pqmax >> 10, bits 2..1 MUFF (0 OFF,
-;      1 SOFT, 2 HARD), bit 0 SWP above ACID.  MUFF: after the ceiling, y = low + h, low the 150 Hz one-pole of y, h the
-;      rest limited by the mode (tools/octa303/dsp/ref/o3k.c, o3d_sample).
-;      A frame is taken only if the mark, the sum and the seven low-byte payloads (nothing above bit 7) all agree.
+;      1 SOFT, 2 HARD), bit 0 SWP above ACID.  FM's depth (0..127) rides in payload 14's bits 8..14, above gt's low
+;      byte.  MUFF: after the ceiling, y = low + h, low the 150 Hz one-pole of y, h the rest limited by the mode.  FM:
+;      the four g = G m, m from the output's 5 Hz high-pass held every 4th sample (tools/octa303/dsp/ref/o3k.c, o3d_*).
+;      A frame is taken only if the mark, the sum and the six low-byte payloads 2..12 (nothing above bit 7) all agree.
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
-; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step;
-; $b.. g1 g2 g3 g4 kq dq gh gv gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
-; $20..$2f the decoded payloads; from $3e the block r4 walks in the loop: Gm, sm (MUFF's one-pole), MUFF's limit, its
-; negative, its cubic's factor; $43 DRIV's word, $44 the output level's step, $45 the level.
+; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step; $b..$e the loop's g1..g4 (FM's
+; G m), $f gh, $10 gv, $11 gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
+; $20..$2f the decoded payloads; from $30 the block r4 walks in the loop, in the order of use: FM's depth F,
+; pqmax / 2, the cubic's c3 c2 c1, G1..G4, kq, dq, the ladder input's limit and its negative, Gm, sm, MUFF's limit,
+; its negative, its factor, Gf5, shp (the 5 Hz high-pass), W (a bit every 4th sample), Yh (FM's source, held);
+; $46 DRIV's word, $47 the output level's step, $48 the level.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
 ; agu_check.py checks the listing).  One table in P (its base in n3): the ceiling's two sides (98 entries each), DRIV's
 ; two (24 each), then the modes' limits and factors (MUFF OFF, SOFT, HARD, OFF).
@@ -33,20 +36,32 @@ init:
         move    #>$ffffff,m5                    ; not guaranteed linear at init (DSP.md)
         move    r7,r5
         clr     a
-        do      #$46,o3v_izero
+        do      #$49,o3v_izero
         move    a,x:(r5)+
 o3v_izero:
-        move    #$11,n5
+        move    #$f,n5
         move    r7,r5
         move    #>91614,x0
-        clr     a
+        move    #>320130,y0
         move    (r5)+n5
-        move    x0,x:(r5)+                      ; gh, a constant of the laws
-        move    #$2c,n5
+        move    x0,x:(r5)                       ; gh, a constant of the laws ($f)
+        move    #$23,n5
+        move    #>957597,x0
+        move    #>2915192,x1
+        move    (r5)+n5
+        move    y0,x:(r5)+                      ; FM's cubic: c3, c2, c1 ($32)
+        move    x0,x:(r5)+
+        move    x1,x:(r5)+
+        move    #8,n5
         move    #>88690,x0
-        clr     a
+        move    #>2986,y0
         move    (r5)+n5
-        move    x0,x:(r5)                       ; Gm, MUFF's one-pole ($3e)
+        move    x0,x:(r5)                       ; Gm, MUFF's one-pole ($3d)
+        move    #5,n5
+        clr     a
+        clr     b
+        move    (r5)+n5
+        move    y0,x:(r5)                       ; Gf5, FM's 5 Hz high-pass ($42)
         rts
 proc:
         move    #>$ffffff,m1
@@ -127,7 +142,7 @@ o3v_sum:
         clr     b
         clr     a
         move    (r2)+n2                         ; r2 = payload 1
-        do      #7,o3v_low                      ; the seven low bytes: nothing above bit 7
+        do      #6,o3v_low                      ; the low bytes 2..12: nothing above bit 7 (14's: FM above gt's)
         move    x:(r2)+,x0
         move    x:(r2)+,a
         and     #>$7f00,a
@@ -136,29 +151,48 @@ o3v_low:
         tst     b
         bne     o3v_bad
 ; ---- seven 23-bit numbers: (hi << 8) + lo ----------------------------------------------------------------
-        move    #$b,n5
+        move    #$35,n5
         move    r7,r2
         move    r7,r5
         clr     a
         move    (r2)+n2                         ; r2 = payload 1
-        move    (r5)+n5                         ; r5 = g1
+        move    (r5)+n5                         ; r5 = G1
         do      #6,o3v_asm
         move    x:(r2)+,a
         asl     #8,a,a
         move    x:(r2)+,x0
         add     x0,a
-        move    a1,x:(r5)+
+        move    a1,x:(r5)+                      ; G1 G2 G3 G4 kq dq
 o3v_asm:
         move    x:(r2)+,a
         asl     #8,a,a
-        move    x:(r2)+,x0
-        add     x0,a                            ; gt
-        move    x:(r6),b
-        and     #>$ffff00,b                     ; (an LFO's fraction never reaches gv)
-        asr     #7,b,b                          ; gv
-        move    (r5)+                           ; past gh
-        move    b,x:(r5)+                       ; (gv: b1 alone, positive)
-        move    a1,x:(r5)
+        move    x:(r2)+,b                       ; payload 14: gt's low byte, FM's depth above it
+        add     b,a
+        and     #>$7f00,b                       ; FM << 8
+        sub     b,a                             ; gt
+        move    a1,y0
+        tst     b
+        move    #>$7fffff,a                     ; the ladder input's limit: none; FM alone, 4 x 2^20 (o3k.c)
+        move    #$40,x0
+        tne     x0,a
+        move    a,x:(r5)+                       ; ($3b)
+        neg     a
+        move    a,x:(r5)                        ; its negative
+        asl     #8,b,b
+        move    b,x0                            ; FM / 128
+        move    #>8279040,y1
+        mpy     x0,y1,b                         ; F = FM x 64680 (64680 x 128 / 2^23)
+        move    #$c,n5
+        move    x:(r6),a
+        and     #>$ffff00,a                     ; (an LFO's fraction never reaches gv)
+        move    (r5)-n5                         ; r5 = F ($30)
+        asr     #7,a,a                          ; gv
+        move    #$20,n5
+        move    b,x:(r5)
+        move    y0,b                            ; gt
+        move    (r5)-n5                         ; r5 = gv ($10)
+        move    a1,x:(r5)+                      ; (gv: a1 alone, positive)
+        move    b,x:(r5)
 ; ---- the gain's step: (gt - gain) >> 4, 48 bits -----------------------------------------------------------
         move    #7,n2
         move    r7,r2
@@ -181,7 +215,7 @@ o3v_asm:
         move    x0,x:(r2)                       ; 1 = taken: a later piece of this frame runs on these numbers
 ; ---- the frame's level, DRIV and MUFF (a taken frame only): the level's step = (level^2 - now) >> 4 -----------------
         move    (r1)+n1
-        move    #$2c,n2
+        move    #$1d,n2
         move    x:(r1)+,x0                      ; the level's halfword
         mpy     x0,x0,a
         move    #>4260619,y1
@@ -189,14 +223,21 @@ o3v_asm:
         mpy     x0,y1,a                         ; x ($8000 / $7f00)^2 / 2: with the loop's << 3, the voice x 4
         move    x:(r1)+,y0                      ; DRIV's word
         move    a,x1                            ; where the level goes
-        move    x:(r1),a                        ; halfword 11
+        move    x:(r1),b                        ; halfword 11
+        move    (r2)+n2                         ; r2 = pqmax / 2 ($31)
+        tfr     b,a
+        and     #>$7ff800,a
+        asr     #2,a,a                          ; FM's ceiling: (pqmax >> 10) << 9, the steps Q15
+        move    a1,x:(r2)
+        tfr     b,a
         asr     #8,a,a
         and     #>6,a                           ; MUFF's mode x 2: its pair in the table
         move    #>244,x0
         add     x0,a
+        move    #$e,n2
         move    a1,n5
         move    n3,r5
-        move    (r2)+n2                         ; r2 = MUFF's limit ($40)
+        move    (r2)+n2                         ; r2 = MUFF's limit ($3f)
         clr     a
         move    (r5)+n5
         move    p:(r5)+,x0                      ; the limit
@@ -206,9 +247,14 @@ o3v_asm:
         neg     a
         move    a,x:(r2)+                       ; its negative
         move    y1,x:(r2)+
-        move    y0,x:(r2)+                      ; DRIV's word ($43)
+        move    #>$111100,x0                    ; W: the bits of samples 3, 7, 11, 15 (FM's source is held from them)
         move    (r2)+
-        move    x:(r2),b                        ; the level now ($45)
+        move    (r2)+
+        move    x0,x:(r2)+                      ; ($44)
+        move    (r2)+
+        move    y0,x:(r2)+                      ; DRIV's word ($46)
+        move    (r2)+
+        move    x:(r2),b                        ; the level now ($48)
         move    x1,a
         sub     b,a
         asr     #4,a,a
@@ -226,18 +272,59 @@ o3v_run:
         move    r7,r5
         move    r7,r1                           ; r1 = s1
         move    r7,r4
-        move    #$3e,n4
+        move    #$45,n4
         move    (r2)+n2                         ; r2 = the gain, for the loop
         move    (r5)+n5                         ; r5 = g1
+        move    (r4)+n4                         ; r4 = Yh, the block's last word before DRIV's
+        move    #$15,n4                         ; (from Yh back to the block's start)
         move    r5,r3                           ; r3 = g1, kept
-        move    #2,n5
-        move    (r4)+n4                         ; r4 = the block of MUFF and DRIV
-        move    #6,n4                           ; (a sample's end: from the level's step back to its start)
         do      n7,o3v_end
+; ---- FM: g = G m, m = 2^((pq - 32) / 8), pq = 32 + Yh F table steps (Q15 here, halved) within 0 .. pqmax: m / 16 =
+;      (2^f / 2, a cubic in f, the place in the octave) x 2^e >> 7, e the octave; g = (G m/16) << 4.  FM 0: m = 1, g = G.
+        move    x:(r4)-n4,x0                    ; Yh; r4 on F
+        move    x:(r4)+,y1                      ; F
+        move    #$10,a                          ; 2^20
+        mac     x0,y1,a
+        move    x:(r4)+,x0                      ; pqmax / 2
+        cmp     x0,a
+        tgt     x0,a
+        clr     b
+        max     a,b                             ; and 0 at least
+        tfr     b,a
+        and     #>$3ffff,a
+        asl     #5,a,a
+        move    a,x0                            ; f (Q23)
+        asr     #18,b,b                         ; e (b1)
+        move    x:(r4)+,y1                      ; c3
+        move    x:(r4)+,a                       ; c2
+        mac     x0,y1,a
+        move    a,y1
+        move    x:(r4)+,a                       ; c1
+        mac     x0,y1,a
+        move    a,y1
+        move    #$40,a                          ; 1/2
+        mac     x0,y1,a                         ; 2^f / 2
+        asl     b1,a,a
+        asr     #7,a,a
+        move    a,y1                            ; m / 16
+        move    x:(r4)+,x0                      ; G1
+        mpy     x0,y1,a x:(r4)+,x0              ; (G2)
+        asl     #4,a,a
+        move    a,x:(r5)+                       ; g1
+        mpy     x0,y1,a x:(r4)+,x0              ; (G3)
+        asl     #4,a,a
+        move    a,x:(r5)+                       ; g2
+        mpy     x0,y1,a x:(r4)+,x0              ; (G4)
+        asl     #4,a,a
+        move    a,x:(r5)+                       ; g3
+        mpy     x0,y1,a
+        asl     #4,a,a
+        move    a,x:(r5)+                       ; g4
+        move    r3,r5
 ; ---- zero-input pass --------------------------------------------------------------------------------------
         move    x:(r1)+,x0
-        move    x:(r5)+,y1
         move    x0,a
+        move    x:(r5)+,y1
         mac     -x0,y1,a
         move    x:(r1)+,x1
         sub     x1,a
@@ -259,10 +346,10 @@ o3v_run:
         mac     x0,y1,a                         ; z
         move    x:(r1)+,x1                      ; lp
         sub     x1,a
-        move    x:(r5)+,y1                      ; kq
+        move    x:(r4)+,y1                      ; kq
         move    a,x0
         mpy     x0,y1,a
-        move    x:(r5)+,y1                      ; dq
+        move    x:(r4)+,y1                      ; dq
         asl     #7,a,a
         move    x:(r0),b                        ; the oscillator, x << 2
         asr     #2,b,b
@@ -271,6 +358,12 @@ o3v_run:
         move    r3,r5
         move    b,x0
         mpy     x0,y1,a                         ; u
+        move    x:(r4)+,x0                      ; the ladder input's limit (FM alone: 4 x 2^20, o3k.c; else none)
+        cmp     x0,a
+        tgt     x0,a
+        move    x:(r4)+,x0
+        cmp     x0,a
+        tlt     x0,a
 ; ---- four poles: v = (in - s) g, y = s + v, s = y + v --------------------------------------------------------
         move    x:(r1),x1
         sub     x1,a
@@ -309,8 +402,7 @@ o3v_run:
         add     a,b
         move    b,x:(r1)+
 ; ---- the loop's high-pass ---------------------------------------------------------------------------------
-        move    a,y0                            ; y4
-        move    (r5)+n5                         ; r5 = gh
+        move    a,y0                            ; y4 (r5 on gh)
         move    x:(r1),x1
         sub     x1,a
         move    x:(r5)+,y1
@@ -354,9 +446,8 @@ o3v_run:
         move    x1,a
         abs     a
         move    #>1572864,x0
-        move    #>1572864,b
-        cmp     a,b
-        tlt     x0,a                            ; |y| above the table's end: the end
+        cmp     x0,a
+        tgt     x0,a                            ; |y| above the table's end: the end
         move    a,y0
         asr     #14,a,a
         move    x1,b
@@ -388,19 +479,17 @@ o3v_sgn:
 ; ---- MUFF: low = y's one-pole at 150 Hz, h = y - low (24 bits each), limited to the mode's +-L, then h - h f^2 with
 ;      f = (h K) << 4 (SOFT: the cubic soft clip, L = sqrt 2 Sm, saturating at 314,572; HARD: L = 314,572, K = 0; OFF:
 ;      no limit, K = 0, y as it came); y = low + h
-        move    a,y0                            ; y
         move    x:(r4)+,y1                      ; Gm
-        move    x:(r4),x1                       ; sm
+        move    x:(r4),x1 a,y0                  ; sm; y
         sub     x1,a
         move    a,x0
         mpy     x0,y1,a
         tfr     a,b
         add     x1,a
         add     a,b
-        move    b,x:(r4)+
         move    a,x1                            ; low
         move    y0,a
-        sub     x1,a                            ; h
+        sub     x1,a b,x:(r4)+                  ; h; sm
         move    x:(r4)+,x0
         cmp     x0,a
         tgt     x0,a
@@ -416,6 +505,25 @@ o3v_sgn:
         move    b,y1
         mac     -x0,y1,a
         add     x1,a                            ; y
+; ---- FM's source: y's one-pole high-pass at 5 Hz, held from the 4th samples (3, 7, 11, 15) to the next ones
+        move    x:(r4)+,y1                      ; Gf5
+        move    x:(r4),x1 a,y0                  ; shp; y
+        sub     x1,a
+        move    a,x0
+        mpy     x0,y1,a
+        tfr     a,b
+        add     x1,a
+        add     a,b
+        neg     a b,x:(r4)+                     ; shp
+        add     y0,a
+        move    a,x0                            ; the high-pass
+        move    x:(r4),a                        ; W: its top bit
+        asl     #1,a,a
+        move    a1,x:(r4)+
+        move    x:(r4),a
+        tlt     x0,a                            ; on a 4th sample, Yh = the high-pass
+        move    a,x:(r4)+
+        move    y0,a                            ; y, for DRIV
 ; ---- DRIV: x = y G; above the knee the mixer's soft ceiling, K + W tanh((|x| - K) / W) from the table -----------
         move    x:(r4)+,y1                      ; DRIV's word; r4 on the level's step
         move    y1,b
@@ -437,13 +545,12 @@ o3v_sgn:
         move    #>220,y1
 o3v_kside:
         sub     y0,a                            ; |x| - K
-        move    #>0,x0
+        move    #0,x0
         tst     a
         tlt     x0,a                            ; under the knee: the table's first point, K (and |x| is the smaller)
         move    #>180224,x0
-        move    #>180224,b
-        cmp     a,b
-        tlt     x0,a                            ; past the table's end: the end
+        cmp     x0,a
+        tgt     x0,a                            ; past the table's end: the end
         move    a,y0
         asr     #13,a,a
         add     y1,a
@@ -461,11 +568,10 @@ o3v_kside:
         mpy     x0,y1,a
         add     y0,a                            ; the curve: never above |x| past the knee, K under it
         move    a,x0
-        move    x0,b
         move    x1,a
         abs     a
-        cmp     a,b
-        tlt     x0,a                            ; the smaller of |x| and the curve (no branch: the cycle count's rule)
+        cmp     x0,a
+        tgt     x0,a                            ; the smaller of |x| and the curve (no branch: the cycle count's rule)
         move    x1,b
         tst     b
         bge     o3v_koff
@@ -477,13 +583,13 @@ o3v_koff:
         add     y0,b
         move    b,x:(r4)-
         move    b,y1
-        move    (r4)-n4                         ; (r4 back on the block's start)
+        move    (r4)-
+        move    (r4)-                           ; (r4 back on Yh)
         mpy     x0,y1,a
         asl     #3,a,a
         move    a,x0
         move    r7,r1
         move    r3,r5
-        move    #2,n5
         move    x0,x:(r0)+
         move    x0,x:(r0)+
 o3v_end:

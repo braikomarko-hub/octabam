@@ -40,14 +40,37 @@ def mode_consts():
     soft = (round(math.sqrt(2.0) * SM), round(2.0 ** 42 / (math.sqrt(6.0) * SM)))
     assert soft[1] < (1 << 23)
     return list(off + soft + (314572, 0) + off)
+def fm_cubic():
+    """FM's 2^f / 2 on f in [0, 1) as 1/2 + f (c1 + f (c2 + f c3)) (the insert's Horner, Q23): least squares of the
+    relative error on 1024 points, the 1/2 at f = 0 exact (FM 0: m = 1, g = G exactly).  Pure Python, so the build
+    gets the same numbers everywhere."""
+    pts = [(i + 0.5) / 1024 for i in range(1024)]
+    A = [[0.0] * 3 for _ in range(3)]; v = [0.0] * 3
+    for f in pts:
+        t = 2.0 ** f / 2.0; row = [f / t, f * f / t, f ** 3 / t]; r = 1.0 - 0.5 / t
+        for i in range(3):
+            v[i] += row[i] * r
+            for j in range(3): A[i][j] += row[i] * row[j]
+    for i in range(3):                                   # Gauss, 3 x 3
+        for k in range(i + 1, 3):
+            q = A[k][i] / A[i][i]
+            for j in range(3): A[k][j] -= q * A[i][j]
+            v[k] -= q * v[i]
+    c = [0.0] * 3
+    for i in (2, 1, 0): c[i] = (v[i] - sum(A[i][j] * c[j] for j in range(i + 1, 3))) / A[i][i]
+    c1, c2, c3 = (round(x * (1 << 23)) for x in c)
+    assert all(0 < x < (1 << 23) for x in (c1, c2, c3))
+    return c3, c2, c1
 def consts():
-    """the reference's constants (o3k.c o3d_set_consts): k[0..5] the modes' limits and factors, k[6] Gm"""
-    return mode_consts()[:6] + [q31(tpt(150.0)) >> 8]
+    """the reference's constants (o3k.c o3d_set_consts): k[0..5] the modes' limits and factors, k[6] Gm, k[7..9] FM's
+    cubic c3 c2 c1, k[10] Gf5"""
+    return mode_consts()[:6] + [q31(tpt(150.0)) >> 8] + list(fm_cubic()) + [q31(tpt(5.0)) >> 8]
 OMC = 2 * (KN + 1) + 2 * DN                            # the mode constants' place in the table (after DRIV's)
 def subst(s, pt='$fab1e0', ab='0', gh=GH):
     for k, v in (('@GH@', str(gh)), ('@LIM@', str((KN - 1) << 14)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
                  ('@DKP@', str(drv()[0])), ('@DKN@', str(drv()[1])), ('@DLIM@', str(DLIM)), ('@OMC@', str(OMC)),
-                 ('@GM@', str(consts()[6]))):
+                 ('@GM@', str(consts()[6])), ('@FC3@', str(consts()[7])), ('@FC2@', str(consts()[8])),
+                 ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10]))):
         assert k in s, k; s = s.replace(k, v)
     assert '@' not in s
     return s

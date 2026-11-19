@@ -2254,7 +2254,14 @@ o3_dwrite:
         move.w  %d0,20(%a1)
         move.l  E_MUFF(%a3),%d0         | halfword 11 (B2)
         add.l   %d0,%d0
-        add.l   #4095<<3,%d0
+        move.l  E_PQMAX(%a3),%d1        | FM's ceiling, pqmax >> 10 (FM off: 4095)
+        tst.l   E_FMON(%a3)
+        bne     .Ldw_f
+        move.l  #4095<<10,%d1
+.Ldw_f:
+        lsr.l   #7,%d1
+        and.l   #0x7ff8,%d1
+        or.l    %d1,%d0
         move.w  %d0,22(%a1)
         rts
         .endif
@@ -2335,9 +2342,8 @@ o3_params:
         subq.l  #1,%d1
         bge     .Lp_c2
         .if     O3_DSP
-        tst.l   E_DSPW(%a3)             | the insert on FX1: FM and SWP are not on the DSP yet: neutral (0), for the
-        beq     .Lp_nd                  | START and the class too (B2: MUFF is)
-        clr.b   R_DF+1(%a3)
+        tst.l   E_DSPW(%a3)             | the insert on FX1: SWP is not on the DSP yet: neutral (0), for the START and
+        beq     .Lp_nd                  | the class too (B2: MUFF and FM are)
         clr.b   R_DF+7(%a3)
 .Lp_nd:
         .endif
@@ -3533,7 +3539,7 @@ o3e_sil:                                | silence: d7 zero samples, the state un
         .if     O3_DSP
 | ---- o3e_pay (O3_DSP): the frame's sixteen payloads from the control step's numbers, each a 15-bit p sent as the
 |      24-bit sample p * 256 + 128: the mark 0x7fff, g1 g2 g3 g4 kq dq gt (two each), the sum of the fourteen.
-|      Clobbers d0, d1, d3, a0.
+|      B2: payload 14 carries FM's depth in its bits 8..14.  Clobbers d0, d1, d3, a0.
 o3e_pay:
         moveq   #1,%d0
         move.l  %d0,E_PAYOK(%a3)
@@ -3548,6 +3554,11 @@ o3e_pay:
         E_PAY1  E_KQ
         E_PAY1  E_DQ
         E_PAY1  E_GQ
+        move.l  E_FMON(%a3),%d0         | B2: FM's depth (0..127) above gt's low byte, payload 14's bits 8..14
+        lsl.l   #8,%d0
+        add.l   %d0,%d3
+        swap    %d0
+        add.l   %d0,-4(%a0)
         and.l   #0x7fff,%d3
         swap    %d3
         move.w  #0x8000,%d3
