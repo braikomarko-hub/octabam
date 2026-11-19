@@ -64,13 +64,15 @@ def fm_cubic():
 def consts():
     """the reference's constants (o3k.c o3d_set_consts): k[0..5] the modes' limits and factors, k[6] Gm, k[7..9] FM's
     cubic c3 c2 c1, k[10] Gf5"""
-    return mode_consts()[:6] + [q31(tpt(150.0)) >> 8] + list(fm_cubic()) + [q31(tpt(5.0)) >> 8]
+    so = 4.0 * 1048576.0 / (2.0 * math.sqrt(2.0) / 3.0)            # SWP: the soft clip saturating at 4 x 2^20 (o3k.c So_d)
+    swk = round(2.0 ** 46 / (math.sqrt(6.0) * so)); assert swk < (1 << 23)
+    return mode_consts()[:6] + [q31(tpt(150.0)) >> 8] + list(fm_cubic()) + [q31(tpt(5.0)) >> 8, round(math.sqrt(2.0) * so), swk]
 OMC = 2 * (KN + 1) + 2 * DN                            # the mode constants' place in the table (after DRIV's)
 def subst(s, pt='$fab1e0', ab='0', gh=GH):
     for k, v in (('@GH@', str(gh)), ('@LIM@', str((KN - 1) << 14)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
                  ('@DKP@', str(drv()[0])), ('@DKN@', str(drv()[1])), ('@DLIM@', str(DLIM)), ('@OMC@', str(OMC)),
                  ('@GM@', str(consts()[6])), ('@FC3@', str(consts()[7])), ('@FC2@', str(consts()[8])),
-                 ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10]))):
+                 ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10])), ('@SWL@', str(consts()[11])), ('@SWK@', str(consts()[12]))):
         assert k in s, k; s = s.replace(k, v)
     assert '@' not in s
     return s

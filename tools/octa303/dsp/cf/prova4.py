@@ -85,7 +85,7 @@ HWS = []                                              # run_engine: halfword 11 
 def hw11(r):
     """o3_dwrite's halfword 11 from the engine's state (B2): FM's ceiling (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 |
     SWP above ACID (the shell's own o3_dwrite is checked in shell_chain)"""
-    return ((r('E_PQMAX') >> 10 if r('E_FMON') else 4095) << 3) | (r('E_MUFF') << 1)
+    return ((r('E_PQMAX') >> 10 if r('E_FMON') else 4095) << 3) | (r('E_MUFF') << 1) | (r('E_SWP') > 0)
 def decode(y):                                        # the insert's decode of one R sample
     y = int(y); return ((y << 24) + ((y * 672) << 1)) >> 32
 
@@ -128,7 +128,7 @@ def xvt_in_source():
     body = src[src.index('\no3_xvt:\n'):]; body = body[:body.index('.align')]
     return [int(v) for l in body.split('\n') if '.short' in l for v in l.split('.short')[1].split(',')]
 TRACE = {}                                            # the last shell_chain: L, R, kq and the instructions of each frame
-NEUT = (7,)                                           # B2: SWP still forced neutral with the insert on FX1 (MUFF and FM are on the DSP)
+NEUT = ()                                             # B2: nothing forced neutral with the insert on FX1 (MUFF, FM, SWP are on the DSP)
 def shell_chain(args, built):
     """the insert on FX1 (its knobs read, B1: FM, SWP, MUFF, +D forced neutral), every frame an empty call [0,0) then the frame (half of them
     split at random), a START every 48 frames on a frame's first sample, accents alternating, AMP VOL as the frame

@@ -2203,6 +2203,7 @@ o3_dquiet:
 |      of FX1 is then the settled 8387936 / 2^23 on both channels (emulator probes, 17 Nov 2026).  FX1's page 1:
 |      gv >> 1, the signature 0x3a5c 0x6517, the level (VOL x XVOL's law), DRIV's gain; B2: halfword 11, FM's ceiling
 |      (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 | SWP above ACID (tools/octa303/dsp/voice/o3v.asm.in).
+|      With the insert, FM, SWP and MUFF are its (the class's per-sample loops never run for it).
 |      Clobbers d0, d1, a1.
 o3_dwrite:
         move.l  E_UXV(%a3),%d0          | VOL x o3_xvt(XVOL) / 0x7f00: XVOL's own law, between two entries by its
@@ -2262,6 +2263,10 @@ o3_dwrite:
         lsr.l   #7,%d1
         and.l   #0x7ff8,%d1
         or.l    %d1,%d0
+        tst.l   E_SWP(%a3)              | SWP above ACID: the insert's soft clip and governor
+        beq     .Ldw_s
+        addq.l  #1,%d0
+.Ldw_s:
         move.w  %d0,22(%a1)
         rts
         .endif
@@ -2341,12 +2346,6 @@ o3_params:
         addq.l  #1,%a2
         subq.l  #1,%d1
         bge     .Lp_c2
-        .if     O3_DSP
-        tst.l   E_DSPW(%a3)             | the insert on FX1: SWP is not on the DSP yet: neutral (0), for the START and
-        beq     .Lp_nd                  | the class too (B2: MUFF and FM are)
-        clr.b   R_DF+7(%a3)
-.Lp_nd:
-        .endif
         moveq   #0,%d0
         move.b  R_DF+4(%a3),%d0         | dEVILish's SLID ...
         tst.l   R_DFON(%a3)
@@ -4089,6 +4088,10 @@ o3e_pay:
 .Lx2\@:
         tst.l   E_SWP(%a3)
         beq     .Lx5\@
+        .if     O3_DSP
+        tst.l   E_DSPON(%a3)            | B2: the DSP's voice: the governor is the insert's, it is sent kh without it
+        bne     .Lx5\@
+        .endif
         move.l  E_KGOV(%a3),%d1         | the governor: the peak of |y4| above 3 x 2^20: kgov x 0.97 (floor 0.3),
         move.l  #3*1048576,%d2          | else x 1.005 (cap 1); kh x kgov
         cmp.l   E_PK4(%a3),%d2

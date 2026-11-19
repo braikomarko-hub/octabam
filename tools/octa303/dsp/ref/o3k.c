@@ -128,6 +128,9 @@ typedef struct { int32_t s1, s2, s3, s4, lp, lp2; int64_t gain48, dgain48; int32
                  int32_t sm, lm, nlm, km;        /* MUFF: the 150 Hz one-pole's state; the frame's limit, its negative, the cubic's factor */
                  int32_t F, pqm, gs[4], lu, nlu, shp, w, yh;   /* FM: its depth x 64680, pqmax / 2, the G's; the ladder input's
                                                     limit, its negative; the 5 Hz high-pass, the 4th samples' bits, the held source */
+                 int32_t ku, pk4, kgov;          /* SWP: the ladder input's cubic factor; the peak of y4^2 / 2^23 since the last
+                                                    frame; the governor (Q23, 1 = $7fffff at the start) */
+                 long long ngov[3];              /* the governor's frames: down, up, divisions skipped (dq at its cap) */
                  long long sat, big; } o3d_t;
 static int o3_dref = 0, o3_dbits[5] = {24, 24, 24, 24, 24};   /* bits kept: G, kq, Dq, gain, Gv */
 static long long o3_dsat = 0, o3_dbig = 0;
@@ -148,7 +151,8 @@ void o3_set_dtrace2(int32_t *h) { o3_dtr_h = h; }
    integer path, computed as the insert computes them: 24-bit registers, a 56-bit accumulator).  The constants are
    tools/octa303/dsp/gen_module.py's (o3d_set_consts: the numbers the insert is built with):
      k[0..5] the frame's limit and cubic factor by MUFF's mode (off, SOFT, HARD); k[6] Gm, the 150 Hz one-pole;
-     k[7..9] FM's cubic c3 c2 c1 (2^f / 2 = 1/2 + f (c1 + f (c2 + f c3))); k[10] Gf5, its source's 5 Hz high-pass */
+     k[7..9] FM's cubic c3 c2 c1 (2^f / 2 = 1/2 + f (c1 + f (c2 + f c3))); k[10] Gf5, its source's 5 Hz high-pass;
+     k[11], k[12] SWP's soft clip on the ladder input: its limit sqrt 2 So and factor 2^46 / (sqrt 6 So) */
 #define O3D_NK 32
 static int32_t o3d_k[O3D_NK];
 void o3d_set_consts(const int32_t *k, int n) { for (int i = 0; i < n && i < O3D_NK; i++) o3d_k[i] = k[i]; }
@@ -223,9 +227,14 @@ static inline int32_t o3d_sample(o3d_t *d, int64_t xin48, const int32_t *kneg, c
     b = xin48 - a; x0 = o3d_out(d, b); a = O3D_MPY(x0, d->dq);                      /* u; xin48: the oscillator, with its two bits of fraction */
     if (a > O3D_LD(d->lu)) a = O3D_LD(d->lu);                                       /* B2: FM alone, u within +-4 x 2^20 */
     if (a < O3D_LD(d->nlu)) a = O3D_LD(d->nlu);
+    {   /* SWP (B2): u - u f^2, f = u ku (the cubic soft clip saturating at 4 x 2^20; ku = 0 without SWP: u as it is) */
+        int32_t c = o3d_out(d, a), f = o3d_out(d, O3D_MPY(c, d->ku)), f2 = o3d_out(d, O3D_MPY(f, f));
+        a -= O3D_MPY(c, f2);
+    }
 #define O3D_POLE(s, g) a -= O3D_LD(s); x0 = o3d_out(d, a); a = O3D_MPY(x0, g); b = a; a += O3D_LD(s); b += a; s = o3d_out(d, b);
     O3D_POLE(d->s1, d->g[0]) O3D_POLE(d->s2, d->g[1]) O3D_POLE(d->s3, d->g[2]) O3D_POLE(d->s4, d->g[3])
     y0 = o3d_out(d, a);                                                            /* y4 */
+    b = O3D_MPY(y0, y0); if (b < O3D_LD(d->pk4)) b = O3D_LD(d->pk4); d->pk4 = o3d_out(d, b);   /* SWP: the peak of y4^2 */
     a -= O3D_LD(d->lp); x0 = o3d_out(d, a); a = O3D_MPY(x0, d->gh); b = a; a += O3D_LD(d->lp); b += a; d->lp = o3d_out(d, b);
     b = O3D_LD(y0) - a;                                                            /* hp */
     a = b; y0 = o3d_out(d, b);
@@ -285,12 +294,26 @@ static inline void o3d_ctl(o3d_t *d) {
     d->F = o3d_out(d, O3D_MPY(d->fm << 16, 8279040));                     /* FM: its depth x 64680 */
     d->pqm = ((d->hw << 8) & 0x7ff800) >> 2;                              /* (pqmax >> 10) << 9 */
     for (int j = 0; j < 4; j++) d->gs[j] = d->g[j];
-    d->lu = d->fm ? 0x400000 : 0x7fffff; d->nlu = -d->lu;
+    d->lu = d->fm ? 0x400000 : 0x7fffff; d->nlu = -d->lu; d->ku = 0;
     d->w = 0x111100;
+    int32_t pk = d->pk4; d->pk4 = 0;
+    if (d->hw & 1) {   /* SWP above ACID: the soft clip, and the governor (o3k.c core()'s, a frame being a control step):
+                          the peak of y4^2 / 2^23 above 1179647 (|y4| at least 3 x 2^20): kgov x 0.97, floor 0.3; else
+                          x 1.005, capped at 1 by the move's limit; kq x kgov, dq / (dq + kgov (1 - dq)) */
+        d->lu = o3d_k[11]; d->nlu = -d->lu; d->ku = o3d_k[12];
+        int64_t a;
+        if (pk > 1179647) { a = O3D_MPY(d->kgov, 8136949); if (a < O3D_LD(2516582)) a = O3D_LD(2516582); d->ngov[0]++; }
+        else { a = O3D_LD(d->kgov) + O3D_MPY(d->kgov, 41943); d->ngov[1]++; }
+        d->kgov = o3d_out(d, a);
+        d->kq = o3d_out(d, O3D_MPY(d->kq, d->kgov));
+        int32_t D = o3d_out(d, O3D_LD(d->dq) + O3D_LD(d->kgov) - O3D_MPY(d->kgov, d->dq));
+        if (D > d->dq) d->dq = (int32_t)(((int64_t)d->dq << 23) / D);   /* the insert's 24 DIV steps, C clear */
+        else d->ngov[2]++;
+    }
 }
 /* the reference on its own (phase 3's stress tests): nf frames of 13 numbers (g1..g4 kq dq gt gv gh vol drv hw fm) and 16 L samples */
 long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
-    o3d_t d; memset(&d, 0, sizeof d);
+    o3d_t d; memset(&d, 0, sizeof d); d.kgov = 0x7fffff;
     for (int f = 0; f < nf; f++) {
         const int32_t *c = C + 13 * f; o3_ddrv = c[10];
         for (int j = 0; j < 4; j++) d.g[j] = c[j];
@@ -302,7 +325,10 @@ long long o3d_run(const int32_t *C, const int32_t *X, int nf, int32_t *out, cons
 }
 /* the reference frame by frame, with its state kept by the caller (SONDA 3: the insert as it ran under the port) */
 #include <stdlib.h>
-void *o3d_new(void) { return calloc(1, sizeof(o3d_t)); }
+void *o3d_new(void) { o3d_t *d = calloc(1, sizeof(o3d_t)); d->kgov = 0x7fffff; return d; }
+/* B2's diagnostics of a frame-by-frame reference: 0..2 the governor's frames (down, up, skipped divisions), 3 the
+   limiting moves, 4 the largest |value| a move saw, 5 kgov, 6 the peak of y4^2 / 2^23 so far this frame */
+long long o3d_info(void *p, int k) { o3d_t *d = p; return k < 3 ? d->ngov[k] : k == 3 ? d->sat : k == 4 ? d->big : k == 5 ? d->kgov : d->pk4; }
 void o3d_free(void *p) { free(p); }
 void o3d_bad(void *p) { o3d_t *d = p; d->gain48 = 0; d->dgain48 = 0; }          /* a refused frame: the gain restarts */
 void o3d_frame2(void *p, const int32_t *c, const int32_t *x, int32_t *out, const int32_t *kneg, const int32_t *kpos) {
@@ -345,7 +371,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                  st.pst = 0; st.ptgt = 0; is_note(&st, T, kseg, kseg); }
     const int32_t *kcur = kseg; int ki = 0;               /* v7.1: the knobs now, the next knob event */
     int32_t mx = 0;
-    o3d_t ds; memset(&ds, 0, sizeof ds); ds.vol = o3_dvol; ds.raw = !o3_dvol;
+    o3d_t ds; memset(&ds, 0, sizeof ds); ds.vol = o3_dvol; ds.raw = !o3_dvol; ds.kgov = 0x7fffff;
     double GhD = M_PI * p[P_FH] / FS; GhD = GhD / (1.0 + GhD);
     double GvD = M_PI * p[P_FV] / FS; GvD = GvD / (1.0 + GvD);
     Gh = q31(GhD); Gv = q31(GvD);
@@ -429,7 +455,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                     r_ov = df[0] < 25 ? 1 : (df[0] > 25 ? 2 : 0); r_ovq = T[TB_OVQ + df[0]]; r_kov = T[TB_KOV + df[0]]; ov_level(df[0], So, &r_ovs2, &r_ovb);
                     r_fm = df[1] > 0; r_fmc = T[TB_FMC + df[1]]; r_gov = df[7] > 0; r_muff = df[9];
                 }
-                is_step(&st, T, F & ~((r_fm ? 0 : F_FM) | (r_gov ? 0 : F_GOV)), pk4, glvl, Gx, &kq, &Dq, &gq, &inc, &pqmax);
+                is_step(&st, T, F & ~((r_fm ? 0 : F_FM) | (r_gov && !o3_dref ? 0 : F_GOV)), pk4, glvl, Gx, &kq, &Dq, &gq, &inc, &pqmax);   /* B2: the DSP's path sends kq, Dq without the governor (the insert has it) */
                 G1 = Gx[0]; G2 = Gx[1]; G3 = Gx[2]; G4 = Gx[3]; pk4 = 0;
                 dgain = (gq - gain) / CTL;
                 if (o3_dref) {   /* what the nine words carry, cut to the bits a coding keeps */
@@ -438,10 +464,10 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
                     ds.kq = o3d_q(kq >> 8, o3_dbits[1]); ds.dq = o3d_q(Dq >> 8, o3_dbits[2]);
                     ds.gh = Gh >> 8; ds.gv = o3d_q(Gv >> 8, o3_dbits[4]);
                     ds.fm = r_fm ? st.k[K_DF0 + 1] : 0;   /* B2: FM's depth and halfword 11 (pqmax >> 10, MUFF, SWP) */
-                    ds.hw = ((r_fm ? (int32_t)(pqmax >> 10) : 4095) << 3) | (r_muff << 1);
-                    ds.dgain48 = (O3D_LD(o3d_q(gq >> 8, o3_dbits[3])) - ds.gain48) >> 4; o3d_ctl(&ds);
-                    if (o3_dtr_h) { o3_dtr_h[2 * (i / CTL)] = ds.hw; o3_dtr_h[2 * (i / CTL) + 1] = ds.fm; }
+                    ds.hw = ((r_fm ? (int32_t)(pqmax >> 10) : 4095) << 3) | (r_muff << 1) | (r_gov ? 1 : 0);
+                    if (o3_dtr_h) { o3_dtr_h[2 * (i / CTL)] = ds.hw; o3_dtr_h[2 * (i / CTL) + 1] = ds.fm; }   /* what is sent (B2: before */
                     if (o3_dtr_c) { int32_t *r_ = o3_dtr_c + 9 * (i / CTL); for (int j = 0; j < 4; j++) r_[j] = ds.g[j]; r_[4] = ds.kq; r_[5] = ds.dq; r_[6] = o3d_q(gq >> 8, o3_dbits[3]); r_[7] = ds.gv; r_[8] = ds.gh; }
+                    ds.dgain48 = (O3D_LD(o3d_q(gq >> 8, o3_dbits[3])) - ds.gain48) >> 4; o3d_ctl(&ds);   /* the insert's governor moves kq, dq) */
                 }
 #ifdef O3_TRACE
             if (i / CTL < 8192) { int c = i / CTL; o3_tr[c][0] = G1; o3_tr[c][1] = G2; o3_tr[c][2] = G3; o3_tr[c][3] = G4; o3_tr[c][4] = kq; o3_tr[c][5] = Dq; o3_tr[c][6] = gq; o3_tr[c][7] = o3_troct; }
@@ -546,7 +572,7 @@ int core(const int F, const double *pseg, const int32_t *segstart, int nseg, con
             }
         }
         if (o3_dref) {
-            if (!csint || r_gov || (F & F_DP)) return -7;   /* B1: OVDR (above, and is_step's x G^-0.5); B2: MUFF, FM; no SWP, +D */
+            if (!csint || (F & F_DP)) return -7;   /* B1: OVDR (above, and is_step's x G^-0.5); B2: MUFF, FM, SWP; no +D */
             if (x >= 2097152 || x < -2097152) return -8;                           /* x << 2 must fit a 24-bit sample */
             /* the L channel: the sample x << 2 through the gain ahead of FX1 at VOL 0x7F00 (SONDA 2: 8387936 / 2^23, rounded:
                measured on positive samples; taken as floor(v G / 2^23 + 1/2) for negative ones too), then asr #2 on the accumulator */

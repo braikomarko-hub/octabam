@@ -20,12 +20,12 @@ The thresholds were written before the results (the vFable notes, soglie_B2.md);
 Run tools/octa303/dsp/build.sh first.  `prova6.py t3` (etc.): that part only."""
 import os, sys, random, subprocess, collections, ctypes, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-PARTS = sys.argv[1:] or ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't10']; sys.argv[1:] = []
+PARTS = sys.argv[1:] or ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't7b', 't10']; sys.argv[1:] = []
 import prova5 as P5
 P4 = P5.P4; P3 = P4.P3; T7 = P4.T7; DFN = T7.DFN; INCC3 = P5.INCC3
 import harness
 BASE = '73f0188f'                                     # B1, the commit B2 starts from
-IMPL = collections.OrderedDict([('MUFF', (9, (0, 1, 2))), ('FM', (1, (0, 1, 40, 127)))])   # the B2 knobs on the DSP: df index, the values tried
+IMPL = collections.OrderedDict([('MUFF', (9, (0, 1, 2))), ('FM', (1, (0, 1, 40, 127))), ('SWP', (7, (0, 1, 2)))])   # the B2 knobs on the DSP: df index, the values tried
 SCR = os.path.join(P3.WORK, 'b2'); os.makedirs(SCR, exist_ok=True)
 STEP = 5504
 
@@ -251,9 +251,8 @@ def t6():
     print('t6. 20 s: SWP SELF, RES 127, FM 127, OVDR 127, DRIV 127 (and the rest neutral)')
     df = list(DFN); df[7] = 2; df[1] = 127; df[0] = 127
     s = pattern('t6', df, res=127, nsamp=55125 * 16, notes=161)
-    P4.LD.o3_get_dsat.restype = ctypes.c_longlong; P4.LD.o3_get_dbig.restype = ctypes.c_longlong
-    d, n, y = with_drv(127, ref_vs_insert, s); sat, big = int(P4.LD.o3_get_dsat()), int(P4.LD.o3_get_dbig())
-    yr, ye, C, X, pk, info = with_drv(127, frames_ref, s)
+    d, n, y = with_drv(127, ref_vs_insert, s)
+    yr, ye, C, X, pk, info = with_drv(127, frames_ref, s); sat, big = info[3], info[4]
     same = int((yr != ye).sum())
     run = mx = 0; prev = None
     for v in y:
@@ -265,8 +264,8 @@ def t6():
     pkout = int(np.abs(y).max())
     ok = d == 0 and same == 0 and mx <= 4410 and pkout <= lim
     print('   the insert against the reference: %d of %d samples differ; the frame-by-frame reference: %d differ' % (d, n, same))
-    print('   the reference: limiting moves %d, the largest value at a move %d (2^23 = 8388608); governor frames down %d, up %d,'
-          ' divisions skipped %d' % (sat, big, info[0], info[1], info[2]))
+    print('   the reference (frame by frame): limiting moves %d, the largest |value| at a move %d (24 bits: 8388608); governor frames'
+          ' down %d, up %d, divisions skipped (dq at its cap) %d; |y4| at most %.0f' % (sat, big, info[0], info[1], info[2], np.sqrt(pk.max() * 2.0 ** 23)))
     print('   the longest run of one value other than 0: %d samples (limit 4410 = 0.1 s); the output\'s peak %d, the ceiling %d -> %s' % (
         mx, pkout, lim, 'PASS' if ok else 'FAIL'))
     return 0 if ok else 1
@@ -283,6 +282,37 @@ def t7():
         print('   FM %3d %s: |y4| at most %.0f in the first second, %.0f after it (%.3f x 3 x 2^20; limit 1.25): %s; kgov now %.3f, frames down %d up %d' % (
             fm, 'accents' if acc else 'no accents', p0, p1, p1 / 3 / 2 ** 20, 'PASS' if p1 <= lim else 'FAIL', info[5] / 2 ** 23, info[0], info[1]))
     return FAIL
+
+def t7b():
+    """the governor driven hard (the patterns of t7 never take it down): random G near 1, kq to 120, full-scale input,
+    SWP on, MUFF and FM at random -- the insert against the frame-by-frame reference; the down frames and the
+    divisions must happen (else the run proves nothing)"""
+    if 'SWP' not in IMPL: return 0
+    print('t7b. the governor driven: random coefficients, SWP on, 6000 frames, whole and in pieces')
+    r = np.random.default_rng(77); nf = 6000; LD = P4.LD; ip = lambda a: a.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
+    C = np.zeros((nf, 13), np.int32); C[:, 9] = 0x400000
+    C[:, 0:4] = r.integers(int(0.3 * 2 ** 23), int(0.98 * 2 ** 23), (nf, 4)); C[:, 4] = r.integers(20 * 65536, 120 * 65536, nf)
+    C[:, 5] = r.integers(1, 2 ** 23, nf); C[:, 6] = r.integers(2 ** 21, 2 ** 23, nf); C[:, 7] = r.integers(0, 2 ** 15, nf) * 2
+    C[:, 8] = P3.gen_module.GH; C[:, 10] = P3.drvw(r, nf)
+    C[:, 11] = (r.integers(0, 4096, nf) << 3) | (r.integers(0, 3, nf) << 1) | 1; C[:, 12] = r.integers(0, 128, nf) * (r.random(nf) < 0.5)
+    for f in range(1, nf):
+        if f % 9: C[f] = C[f - 1]
+    C[::97, 5] = 0x7fffff                                    # dq at its cap now and then: the division skipped
+    X = r.integers(-2 ** 22, 2 ** 22, 16 * nf).astype(np.int32)
+    LD.o3d_new.restype = ctypes.c_void_p; LD.o3d_info.restype = ctypes.c_longlong; st = ctypes.c_void_p(LD.o3d_new())
+    kn, kp = np.ascontiguousarray(P4.MD.KNEG, np.int32), np.ascontiguousarray(P4.MD.KPOS, np.int32); ye = np.zeros(16 * nf, np.int32)
+    for f in range(nf):
+        c = np.array([int(v) for v in C[f][:10]] + [int(C[f][11]), int(C[f][12])], np.int32); yo = np.zeros(16, np.int32)
+        LD.o3_set_ddrv(int(C[f][10])); LD.o3d_frame2(st, ip(c), ip(np.ascontiguousarray(X[16 * f:16 * f + 16])), ip(yo), ip(kn), ip(kp)); ye[16 * f:16 * f + 16] = yo
+    info = [int(LD.o3d_info(st, k)) for k in range(5)]; LD.o3d_free(st)
+    F = P3.frames(C, X); d = 0
+    for k in (0, 5, 11):
+        F[:, 51] = k
+        out, _, _ = P3.run_host(F, built()[0], P3.ORG); d += int((out[:, 0::2].reshape(-1) != ye).sum())
+    ok = d == 0 and info[0] > 100 and info[1] > 100 and info[2] > 10
+    print('   %d samples x 3 (whole, cut at 5, at 11): %d differ; governor frames down %d, up %d, divisions skipped %d; limiting moves %d -> %s' % (
+        16 * nf, d, info[0], info[1], info[2], info[3], 'PASS' if ok else 'FAIL'))
+    return 0 if ok else 1
 
 def t10():
     print('t10. the ColdFire\'s instructions a frame (cfsim): the engine (o3e_params + o3e_render) | the shell (every sy_render call), against %s' % BASE)

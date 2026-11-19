@@ -59,7 +59,7 @@ def stress(seed, nf=4000, loud=True):
     """random coefficients and (loud) full-scale L samples: the limiting moves and the table's end are exercised"""
     r=np.random.default_rng(seed); gh=GH
     C=np.zeros((nf,13),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
-    C[:,11]=(r.integers(0,4096,nf)<<3)|(r.integers(0,3,nf)<<1)   # B2: FM's ceiling, MUFF's mode at random
+    C[:,11]=(r.integers(0,4096,nf)<<3)|(r.integers(0,3,nf)<<1)|(r.random(nf)<0.5)   # B2: FM's ceiling, MUFF's mode, SWP at random
     C[:,12]=r.integers(0,128,nf)*(r.random(nf)<0.7)     #     FM's depth (0 in about a third)
     C[:,0:4]=r.integers(1,int(0.98*2**23),(nf,4)); C[:,4]=r.integers(0,120*65536,nf); C[:,5]=r.integers(1,2**23,nf)
     C[:,6]=r.integers(0,2**23,nf); C[:,7]=r.integers(0,2**15,nf)*2; C[:,8]=gh
