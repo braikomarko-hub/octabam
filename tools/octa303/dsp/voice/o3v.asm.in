@@ -123,6 +123,7 @@ o3v_dec:
 o3v_sum:
         move    x:(r6+5),a                      ; halfword 11 (<< 8) is in the sum too
         asr     #8,a,a
+        blt     o3v_bad                         ; (its bit 15 is in no sum: the engine never sets it)
         add     a,b
         move    #>$7fff,x0
         and     x0,b

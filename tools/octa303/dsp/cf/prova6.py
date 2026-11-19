@@ -359,7 +359,7 @@ def t11():
     print('t11. the output against %s (its engine and its insert, from git)' % PREV)
     oproc = old_insert(PREV); ob = SCR + '/o3v_%s.bin' % PREV; newb = P3.WORK + '/o3v.bin'; FAIL = 0
     # (a) the insert: prova3's 12 cases and its 4 stress runs (MUFF, FM, SWP and FM's ceiling at random), whole and in pieces
-    d = n = nr = 0; why = []
+    d = n = nr = 0; why = []; stress = []
     CASES = [(0,0,127,0),(0,127,127,1),(127,0,127,1),(127,127,127,0),(64,64,64,0),(40,100,64,1),(90,127,0,0),(20,64,127,1),(0,0,127,1),(127,127,127,1),(64,127,64,1),(127,100,0,0)]
     runs = [P3.frames(*P3.ref(P3.ev(*c))[1:]) for c in CASES]
     for seed, loud in ((1, True), (2, True), (3, False), (4, False)):
@@ -369,20 +369,22 @@ def t11():
         C[:, 0:4] = r.integers(1, int(0.98 * 2 ** 23), (nf, 4)); C[:, 4] = r.integers(0, 120 * 65536, nf); C[:, 5] = r.integers(1, 2 ** 23, nf)
         C[:, 6] = r.integers(0, 2 ** 23, nf); C[:, 7] = r.integers(0, 2 ** 15, nf) * 2; C[:, 8] = P3.gen_module.GH; C[:, 10] = P3.drvw(r, nf)
         X = r.integers(-2 ** 23, 2 ** 23, 16 * nf).astype(np.int32) if loud else r.integers(-2 ** 21, 2 ** 21, 16 * nf).astype(np.int32)
-        runs.append(P3.frames(C, X))
+        off = C[:, 12] == 0                                    # the engine's contract (o3e_kC, o3e_pay): FM 0 => FM's ceiling field 4095
+        Ck = C.copy(); Ck[off, 11] = (Ck[off, 11] & 7) | (4095 << 3)
+        runs.append(P3.frames(Ck, X)); stress.append((P3.frames(C, X), P3.frames(Ck, X)))
     for F in runs:
         for k in (0, 1, 7, 15):
             F[:, 51] = k
             a, b = host(F, newb, built()[0]), host(oldsum(F), ob, oproc); w = (a != b).any(axis=1)
             d += int((a != b).sum()); n += a.size
             FAIL += int(w.sum()); nr += 1
-            if w.any():                                          # FM 0 with FM's ceiling below the middle (pqmax / 2 < 2^20: the
-                off = (np.array([P4.decode(v) >> 8 for v in F[:, 29]]) == 0) & (F[:, 37] >> 11 < 2048)    # engine never sends it):
-                why.append(bool(off.any()) and int(np.argmax(off)) <= int(np.argmax(w)))   # one at or before the first frame that differs?
-    print('   (a) the insert, prova3\'s inputs (whole and in pieces), %d runs: %d words, %d differ; frames that differ %d; runs that differ'
-          ' %d, of which the first frame that differs is at or after a frame with FM 0 and FM\'s ceiling below the middle (never sent by the'
-          ' engine: FM 0 now skips FM, the ceiling is not looked at) in %d' % (
-              nr, n, d, FAIL, len(why), sum(why)))
+    for Fo, Fk in stress:                                      # out of contract (FM 0, ceiling at random): every difference
+        for k in (0, 7):                                       # is the ceiling's alone -- the new insert on them = d24e7173's
+            Fo[:, 51] = Fk[:, 51] = k                          # insert on the same frames with the ceiling at 4095
+            a, b = host(Fo, newb, built()[0]), host(oldsum(Fk), ob, oproc); dx = int((a != b).sum()); FAIL += dx; why.append(dx)
+    print('   (a) the insert, prova3\'s inputs (whole and in pieces, the stress runs within the engine\'s contract), %d runs: %d words,'
+          ' %d differ; frames that differ %d; out of contract (FM 0, the ceiling at random) against d24e7173 with the ceiling at 4095:'
+          ' %d words differ' % (nr, n, d, FAIL - sum(why), sum(why)))
     # (b) the engine: t2's and t3's scenarios -- L and gv the same, R the same but payload 15, which is d24e7173's + halfword 11
     SRC_PREV = old_source(PREV); use = [pattern(nm, df, res=res, wave=w) for nm, df, res, drv, w in cases() if not drv]
     for j, nm in P5.NAMES.items(): use.append(P5.pattern(nm, tuple(64 if i == j else v for i, v in enumerate(DFN)), wave=j % 2))
