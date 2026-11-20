@@ -112,7 +112,9 @@ def t3():
     for s in (pat('plain DEC 0 RES 64', dec=0, res=64, env=64), pat('plain DEC 0 RES 64 ENV 0', dec=0, res=64, env=0),
               pat('RES 0 DEC 64', res=0, dec=64), pat('accented DEC 0 RES 0', res=0, dec=0, accs=(120,) * 4)):
         dcf, dch, dout, n = compare(s)
-        print('     %-28s ColdFire %d | chain %d | insert out %d of %d samples differ' % (s['name'], dcf, dch, dout, n))
+        blind = not (dcf and dch and dout)                           # a control that does not differ: the old engine has today's tables
+        print('     %-28s ColdFire %d | chain %d | insert out %d of %d samples differ%s' % (s['name'], dcf, dch, dout, n, ' -> FAIL (blind)' if blind else ''))
+        FAIL += blind
     print('   -> %s' % ('PASS' if FAIL == 0 else 'FAIL'))
     return FAIL
 

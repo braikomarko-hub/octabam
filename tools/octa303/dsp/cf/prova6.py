@@ -24,9 +24,10 @@ B2b (halfword 11 latched and in the sum, FM skipped at 0; thresholds soglie_B2b.
   t12 a foreign halfword 11 (0x3200, 0, 20 random values) is refused exactly like a wrong sum in the same frames (3)
   t13 the ColdFire's cost against d24e7173: engine and shell within + 10 instructions a frame (6)
 C1 (20 Nov 2026): the older commits' engines are built with this tree's generated block (old_source, with_tables_now):
-these parts prove code; the knob laws' change is proven against a4691b8d by prova7.py.
+these parts prove code (the old commits run THEIR code with TODAY's laws, not their own source); a knob law's change is
+proven against a4691b8d with its own tables by prova7.py.
 Run tools/octa303/dsp/build.sh first.  `prova6.py t3` (etc.): that part only."""
-import os, sys, random, subprocess, collections, ctypes, numpy as np
+import os, re, sys, random, subprocess, collections, ctypes, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 PARTS = sys.argv[1:] or ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't7b', 't10', 't11', 't12', 't13']; sys.argv[1:] = []
 import prova5 as P5
@@ -144,6 +145,8 @@ def with_tables_now(src):
     commit's own source; t3, t10, t11, t13 prove code, and a law's change is proven against its own commit (prova7.py)"""
     cur = open(os.path.join(P3.ROOT, 'modules', 'octa303', 'octa303.s')).read()
     blk = lambda s: s[s.index(GEN[0]):s.index(GEN[1], s.index(GEN[0])) + len(GEN[1])]
+    shape = lambda t: re.sub(r'-?\b\d+\b', '#', re.sub(r'\|.*', '', t))     # labels, directives, element counts: only values may move
+    assert shape(blk(src)) == shape(blk(cur)), 'the generated block changed shape: an old commit cannot take it'
     return src.replace(blk(src), blk(cur))
 def old_source(rev=BASE, dsp=1, own_tables=False):
     p = SCR + '/octa303_%s%s.s' % (rev, '_own' if own_tables else ''); s = git_show('modules/octa303/octa303.s', rev)

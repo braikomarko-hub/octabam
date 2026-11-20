@@ -105,26 +105,31 @@ def main():
                     base, fm, 127 - fm, sw, mu, dp // 2, nd, nk, len(out[0]['kq'])))
                 FAIL += nd + nk + (len(out[0]['L']) != len(out[1]['L']) or not out[0]['L'])
     if ONLY in (None, 'kq'):
-        print('5. kq (what the DSP is sent) with OVDR not 25, ENV 0, no accent: one note, DEC 0 (VDEC, SATK moved at frames 900')
-        print('   and 1200, or not): changes once the MEG has settled (frame 700 on); the pattern of 1.: the largest step-to-step change')
-        ks = {}
+        print('5. kq (what the DSP is sent) with OVDR not 25, ENV 0, no accent: one note of %d frames, DEC 0 (VDEC, SATK moved at frames' % (NOTE_F,))
+        print('   %d and %d, or not): changes once the MEG has settled (frame %d on), and kq moved = kq still in every frame; the pattern' % (MV_F + (KQ_F0,)))
+        print('   of 1. (VDEC, SATK moved at frames 900 and 1200): the largest step-to-step change')
+        ks = {}; kqs = {}
         for ov in (25, 26, 60, 100, 127):
             df = list(DFN); df[0] = ov
             for mv in (False, True):
-                kn = [(14400, {'df': tuple(df[:3] + [100] + df[4:])}), (19200, {'df': tuple(df[:6] + [90] + df[7:])})] if mv else ()
                 for full in (False, True):
+                    f1, f2 = (900, 1200) if full else MV_F
+                    kn = [(16 * f1, {'df': tuple(df[:3] + [100] + df[4:])}), (16 * f2, {'df': tuple(df[:6] + [90] + df[7:])})] if mv else ()
                     s = pattern('kq', df, nsamp=2752 * 16, env=0, acc=False, knobs=kn) if full else \
-                        T7.scen('kq', 24000, cut=60, res=100, env=0, dec=0, dfon=1, df=df, knobs=kn)
+                        T7.scen('kq', 16 * NOTE_F, cut=60, res=100, env=0, dec=0, dfon=1, df=df, knobs=kn)
                     L, R, gv, _ = P4.run_engine(s, P4.EngD())
                     Rg = [P4.gain(P4.s24(v)) for v in R]
                     kq = [(P4.decode(Rg[16 * f + 9]) << 8) | P4.decode(Rg[16 * f + 10]) for f in range(len(R) // 16)]
                     C = P4.reference(s, INCC3)[1]; nr = sum(int(C[f][4]) != kq[f] for f in range(len(kq)))
                     jump = max(abs(b - a) / a for a, b in zip(kq, kq[1:]))
-                    still = sum(a != b for a, b in zip(kq[700:], kq[701:])) if not full else 0   # (OVDR 25: the MEG's tail, shown)
+                    still = sum(a != b for a, b in zip(kq[KQ_F0:], kq[KQ_F0 + 1:])) if not full else 0   # (OVDR 25: the MEG's tail, shown)
                     if not full and not mv: ks[ov] = kq[-1]
+                    kqs[ov, mv, full] = kq
+                    same = sum(a != b for a, b in zip(kq, kqs[ov, False, full])) + abs(len(kq) - len(kqs[ov, False, full]))   # moved against still
                     print('   OVDR %3d %-16s %-7s kq %6d .. %6d | largest change %.5f%s | differ from the reference %d' % (ov, 'VDEC, SATK moved' if mv else 'knobs still',
-                          'pattern' if full else 'a note', min(kq), max(kq), jump, '' if full else ', changes from frame 700 %d' % still, nr))
-                    FAIL += nr + (still if ov > 25 else 0) + (jump > 1 / 64)
+                          'pattern' if full else 'a note', min(kq), max(kq), jump, '' if full else ', changes from frame %d %d' % (KQ_F0, still), nr)
+                          + (' | kq differs from the still run in %d frames' % same if mv else ''))
+                    FAIL += nr + (still if ov > 25 else 0) + (jump > 1 / 64) + same
         print('   kq at OVDR 26 / 60 / 100 / 127 against 25: %.4f %.4f %.4f %.4f (G^-0.5)' % tuple(ks[o] / ks[25] for o in (26, 60, 100, 127)))
         FAIL += any(ks[o] >= ks[25] for o in (26, 60, 100, 127))
     if ONLY in (None, 'cost'):
@@ -145,6 +150,10 @@ def main():
                 if oth is DFN: FAIL += de > lim
     print('ESITO prova5:', 'PASS' if not FAIL else 'FAIL'); sys.exit(0 if not FAIL else 1)
 
+# part 5's window (C1, 20 Nov 2026: DEC 0 = the accent's decay, t10 0.122 -> 0.186 s): the count starts where the MEG is
+# as small as it was at frame 700 before (700 x 0.18590 / 0.12203 = 1066.4 -> 1067: 10^(-t / t10) = 0.8 %), VDEC and SATK
+# move after it, the note is long enough for 533 frames of count
+KQ_F0, MV_F, NOTE_F = 1067, (1100, 1300), 1600
 BASE = {('the rest neutral', 25): (824.4, 1905.1), ('the rest neutral', 10): (824.4, 1905.1), ('the rest neutral', 100): (824.5, 1905.1),
         ('TRCK VDEC SLID ADEC SATK SPD CUTX ENVX moved', 25): (887.0, 1905.1), ('TRCK VDEC SLID ADEC SATK SPD CUTX ENVX moved', 10): (887.0, 1905.1),
         ('TRCK VDEC SLID ADEC SATK SPD CUTX ENVX moved', 100): (887.1, 1905.1)}   # 7ef068d3: `prova5.py cost`, OCTA_SRC = its octa303.s

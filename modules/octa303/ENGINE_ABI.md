@@ -107,6 +107,9 @@ Only the third row depends on the whistle fix (the clip near the top of the filt
 | SQR, the knobs at 64, not accented | 162,675 | 48,946 |
 | SAW, CUT 127, RES 0, ENV 0, not accented | 418,200 | 176,848 |
 
+(The last row was measured with RES 0 keeping 4.4 % of the loop gain; since 20 Nov 2026 RES 0 is no feedback and
+that note is about 1.7 dB louder in rms (integer model, not remeasured in this table).)
+
 Keep your voice at the same level (±1 dB), and DRIV, dEVILish's MUFF threshold and the projects'
 mix stay where they were.
 
