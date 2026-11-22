@@ -66,13 +66,13 @@ through it).
 | F | END: LOOP, ONCE, STAY |
 | DOWN (in the window) | stop, as TRACK + DOWN |
 
-The title row shows the window's tracks and, on the right, the two scenes
-with the morph's position between them, as the main page's footer shows
-the crossfader's. The row under it shows the cycle (CYCLE 128), the step
-while the morph runs (STEP 12/128) or on the way back after STAY (BACK
-2/4), and on the right ARM (in the window), WAIT (starting on the next
-step), ON, STOP (finishing on A), PARK, TOP (held on B) or RET (on the
-way back).
+The title row shows the window's tracks and, on the right, ARM (in the
+window), WAIT (starting on the next step), ON, STOP (finishing on A),
+PARK, TOP (held on B) or RET (on the way back). The row under it shows the
+cycle (CYCLE 128), the step while the morph runs (STEP 12/128) or on the
+way back after STAY (BACK 2/4), and on the right the two scenes with the
+morph's position between them, as the main page's footer shows the
+crossfader's.
 
 ![MORPH window](../../img/morph/window.png)
 

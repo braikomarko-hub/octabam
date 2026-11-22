@@ -52,11 +52,10 @@ step after its own start (not from the bar), each with its own settings.
 The window (hold several track keys and it is for all of them):
 
 ```
- MORPH            T1   01▸09        the window's tracks; the scenes, as on the main page
- ──────────────────────────────
-  CYCLE 128                ARM      STEP 12/128 while morphing, BACK 2/4 on the way back after STAY;
-                                    ARM (in the window) / WAIT (next step) / ON / STOP (finishing)
-                                    / PARK / TOP (held on B) / RET (on the way back)
+ MORPH  T1                 ARM      the window's tracks; ARM (in the window) / WAIT (next step) / ON
+                                    / STOP (finishing) / PARK / TOP (held on B) / RET (on the way back)
+  CYCLE 128           01▸09         STEP 12/128 while morphing, BACK 2/4 on the way back after STAY;
+                                    the scenes, as on the main page
   STEPS (A)                 16      encoder A: TRK (the track's length), 1..64
   x (B)                      8      encoder B: 1..100
   MODE (C)              SMOOTH      encoder C: SMOOTH / HOLD (TRIG HOLD)
@@ -65,9 +64,10 @@ The window (hold several track keys and it is for all of them):
   END (F)                 LOOP      encoder F: LOOP ONCE STAY
 ```
 
-The top right is the scene indicator of the main page's footer, drawn by the same firmware
-calls: scene A, the position between them, scene B (v1.1 drew it at the bottom; v1.2 needs the
-row, so the eight rows are 7 pixels apart and the indicator sits in the title row). Its position
+The right of the second row is the scene indicator of the main page's footer, drawn by the same
+firmware calls: scene A, the position between them, scene B (v1.1 drew it at the bottom; v1.2
+needs the rows: eight rows 7 pixels apart inside v1.1's y 3..58, no rule under the title, the state
+at the title's right, the indicator beside the step). Its position
 is the window track's own: where its morph is while it morphs, A while it is parked, else the
 crossfader's.
 
