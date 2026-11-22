@@ -37,9 +37,11 @@ def asm(tag, text):
     open(W + '/%s.lst' % tag, 'w').write(r.stdout + r.stderr); assert 'assembled' in r.stdout, r.stdout[-500:]
     ls = [l for l in r.stdout.splitlines() if l[6:7] == ':']; k = [i for i, l in enumerate(ls) if ' rts' in l][0]
     return W + '/%s.bin' % tag, int(ls[k + 1][:6], 16)
-def host(binf, proc, tab, F, tag):
+def host(binf, proc, tab, F, tag, space='p'):
+    """space: where the block reads its table ('p': d42ce4b9's P reads; 'y': since B3 phase 2 the block reads Y, so its
+    table is loaded straight into Y at the same base -- t1 tests the block alone, without init's copy)"""
     np.asarray(tab, np.int64).astype(np.int32).tofile(W + '/t_%s.bin' % tag); F.tofile(W + '/in.bin')
-    r = subprocess.run([P3.HOST, binf, '%x' % P3.ORG, '%x' % P3.ORG, '%x' % proc, W + '/t_%s.bin' % tag, 'p%x' % P3.PTP, W + '/in.bin', W + '/o_%s.bin' % tag],
+    r = subprocess.run([P3.HOST, binf, '%x' % P3.ORG, '%x' % P3.ORG, '%x' % proc, W + '/t_%s.bin' % tag, ('p%x' if space == 'p' else '%x') % P3.PTP, W + '/in.bin', W + '/o_%s.bin' % tag],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     return np.fromfile(W + '/o_%s.bin' % tag, np.int32).reshape(-1, 33)[:, :32]
@@ -65,13 +67,14 @@ def t1():
     F = np.zeros((len(pairs) // 16, 52), np.int32)
     for k, (l, rr) in enumerate(pairs): F[k // 16, 2 * (k % 16)] = l; F[k // 16, 2 * (k % 16) + 1] = rr if rr < (1 << 23) else rr - (1 << 24)
     ref = host(*asm('ceil_ref', prog(old_b)), old_t, F, 'ref')
-    now = host(*asm('ceil_now', prog(new_b)), new_t, F, 'now')
+    sp = 'y' if 'y:(r5' in new_b else 'p'                       # (B3 phase 2: the block reads Y)
+    now = host(*asm('ceil_now', prog(new_b)), new_t, F, 'now', sp)
     d = int((ref != now).sum())
     print('   inputs %d, words compared %d (a1 and a0), differ %d (threshold 0)' % (n_in, ref.size, d))
     ctl = []
     for nm, body, tab in (('the new block with the old table', new_b, old_t), ('LIM - 1 (#$17)', new_b.replace('#$18,x0', '#$17,x0'), new_t),
                           ('no clamp below', new_b.replace('        tlt     x0,a\n', '        nop\n', 1), new_t)):
-        o = host(*asm('ceil_ctl', prog(body)), tab, F, 'ctl'); ctl.append(int((o != ref).sum()))
+        o = host(*asm('ceil_ctl', prog(body)), tab, F, 'ctl', sp); ctl.append(int((o != ref).sum()))
         print('   control, %s: differ %d (must be > 0)' % (nm, ctl[-1]))
     ok = d == 0 and all(c > 0 for c in ctl)
     print('   -> %s' % ('PASS' if ok else 'FAIL')); return ok

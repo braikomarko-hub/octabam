@@ -32,8 +32,10 @@
 ; peak of y4^2 (SWP), Gm, sm, MUFF's limit, its negative, its factor, Gf5, shp (the 5 Hz high-pass), W (a bit every
 ; 4th sample), Yh (FM's source, held); $48 DRIV's word, $49 the output level's step, $4a the level; $4b SWP's kgov.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
-; agu_check.py checks the listing).  One table in P (its base in n3): the ceiling as one signed table (194 entries, B3),
-; DRIV's two sides (24 each), then the modes' limits and factors (MUFF OFF, SOFT, HARD, OFF).
+; agu_check.py checks the listing).  One table: the ceiling as one signed table (194 entries, B3), DRIV's two sides (24
+; each), then the modes' limits and factors (MUFF OFF, SOFT, HARD, OFF).  The build puts it in P, or in X (then its one
+; read below becomes an X read); init copies it once to its fixed place Y:$c00.. (the same on both cores, no DMA there;
+; the manifest claims it), and proc reads it there only (its base in n3).
 ; CYCLES_FORWARD_BRANCHES
 init:
         move    #>$ffffff,m5                    ; not guaranteed linear at init (DSP.md)
@@ -54,13 +56,20 @@ o3v_izero:
         move    x0,x:(r5-$8)
         move    #>$7fffff,x0                    ; SWP's kgov = 1
         move    x0,x:(r5-$1)
+        move    #>$ffffff,m2                    ; the copy's source pointer, linear
+        move    #>$fab1e0,r2                       ; the table, where the build put it
+        move    #>$c00,r5                       ; its place in Y (r5 is free: the six stores above are done)
+        do      #250,o3v_icp                   ; once, at init: 250 words
+        move    p:(r2)+,x0
+        move    x0,y:(r5)+
+o3v_icp:
         rts
 proc:
         move    #>$ffffff,m1
         move    #>$ffffff,m2                    ; (no m3: r3 is only ever copied, never an address)
         move    #>$ffffff,m4
         move    #>$ffffff,m5
-        move    #>$fab1e0,n3                       ; the table, for the loop and the frame's modes
+        move    #>$c00,n3                       ; the table's place in Y (init copied it), for the loop and the frame's modes
         move    n7,a                            ; (a call of no samples: the dispatcher skips it; a do of 0 would not)
         tst     a
         beq     o3v_pass
@@ -203,8 +212,8 @@ o3v_asm:
         lua     (r2+$10),r2                     ; r2 = MUFF's limit ($41)
         clr     a
         move    (r5)+n5
-        move    p:(r5)+,x0                      ; the limit
-        move    p:(r5)+,y1                      ; the cubic's factor
+        move    y:(r5)+,x0                      ; the limit
+        move    y:(r5)+,y1                      ; the cubic's factor
         move    x0,x:(r2)+
         move    x0,a
         neg     a
@@ -473,7 +482,7 @@ o3v_nfm:
         move    a1,y1
         mpy     x0,y1,a
         asl     #3,a,a
-; ---- the BA662's ceiling: ONE signed table in P, step 2^14 (B3, the audit's T35): T = -KNEG[96..1], then KPOS[0..96]
+; ---- the BA662's ceiling: ONE signed table (in Y), step 2^14 (B3, the audit's T35): T = -KNEG[96..1], then KPOS[0..96]
 ;      and KPOS[96] again (194 words).  y within -LIM..LIM, u = y + LIM; the curve = T0 + f (T1 - T0), T0 = T[u >> 14],
 ;      T1 the next, f = u's 14 low bits.  A negative y reads the reflected interval, which gives the same sum to the bit;
 ;      the sign is in the table, no branch.  The clamp compares all 56 bits (a0 as the VCA left it): only a1 is read after.
@@ -494,8 +503,8 @@ o3v_nfm:
         asl     #9,b,b
         move    (r5)+n5
         move    b,x0                            ; the fraction, 23 bits
-        move    p:(r5)+,y0                      ; T0 (fet76's two reads)
-        move    p:(r5),y1                       ; T1
+        move    y:(r5)+,y0                      ; T0
+        move    y:(r5),y1                       ; T1
         move    y0,a
         mac     x0,y1,a
         mac     -y0,x0,a                        ; T0 + f (T1 - T0), exactly
@@ -582,8 +591,8 @@ o3v_kside:
         asl     #10,b,b
         move    (r1)+n1
         move    b,x0                            ; the fraction, 23 bits
-        move    p:(r1)+,y0                      ; T0
-        move    p:(r1),y1                       ; T1
+        move    y:(r1)+,y0                      ; T0
+        move    y:(r1),y1                       ; T1
         move    y0,a
         mac     x0,y1,a
         mac     -y0,x0,a                        ; the curve T0 + f (T1 - T0), exactly: never above |x| past the knee, K under it
