@@ -27,8 +27,14 @@ Thresholds (written 22 Nov 2026 before any ACIDF10 result; soglie_B3_v2.md 4.4, 
   init  at the end of W, WD and S, on every core with a dEVILish, the 250 words equal the table (0 different): after
         a project load (W), after a power-up with the project saved (WD), after dEVILish is selected while playing (S);
   4.5b  U and UD: the DSP's read-back of T2 and T5, frame by frame, 0 words different.
-It also prints the non-zero writes, during play, into the 256-word X regions holding the table's SOURCE (the copy
-reads it once at each init): a number, not a threshold.
+  4.4x  (added by the independent review, 22 Nov 2026, before any ACIDF10 result; revisione_B3_fase2.md 10(d)) when
+        the build put the table's SOURCE in X: in W, WD, S and SI, on each payload, 0 non-zero writes into the 256-word
+        X regions holding the source after the first copy, and at the end the 250 source words equal the table (0
+        different).  SI = S with clean memory and live audio input from boot (--audio-in tones --audio-in-from-boot):
+        the late init (frame 1000, after 1000 frames of audio) must still copy the table (init line above).
+With --dsp-dirty the fill itself goes through the write hook before the boot (dsp.cpp DspPair::dirty): its non-zero
+writes, reproduced here exactly, are taken out of the first --dsp-writes line, and watch hits at executed 0 are set
+aside (both printed).
 The files keep counts, frame numbers and P addresses; no byte or value of the stock image, no value of the table."""
 import argparse, json, os, pathlib, re, shutil, subprocess, sys
 HERE = pathlib.Path(__file__).resolve().parent; sys.path.insert(0, str(HERE))
@@ -46,11 +52,34 @@ RUNS = {"W": dict(o3=[1, 2, 4, 5], fx=FX_W, frames=1000, watch="0:Y:c00", dev={0
         "WD": dict(o3=[1, 2, 4, 5], fx=FX_W, frames=1000, watch="1:Y:c60", dirty=True, dev={0: 2, 1: 1}),
         "S": dict(o3=[1, 4], fx=FX_S, frames=1700, watch="0:Y:cf9", dirty=True, dev={0: 1, 1: 1},
                   at=[(400, PART_SET, 1), (700, PART_SET, 0), (1000, PART_SET, 1)]),
+        "SI": dict(o3=[1, 4], fx=FX_S, frames=1700, watch="1:Y:cf9", audio_in=True, dev={0: 1, 1: 1},
+                   at=[(400, PART_SET, 1), (700, PART_SET, 0), (1000, PART_SET, 1)]),
         "U": dict(o3=[1, 4], fx={"all": {1: ("DEVILISH", "NONE"), 4: ("DEVILISH", "NONE")}}, frames=600, dump=True, dev={0: 1, 1: 1}),
         "UD": dict(o3=[1, 4], fx={"all": {1: ("DEVILISH", "NONE"), 4: ("DEVILISH", "NONE")}}, frames=600, dump=True, dirty=True, dev={0: 1, 1: 1})}
 CMDL = re.compile(r"^cmd (\d+) tx (\d+)(.*)$")
 WATCH = re.compile(r"^\s+pc (0x[0-9a-f]+|0+) <- [0-9a-f]+ at executed (\d+)")
 PEEK = re.compile(r"^\s+core (\d) Y:(0x[0-9a-f]+|0):((?: [0-9a-f]{6})+)\s*$")
+XPEEK = re.compile(r"^\s+core (\d) X:(0x[0-9a-f]+|0):((?: [0-9a-f]{6})+)\s*$")
+DIRTY_SEED = 0x2545f491                                   # main.cpp: --dsp-dirty with no number
+SHARE_LO = 0x30000                                        # dsp.h g_shareLo
+
+
+def dirty_counts(keys, seed=DIRTY_SEED):
+    """The non-zero writes DspPair::dirty() (dsp.cpp) makes through the write hook BEFORE the boot: they land in the
+    first --dsp-writes line (main.cpp sets the write map and the watch before calling dirty).  Same xorshift, same
+    order (core 0 then 1; per address X then Y).  keys: {"0Y00c00", ...} -> {key: count}."""
+    want = {}
+    for k in keys:
+        want.setdefault((int(k[0]), k[1]), set()).add(int(k[2:], 16) >> 8)
+    out = dict.fromkeys(keys, 0); x = seed
+    for core in (0, 1):
+        wx, wy = want.get((core, "X"), set()), want.get((core, "Y"), set())
+        for ad in range(SHARE_LO):
+            x ^= (x << 13) & 0xFFFFFFFF; x ^= x >> 17; x ^= (x << 5) & 0xFFFFFFFF
+            if (x & 0xFFFFFF) and (ad >> 8) in wx: out[f"{core}X{(ad >> 8) << 8:05x}"] += 1
+            x ^= (x << 13) & 0xFFFFFFFF; x ^= x >> 17; x ^= (x << 5) & 0xFFFFFFFF
+            if (x & 0xFFFFFF) and (ad >> 8) in wy: out[f"{core}Y{(ad >> 8) << 8:05x}"] += 1
+    return out
 n = lambda v: format(v, ",").replace(",", ".")           # 246.000: no six bare digits in a line (the log filter's rule)
 
 
@@ -110,9 +139,12 @@ def one(name, image, project, top, posto, T):
     cmd = [str(ROOT / "out/emu/ot_emu"), "--image", image, "--card", str(card), "--set", "OCTABAM", "--project", "RIG",
            "--sequencer", "--internal-clock", "--frames", str(r_["frames"]), "--load-ms", "90000", "--dsp",
            "--main-level", "64", "--dsp-writes", str(out / "scritture.txt"),
-           "--dsp-peek", f"0:Y:{Y0:x},{NW};1:Y:{Y0:x},{NW}"]
+           "--dsp-peek", f"0:Y:{Y0:x},{NW};1:Y:{Y0:x},{NW}" + "".join(
+               f";{c}:X:{posto[p]['table'][1]:x},{NW}" for c, p in ((0, "A"), (1, "B"))
+               if posto.get(p, {}).get("table", [None])[0] == "X")]
     if r_.get("watch"): cmd += ["--dsp-watch", r_["watch"]]
     if r_.get("dirty"): cmd += ["--dsp-dirty"]
+    if r_.get("audio_in"): cmd += ["--audio-in", "tones", "--audio-in-from-boot"]
     if r_.get("dump"): cmd += ["--block-dump", str(out / "blocchi.dump")]
     if r_.get("at"): cmd += ["--at", ",".join(f"{f}:0x{a_:x}:{g}" for f, a_, g in r_["at"])]
     with (out / "port.log").open("w") as log:
@@ -122,7 +154,7 @@ def one(name, image, project, top, posto, T):
     print(f"sonda 11 {name}: {r_['frames']} frame{', memoria del DSP sporcata' if r_.get('dirty') else ''}; uscita "
           f"dell'emulatore {r.returncode}; arrivato in fondo: {'si' if 'run ended REACHED' in log else 'NO'}; progetto "
           f"caricato: {'si' if 'LOAD PROJECT handled' in log else 'NO'}; ILLEGAL: {'SI' if 'ILLEGAL' in log else 'no'}")
-    res = dict(ran=ran, fails=[])
+    res = dict(ran=ran, fails=[], xfails=[])
     if not ran:
         res["fails"].append("la corsa non e' arrivata in fondo")
     # ---- the table at the end, both cores
@@ -135,6 +167,18 @@ def one(name, image, project, top, posto, T):
         print(f"sonda 11 {name}: core {core}: alla fine Y:$0c00-$0cf9 contro la tabella: {diff} parole diverse su {NW}")
         if r_["dev"].get(core) and diff:
             res["fails"].append(f"core {core}: tabella diversa in {diff} parole alla fine")
+    xpeek = {int(m.group(1)): [int(x, 16) for x in m.group(3).split()] for m in map(XPEEK.match, log.splitlines()) if m}
+    for core, pay in ((0, "A"), (1, "B")):
+        t = posto.get(pay, {}).get("table")
+        if not (t and t[0] == "X"):
+            continue
+        w = xpeek.get(core)
+        if w is None or len(w) != NW:
+            print(f"sonda 11 {name}: core {core}: la lettura finale della sorgente in X manca"); res["xfails"].append(f"core {core} sorgente non letta"); continue
+        diff = sum(1 for a, b in zip(w, T) if a != b)
+        print(f"sonda 11 {name}: core {core}: alla fine la sorgente X:${t[1]:05x}-${t[2] - 1:05x} contro la tabella: {diff} parole diverse su {NW}  (soglia 4.4x: 0)")
+        if diff:
+            res["xfails"].append(f"core {core}: sorgente in X diversa in {diff} parole alla fine")
     # ---- writes per frame
     rows = []
     sp = out / "scritture.txt"
@@ -145,6 +189,20 @@ def one(name, image, project, top, posto, T):
                 rows.append((int(m.group(2)), {k: int(v) for k, v in (t.split(":") for t in m.group(3).split())}))
     if not rows:
         print(f"sonda 11 {name}: nessuna riga di --dsp-writes"); res["fails"].append("niente --dsp-writes")
+    xregs = {}
+    for core, pay in ((0, "A"), (1, "B")):
+        t = posto.get(pay, {}).get("table")
+        if t and t[0] == "X":
+            xregs[core] = sorted({a >> 8 for a in range(t[1], t[2])})
+    if r_.get("dirty") and rows:
+        keys = [f"{c}Y{Y0:05x}" for c in (0, 1)] + [f"{c}X{g << 8:05x}" for c, gs in xregs.items() for g in gs]
+        dc = dirty_counts(keys); d0 = rows[0][1]
+        for k, v in dc.items():
+            if d0.get(k, 0) < v:
+                res["fails"].append(f"riga 0: {k} ha {d0.get(k, 0)} scritture, meno delle {v} della memoria sporcata")
+            d0[k] = max(0, d0.get(k, 0) - v)
+        print(f"sonda 11 {name}: tolte dalla prima riga le scritture della memoria sporcata prima dell'avvio: "
+              + ", ".join(f"{k} {n(v)}" for k, v in dc.items()))
     nz = sum(1 for w in T if w)
     for core, pay in ((0, "A"), (1, "B")):
         b = bursts(rows, core, Y0)
@@ -160,18 +218,23 @@ def one(name, image, project, top, posto, T):
             res["fails"].append(f"core {core}: solo {quiet} frame tranquilli dopo l'ultima copia (servono 600)")
         if not b and r_["dev"].get(core):
             res["fails"].append(f"core {core}: nessuna copia vista")
-        # the source's regions, during play (after the first burst)
-        t = posto.get(pay, {}).get("table")
-        if t and t[0] == "X":
-            regs = sorted({a >> 8 for a in range(t[1], t[2])})
-            start = b[0][1] + 1 if b else 0
+        # the source's regions after the first copy (boot uploads come before it): THRESHOLD 4.4x = 0 non-zero writes
+        if core in xregs:
+            regs = xregs[core]
+            start = b[0][1] + 1 if b else 1
             s_ = sum(d.get(f"{core}X{g << 8:05x}", 0) for _tx, d in rows[start:] for g in regs)
-            print(f"sonda 11 {name}: core {core}: scritture non nulle, dopo la prima copia, nelle regioni X della sorgente "
-                  f"della tabella (X:${regs[0] << 8:05x}-${(regs[-1] << 8) + 255:05x}): {n(s_)}  (numero, non soglia)")
+            print(f"sonda 11 {name}: core {core}: scritture non nulle durante il suono nelle regioni X della sorgente "
+                  f"della tabella (X:${regs[0] << 8:05x}-${(regs[-1] << 8) + 255:05x}): {n(s_)}  (soglia 4.4x: 0)")
+            if s_:
+                res["xfails"].append(f"core {core}: {s_} scritture nelle regioni X della sorgente")
     # ---- the watched word's writers
     if r_.get("watch"):
         wc, _sp, wa = r_["watch"].split(":")
         hits = [(int(m.group(1), 16), int(m.group(2))) for m in map(WATCH.match, log.splitlines()) if m]
+        if r_.get("dirty"):
+            pre = [h for h in hits if h[1] == 0]
+            hits = [h for h in hits if h[1] != 0]
+            print(f"sonda 11 {name}: --dsp-watch: {len(pre)} scrittura/e a executed 0 (la memoria sporcata prima dell'avvio) messe da parte")
         pay = "A" if wc == "0" else "B"
         c = posto.get(pay, {}).get("code")
         inside = sum(1 for pc, _e in hits if c and c[0] <= pc < c[1])
@@ -200,7 +263,8 @@ def one(name, image, project, top, posto, T):
             res["ril"] = data
         else:
             res["fails"].append("niente file dei blocchi")
-    print(f"sonda 11 {name}: " + ("PASS" if not res["fails"] else "FAIL (" + "; ".join(res["fails"]) + ")"))
+    print(f"sonda 11 {name}: " + ("PASS" if not res["fails"] else "FAIL (" + "; ".join(res["fails"]) + ")")
+          + ("; sorgente in X: " + ("PASS" if not res["xfails"] else "FAIL (" + "; ".join(res["xfails"]) + ")")))
     return res
 
 
@@ -211,7 +275,7 @@ def main():
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT") or (dot.read_text().strip() if dot.exists() else None))
     ap.add_argument("--out", default=str(ROOT / "out/octa303/sonda11"))
     ap.add_argument("--posto", required=True)
-    ap.add_argument("--only", default="W,WD,S,U,UD")
+    ap.add_argument("--only", default="W,WD,S,SI,U,UD")
     a = ap.parse_args()
     if not a.project: print("sonda 11: nessun progetto (OT_PROJECT o ~/.octabam_project)"); return 2
     if not (ROOT / "out/emu/ot_emu").exists(): print("sonda 11: manca l'emulatore (make emu-cf)"); return 2
@@ -224,11 +288,14 @@ def main():
         except Exception as x:
             print(f"sonda 11 {name}: NON riuscita ({type(x).__name__}: {str(x)[:200]})"); R[name] = dict(ran=False, fails=["eccezione"])
     verdict = {}
-    w = [k for k in ("W", "WD", "S") if k in R]
+    w = [k for k in ("W", "WD", "S", "SI") if k in R]
     if w:
         verdict["4.4 scritture nel posto solo dalla copia"] = all(not R[k]["fails"] for k in w)
         verdict["init: tabella presente dopo il caricamento (W), l'accensione (WD), la scelta mentre suona (S)"] = all(
             not [f for f in R[k]["fails"] if "tabella diversa" in f or "lettura finale" in f] and R[k]["ran"] for k in w)
+        if any(posto.get(p, {}).get("table", [None])[0] == "X" for p in ("A", "B")):
+            verdict["4.4x sorgente in X intatta: 0 scritture durante il suono, uguale alla tabella alla fine"] = all(
+                not R[k].get("xfails", ["eccezione"]) and R[k]["ran"] for k in w)
     if "U" in R and "UD" in R:
         a_, b_ = R["U"].get("ril"), R["UD"].get("ril"); diff = 0; tot = 0; miss = 0
         if a_ and b_:
