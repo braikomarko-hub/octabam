@@ -14,7 +14,7 @@ coefficients travel in the R channel (sixteen 15-bit payloads a frame); slow val
 | `voice/o3v.asm.in` | the voice as an FX insert (init / proc), assembled by the repo's `dsp_asm` |
 | `voice/prova3.py` | phase 3: the assembled voice on the emulator against the reference, sample by sample |
 | `voice/prova3t.py` | B3: the ceiling as one signed table: the ceiling's block alone against d42ce4b9's on 64,920 edge inputs (the reviewer's adversarial test), the generated `devilish.asm` and the manifest's ptable against the bench, and a control (the old table must fail) |
-| `voice/prova3y.py` | B3 phase 2: init's one copy of the table to Y:$0c00..$0cf9 (the place pre-filled with random words, guard words around it, the dispatcher's registers checked), two instances on one core, and controls that must fail (no init, a wrong word, 249 words, m2 not linear, an init that writes m0) |
+| `voice/prova3y.py` | B3 phase 2: init's one copy of the table to Y:$0c00..$0cf9 (the place pre-filled with random words, guard words around it, the dispatcher's registers checked), two instances on one core, the table parked in X through build_bus.py's own `_p2x`, and controls that must fail (no init, a wrong word, 249 words, m2 not linear, an init that writes m0) |
 | `voice/prova3d.py` | B3 phase 2 (the reviewer's R1): d42ce4b9's whole insert, source, `subst` and table taken from git, against this tree's, 2,496,000 words |
 | `host/o3host.cpp` | a small bench on the vendored dsp56300 emulator library: it loads only this insert (no stock payload); runs init as the dispatcher would leave the core (options in its head) |
 | `voice/dis_check.py` | the bench's binary disassembled against its source, instruction by instruction (the assembler mis-encodes silently) |

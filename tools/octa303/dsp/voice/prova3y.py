@@ -14,6 +14,10 @@ written before the results:
       stress runs); proc never writes Y:$0bf0..$0d0f.
   y3  2.11: a second dEVILish on the same core: its init (its own state block) between the first's calls, then both play:
       the first's output the same as alone (0 differ), whole frames and frames in pieces (the init between the pieces).
+  y5  2.2's other case, the table parked in X (XTABLE / XHARVEST): the builder's own `_p2x`, taken from
+      tools/build/build_bus.py's text (not a copy), applied to this tree's insert with the base at X:$6000 -> it must rewrite
+      exactly 1 read (the copy's); the result, with the table loaded in X, the same output as the P case (0 differ) and the
+      same 250 words in Y.  It proves the module's side of that path on the bench, not the builder's placement (phase 4).
   y4  2.12: the tests know how to fail -- (a) no init, (b) one wrong word in the place after init, (c) a copy of 249 words:
       each must differ; and two of 2.4's guards: an init that writes m0 is refused by o3host, an init whose copy runs with
       m2 not linear (its `move #>$ffffff,m2` removed) must differ.
@@ -132,7 +136,40 @@ def y4():
     ok = all(d > 0 for _, d in res) and rc != 0 and 'init changed m0' in msg
     print('   -> %s' % ('PASS' if ok else 'FAIL')); return ok
 
+def p2x():
+    """build_bus.py's nested `_p2x`, executed from that file's own text (dedented), so a change there reaches this part"""
+    import textwrap
+    t = open(os.path.join(P3.ROOT, 'tools', 'build', 'build_bus.py')).read()
+    i = t.index('        def _p2x(src, name):'); j = t.index('return "\\n".join(out), n', i) + len('return "\\n".join(out), n')
+    ns = {'re': re, 'sys': sys}; exec(textwrap.dedent(t[i:j]), ns); return ns['_p2x']
+def y5():
+    print('y5. the table in X (2.2, the builder\'s XTABLE / XHARVEST path): build_bus.py\'s own _p2x on this insert')
+    XT = 0x6000; tab = G.ptable()
+    s_p = G.subst(src(), pt=str(P3.PTP), ab=str(P3.AB), gh=G.GH)
+    s_x0 = G.subst(src(), pt='$%x' % XT, ab=str(P3.AB), gh=G.GH); s_x, sites = p2x()(s_x0, 'DEVILISH')
+    rew = ['%s -> %s' % (u.split(';')[0].strip(), v.split(';')[0].strip()) for u, v in zip(s_x0.splitlines(), s_x.splitlines()) if u != v]
+    bp = asm('p', s_p); bx = asm('x', s_x)
+    F = frames(seed=31); dp, dx = W + '/yd_p.bin', W + '/yd_x.bin'
+    a, _, _ = host(F, bp, {'O3_YDUMP': dp})
+    np.asarray(tab, np.int64).astype(np.int32).tofile(W + '/tx.bin'); F.astype(np.int32).tofile(W + '/in.bin')
+    e = dict(os.environ); e['O3_YDUMP'] = dx
+    r = subprocess.run([P3.HOST, bx[0], '%x' % P3.ORG, '%x' % P3.ORG, '%x' % bx[1], W + '/tx.bin', 'x%x' % XT, W + '/in.bin', W + '/out.bin'],
+                       capture_output=True, text=True, env=e); assert r.returncode == 0, r.stdout + r.stderr
+    o = np.fromfile(W + '/out.bin', np.int32).reshape(-1, 33)[:, :32]
+    yp, yx = np.fromfile(dp, np.int32), np.fromfile(dx, np.int32)
+    d = int((o != a).sum()); dy = int((yx[YP - YLO:YP - YLO + len(tab)] != np.array(tab)).sum())
+    print('   _p2x: %d read(s) rewritten (threshold: exactly 1): %s' % (sites, rew))
+    print('   the X build against the P build, 1,500 frames: words differ %d (0); Y:$0c00..$0cf9 after init: %d of %d differ from the table (0); the two Y dumps equal: %s'
+          % (d, dy, len(tab), bool((yp == yx).all())))
+    bn = asm('xn', s_x0)                                       # control: the table in X but the read not rewritten
+    r = subprocess.run([P3.HOST, bn[0], '%x' % P3.ORG, '%x' % P3.ORG, '%x' % bn[1], W + '/tx.bin', 'x%x' % XT, W + '/in.bin', W + '/out.bin'],
+                       capture_output=True, text=True); assert r.returncode == 0, r.stdout + r.stderr
+    dc = int((np.fromfile(W + '/out.bin', np.int32).reshape(-1, 33)[:, :32] != a).sum())
+    print('   control, the table in X and the copy still reading P: differ %d (must be > 0)' % dc)
+    ok = sites == 1 and len(rew) == 1 and d == 0 and dy == 0 and bool((yp == yx).all()) and dc > 0
+    print('   -> %s' % ('PASS' if ok else 'FAIL')); return ok
+
 if __name__ == '__main__':
-    parts = sys.argv[1:] or ['y1', 'y2', 'y3', 'y4']
+    parts = sys.argv[1:] or ['y1', 'y2', 'y3', 'y5', 'y4']
     res = [globals()[p]() for p in parts]
     print('ESITO prova3y (%s): %s' % (' '.join(parts), 'PASS' if all(res) else 'FAIL')); sys.exit(0 if all(res) else 1)

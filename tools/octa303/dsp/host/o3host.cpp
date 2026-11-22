@@ -1,7 +1,8 @@
 // o3host -- OCTA303 vFable, phase 3 (17 Nov 2026, written by Claude): runs one FX insert on the dsp56300 emulator
 // core, frame by frame, with nothing of the stock payload: its own audio block, parameter block and state block.
 //   o3host blob.bin org(hex) init(hex) proc(hex) ytab.bin yaddr(hex) in.bin out.bin
-// blob: dsp_asm -out (3 bytes a word, little-endian) loaded at P:org.  ytab: int32 words loaded at Y:yaddr.
+// blob: dsp_asm -out (3 bytes a word, little-endian) loaded at P:org.  ytab: int32 words loaded at Y:yaddr (p<yaddr>: at P,
+// x<yaddr>: at X).
 // in.bin: per frame 32 int32 (L,R x 16, 24-bit) + 20 int32 (x:(r6+0..19)).  out.bin: per frame 32 int32 + the
 // instruction count of the proc call.  ABI as tools/harness/dsp_host: r0 audio, r6 params, r7 state ($84 words), n7 = 16.
 // B3 phase 2 (22 Nov 2026): init is run as the dispatcher would leave the core -- Y:$0bf0..$0d0f filled first (random
@@ -77,13 +78,14 @@ int main(int argc, char** argv) {
     if (argc != 9) { fprintf(stderr, "usage: o3host blob org init proc ytab yaddr in out\n"); return 2; }
     AllowAll val; Memory mem(val, 0x080000, 0x800000, 0x200000);
     Peripherals56362 px; Peripherals56367 py; DSP dsp(mem, &px, &py);
-    const bool tabP = argv[6][0] == 'p';   // p<hex>: the table goes to P (a module's P table), else to Y
-    const TWord org = strtoul(argv[2], 0, 16), init = strtoul(argv[3], 0, 16), proc = strtoul(argv[4], 0, 16), yaddr = strtoul(argv[6] + (tabP ? 1 : 0), 0, 16);
+    const bool tabP = argv[6][0] == 'p', tabX = argv[6][0] == 'x';   // p<hex>: the table goes to P (a module's P table); x<hex>: to X
+                                                                      // (where the build parks it, XTABLE / XHARVEST); else to Y
+    const TWord org = strtoul(argv[2], 0, 16), init = strtoul(argv[3], 0, 16), proc = strtoul(argv[4], 0, 16), yaddr = strtoul(argv[6] + (tabP || tabX ? 1 : 0), 0, 16);
     auto b = slurp(argv[1]);
     for (size_t i = 0; i + 2 < b.size(); i += 3) dsp.memWriteP(org + (TWord)(i / 3), b[i] | (b[i + 1] << 8) | (b[i + 2] << 16));
     dsp.memWriteP(SENTINEL, 0);
     auto y = slurp(argv[5]);
-    for (size_t i = 0; i + 3 < y.size(); i += 4) { int32_t w; memcpy(&w, &y[i], 4); if (tabP) dsp.memWriteP(yaddr + (TWord)(i / 4), (TWord)w & 0xffffff); else dsp.memWrite(MemArea_Y, yaddr + (TWord)(i / 4), (TWord)w & 0xffffff); }
+    for (size_t i = 0; i + 3 < y.size(); i += 4) { int32_t w; memcpy(&w, &y[i], 4); if (tabP) dsp.memWriteP(yaddr + (TWord)(i / 4), (TWord)w & 0xffffff); else dsp.memWrite(tabX ? MemArea_X : MemArea_Y, yaddr + (TWord)(i / 4), (TWord)w & 0xffffff); }
     for (TWord k = 0; k < 0x84; ++k) { dsp.memWrite(MemArea_X, STATE + k, 0x555555); dsp.memWrite(MemArea_X, STATE2 + k, 0x555555); }   // dirty state: init must clear what the loop reads
     { uint32_t z = 0x6a09e667;                                  // Y:$0bf0..$0d0f: the place random, the guards known
       for (TWord a = YLO; a < YHI; ++a) { z ^= z << 13; z ^= z >> 17; z ^= z << 5;

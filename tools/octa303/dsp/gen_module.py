@@ -98,6 +98,8 @@ def check_short(s):
 # B3 phase 2: the table's fixed place in Y, on both cores (Marko's choice D4; measured free on his stock image, phase 0 /
 # 0 bis: no data record there, no stock word addressing it).  NT is the copy's count.
 YT = 0x0c00; YEND = 0x0cfa                             # the place measured free: Y:$0c00..$0cf9, 250 words
+OFFSETS = ('@OMC@', '@DTP@', '@DTN@')                  # offsets from the base: today's source uses the places in Y
+                                                       # (@YOMC@ ...), the commits before B3 phase 2 the offsets
 def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
     """the placeholders resolved.  old=True: an older commit's source (the bench builds them from git), which may lack
     a placeholder of today's and carry @LIM@ / @SWL@ (resolved here to the same values)"""
@@ -107,9 +109,10 @@ def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
     for k, v in (('@GH@', str(gh)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
                  ('@DKP@', str(drv()[0])), ('@DKN@', str(drv()[1])), ('@DLIM@', str(DLIM)), ('@OMC@', str(OMC)),
                  ('@DTP@', str(DTP)), ('@DTN@', str(DTN)), ('@YT@', '$%x' % YT), ('@NT@', str(len(ptable()))),
+                 ('@YOMC@', '$%x' % (YT + OMC)), ('@YDTP@', '$%x' % (YT + DTP)), ('@YDTN@', '$%x' % (YT + DTN)),
                  ('@GM@', str(consts()[6])), ('@FC3@', str(consts()[7])), ('@FC2@', str(consts()[8])),
                  ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10])), ('@SWK@', str(consts()[12]))):
-        assert old or k in s, k; s = s.replace(k, v)
+        assert old or k in s or k in OFFSETS, k; s = s.replace(k, v)
     assert '@' not in s
     assert YT + len(ptable()) <= YEND, 'the table outgrew its place in Y'
     return s
