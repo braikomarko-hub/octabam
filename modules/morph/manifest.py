@@ -8,8 +8,11 @@ the track there until the crossfader reaches its A end. Inspired by the Korg Ele
 Sequence. [TRACK]+[UP] opens the window (A STEPS, B x 1..100, C MODE, the stock scene indicator);
 it stays open: YES starts the held tracks on the next step, NO closes and starts nothing. Either
 way they are ARMED: a track key held ~1 s alone then starts and stops that track's morph (the long
-press, v1.1). The settings, which tracks morph and which are ARMED are saved with the project in
-morph.work (a STORE client, modules/store).
+press, v1.1). v1.2: encoders D, E, F set the way back per track: RET (SAME, 1/2 .. 1/16 of the
+way up, BAR, BEAT, STEP, CUT), CURV (LIN, HAND, RISE, BOTH) and END (LOOP, ONCE, STAY: held on B
+until the long press or [TRACK]+[DOWN], then back over RET); all at their first value = v1.1. The
+settings, which tracks morph and which are ARMED are saved with the project in morph.work (a STORE
+client, modules/store; version 3 only when a v1.2 setting is used).
 
 Sites, measured from the user's 1.40C (base 0x40000400; modules/morph/README.md):
   * the frame builder at 0x4000cc62 (`move.l #96,%macsr ; lea 12(%sp),%sp`, 10 bytes): once a
@@ -63,14 +66,16 @@ MODULE = Module(
     doc=("Hold a track key and press UP: the window; YES and from the next step that track's scene "
          "morph runs by itself, A -> B -> A over STEPS x x steps, starting on A; the other tracks keep "
          "the crossfader. Then the track key held ~1 s turns it on and off. Track + DOWN finishes the "
-         "cycle on A and parks the track there until the crossfader reaches A. Settings saved with "
+         "cycle on A and parks the track there until the crossfader reaches A. D, E, F: how it comes "
+         "back (RET, CURV) and whether it loops, plays once or stays on B (END). Settings saved with "
          "the project. Inspired by the Korg Electribe's Motion Sequence."),
     proof=Proof.HARDWARE,
     proof_note=("the owner's MKI, image MRPPR1 (BUILD 98, remix morph), 23 Oct 2026: the window, the "
                 "start on the release, x to 16 and 41.625, saving (SAVE PROJECT, power cycle, RELOAD, "
                 "another project and back), stop and parking on A; before, inside aCiDtRacK (ACIDV74MP, "
                 "22 Oct): several tracks at once, SMOOTH and TRIG HOLD. v1.1 (YES / NO, the long press, "
-                "x to 100, the scene indicator): tools/morph/test_morph.py and the port, not yet on the unit"),
+                "x to 100, the scene indicator): tools/morph/test_morph.py and the port, not yet on the unit. "
+                "v1.2 (RET, CURV, END): tools/morph/test_morph.py only, not yet under the port or on the unit"),
     linked=(
         Linked("morph", os.path.join(_HERE, "morph.s"), dram=True),
     ),

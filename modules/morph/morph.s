@@ -1,4 +1,18 @@
-| MORPH v1.1 -- [TRACK]+[UP] / [TRACK]+[DOWN] / a track key held: a track's scene morph runs by itself.
+| MORPH v1.2 -- [TRACK]+[UP] / [TRACK]+[DOWN] / a track key held: a track's scene morph runs by itself.
+|
+| v1.2 (22 Nov 2026, the owner's ask: risers that come back "as if by hand"): three settings more
+| per track on the window's encoders D, E, F (mp_ext), all 0 = v1.1 exactly:
+|   * RET (D): how long the way back B -> A takes: SAME (as v1.1: half the cycle), 1/2 1/4 1/8 1/16
+|     of the way up, BAR (16 steps), BEAT (4), STEP (1), CUT (none: back on A by the next step). The
+|     way up is v1.1's (half of STEPS x x); the cycle is the way up plus the way back, rounded up to
+|     whole steps (the morph stays on A for what is left of the last step).
+|   * CURV (E): LIN, HAND (the way back fast at first, then soft: (1 - u)^2), RISE (the way up slow
+|     at first, then fast: v^2), BOTH.
+|   * END (F): LOOP (v1.1), ONCE (one cycle, then parked on A), STAY (up to B and held there, TOP;
+|     the long press, [TRACK]+[DOWN] or the window's DOWN starts the way back on the next step, RET
+|     long, then parked on A; a stop asked while still going up comes straight back at B).
+|   * morph.work version 3 (72 bytes: version 2's 40 + the 8 tracks' RET, CURV, END, pad), written
+|     only when one of them is not 0; otherwise version 2, as v1.1 writes, so v1.1 still reads it.
 |
 | A morphing track's A/B weight is not the crossfader's: every frame this unit writes it from a
 | triangle A -> B -> A over one cycle of N sequencer 16th steps, always starting on A. The other
@@ -79,7 +93,15 @@
         .set    S_ARMED,  4              | starts on the next step
         .set    S_HELD,   5              | in the window (was on the fader): YES starts it, NO leaves it
         .set    S_HELDP,  6              | in the window (was parked on A): YES starts it, NO parks it again
+        .set    S_TOP,    7              | END STAY: held on B, the way back waits for the key
+        .set    S_RETW,   8              | the way back asked: starts on the next step
+        .set    S_RET,    9              | on the way back (END STAY), then parked on A
         .set    XMAX,     100            | x 1..100
+        .set    RETMAX,   8              | RET: SAME 1/2 1/4 1/8 1/16 BAR BEAT STEP CUT
+        .set    CURVMAX,  3              | CURV: LIN HAND RISE BOTH (bit 0 the way back, bit 1 the way up)
+        .set    ENDMAX,   2              | END: LOOP ONCE STAY
+        .set    E_ONCE,   1
+        .set    E_STAY,   2
         .set    NMAX,     6400           | N = STEPS x x at most 64 x 100
 
 | ---------------------------------------------------------------- the frame hook
@@ -88,8 +110,8 @@ morph_frame:
         move.l  #96,%macsr              | displaced
         lea     12(%sp),%sp             | displaced
 mf_body:                                | (the source simulator enters here: it has no MACSR)
-        lea     -44(%sp),%sp
-        movem.l %d0-%d6/%a0-%a3,(%sp)
+        lea     -48(%sp),%sp
+        movem.l %d0-%d6/%a0-%a4,(%sp)
 | ---- the sequencer's clock, every frame (cheap), so the step word is never stale:
 |      d5 = the steps since the last frame (0 or 1, a jump counts one), mp_fsince = the frames
 |      since the last step (frozen while stopped)
@@ -136,6 +158,7 @@ mf_c3:  lea     mp_state,%a0
         lea     mp_k,%a1
         lea     WEIGHTS,%a2
         lea     mp_set,%a3              | per track: STEPS, x, MODE, (pad)
+        lea     mp_ext,%a4              | per track: RET, CURV, END, (pad) (v1.2)
         moveq   #0,%d4                  | t
 mf_2:   mvz.b   (%a0),%d1
         beq     mf_8                    | the fader's: leave its weight alone
@@ -152,12 +175,34 @@ mf_3:   bcs     mf_run                  | 1 or 2: morphing
         cmp.l   %d2,%d1
         beq     mf_8                    | in the window, from the fader: the fader keeps it
         bcs     mf_arm                  | 4: armed
+        moveq   #S_HELDP,%d2
+        cmp.l   %d2,%d1
+        bne     mf_3t
         moveq   #127,%d2                | in the window, from PARK: A until the fader is at A
         cmp.l   XF,%d2
         bne     mf_w
         moveq   #S_HELD,%d1             | the fader is at A: in the window, the fader's
         move.b  %d1,(%a0)
         bra     mf_8
+mf_3t:  moveq   #S_RETW,%d2
+        cmp.l   %d2,%d1
+        bcc     mf_3u
+        moveq   #E_STAY,%d2             | 7: on B (END STAY)
+        cmp.b   2(%a4),%d2
+        beq     mf_top
+        moveq   #S_RETW,%d1             | END turned from STAY: the way back, from the next step
+        move.b  %d1,(%a0)
+        bra     mf_top
+mf_3u:
+        bne     mf_ret                  | 9: on the way back
+        tst.l   %d5                     | 8: the way back starts on the next step
+        beq     mf_top
+        moveq   #S_RET,%d1
+        move.b  %d1,(%a0)
+        clr.l   (%a1)
+        bra     mf_r1                   | k = 0 is this step
+mf_top: moveq   #0,%d2                  | B
+        bra     mf_w
 mf_arm:
         tst.l   %d5                     | armed: waits for a step
         beq     mf_8
@@ -166,36 +211,115 @@ mf_arm:
         clr.l   (%a1)                   | k = 0: this step is the cycle's first
         moveq   #127,%d2
         bra     mf_w
-mf_run: bsr     mp_len                  | d3 = N
+| ---- morphing (1, 2): the way up over L = N * 128 (a fraction of a step is 256), the way back
+|      over T (mp_tlen), the cycle C = ceil((L + T) / 256) steps; END STAY: the way up only.
+mf_run: bsr     mp_cycle                | d3 = N, d0 = C, a1 = this track's k
+        move.l  %d0,mp_cyc              | (mp_cyc, mp_lup, mp_ldn: the frame's own scratch)
+        move.l  %d3,%d0
+        lsl.l   #7,%d0
+        move.l  %d0,mp_lup              | L
+        bsr     mp_tlen
+        move.l  %d0,mp_ldn              | T
+        moveq   #E_STAY,%d2             | STAY turned on while going back (k already past the
+        cmp.b   2(%a4),%d2              | way up): parked on A, not a jump to B
+        bne     mf_r0
         move.l  (%a1),%d0
+        cmp.l   mp_cyc,%d0
+        bcc     mf_park
+mf_r0:  move.l  (%a1),%d0
         add.l   %d5,%d0                 | k += the steps of this frame
-        cmp.l   %d3,%d0
+        cmp.l   mp_cyc,%d0
         bcs     mf_4
-        sub.l   %d3,%d0                 | the cycle ends
+        moveq   #E_STAY,%d2             | the cycle ends
+        cmp.b   2(%a4),%d2
+        beq     mf_up_end               | (STAY: the step jumped past B)
+        sub.l   mp_cyc,%d0
         moveq   #S_STOP,%d2
         cmp.l   %d2,%d1
-        bne     mf_4
-        moveq   #S_PARK,%d1             | ... on A, as asked: parked
-        move.b  %d1,(%a0)
-        clr.l   (%a1)
-        moveq   #127,%d2
-        bra     mf_w
-mf_4:   cmp.l   %d3,%d0
+        beq     mf_park                 | ... on A, as asked: parked
+        moveq   #E_ONCE,%d2
+        cmp.b   2(%a4),%d2
+        beq     mf_park                 | ONCE: one cycle
+mf_4:   cmp.l   mp_cyc,%d0
         bcs     mf_41
-        moveq   #0,%d0                  | N shrank under k (a shorter pattern): from A again
+        moveq   #0,%d0                  | C shrank under k (a shorter pattern, a setting): from A again
 mf_41:  move.l  %d0,(%a1)
         lsl.l   #8,%d0                  | pos = k * 256 + the fraction of the step (SMOOTH)
         tst.b   2(%a3)
         bne     mf_42                   | TRIG HOLD: the step's own value, for the whole step
         add.l   %d6,%d0
-mf_42:  divu.l  %d3,%d0                 | x = pos / N, 0..255 (pos < N * 256)
+mf_42:  cmp.l   mp_lup,%d0
+        bcc     mf_down
+        lsl.l   #8,%d0                  | the way up: v = pos * 256 / L, 0..255
+        move.l  mp_lup,%d2
+        divu.l  %d2,%d0
+        btst    #1,1(%a4)
+        beq     mf_42l
+        mulu.w  %d0,%d0                 | RISE: v^2 / 512, slow at first
+        lsr.l   #8,%d0
+mf_42l: lsr.l   #1,%d0                  | (LIN: v / 2 = v1.1's pos / N)
         moveq   #127,%d2
-        cmp.l   %d2,%d0
-        bhi     mf_43
-        sub.l   %d0,%d2                 | rising half: xf = 127 - x (A -> B)
+        sub.l   %d0,%d2                 | xf = 127 - that (A -> B)
         bra     mf_w
-mf_43:  move.l  %d0,%d2
-        add.l   #-128,%d2               | falling half: xf = x - 128 (B -> A)
+mf_down:                                | the way back: u = (pos - L) * 256 / T, 0..255
+        moveq   #E_STAY,%d2
+        cmp.b   2(%a4),%d2
+        beq     mf_up_end               | STAY: B is reached
+        sub.l   mp_lup,%d0
+        move.l  mp_ldn,%d2
+        bne     mf_back
+        moveq   #127,%d2                | CUT: A for what is left of the cycle's last step
+        bra     mf_w
+mf_up_end:                              | STAY: on B; asked to stop meanwhile: the way back next
+        clr.l   (%a1)
+        moveq   #S_STOP,%d2
+        cmp.l   %d2,%d1
+        beq     mf_ue1
+        moveq   #S_TOP,%d1
+        move.b  %d1,(%a0)
+        bra     mf_top
+mf_ue1: moveq   #S_RETW,%d1
+        move.b  %d1,(%a0)
+        bra     mf_top
+| ---- on the way back after STAY (9): T long from its first step, then parked on A
+mf_ret: move.l  (%a1),%d0               | a1 = this track's k
+        add.l   %d5,%d0
+        move.l  %d0,(%a1)
+mf_r1:  bsr     mp_len                  | d3 = N (RET's fractions), a1 again
+        bsr     mp_tlen
+        move.l  %d0,%d2                 | d2 = T
+        move.l  (%a1),%d0
+        lsl.l   #8,%d0
+        tst.b   2(%a3)
+        bne     mf_r3
+        add.l   %d6,%d0
+mf_r3:  cmp.l   %d2,%d0
+        bcc     mf_park                 | the way back is over (CUT: at once)
+mf_back:                                | d0 = the time into the way back, d2 = T (> d0)
+        lsl.l   #8,%d0
+        divu.l  %d2,%d0                 | u, 0..255
+        move.l  #255,%d2
+        cmp.l   %d2,%d0
+        bls     mf_b1
+        move.l  %d2,%d0
+mf_b1:  btst    #0,1(%a4)
+        beq     mf_b2
+        sub.l   %d0,%d2                 | HAND: 127 - (255 - u)^2 / 512, fast at first
+        mulu.w  %d2,%d2
+        moveq   #9,%d0
+        lsr.l   %d0,%d2
+        moveq   #127,%d0
+        sub.l   %d2,%d0
+        move.l  %d0,%d2
+        bra     mf_w
+mf_b2:  lsr.l   #1,%d0                  | LIN: u / 2 (SAME: v1.1's pos / N - 128)
+        move.l  %d0,%d2
+        bra     mf_w
+mf_park:
+        moveq   #S_PARK,%d1
+        move.b  %d1,(%a0)
+        clr.l   (%a1)
+        moveq   #127,%d2
 mf_w:   lea     mp_xf,%a1               | d2 = xf: kept for the window's scene indicator
         move.b  %d2,(%a1,%d4.l)
         lea     CURVE,%a1               | the weight, exactly as the fader writers make it
@@ -215,13 +339,59 @@ mf_8:   addq.l  #1,%a0
         addq.l  #4,%a1
         addq.l  #4,%a2
         addq.l  #4,%a3
+        addq.l  #4,%a4
         addq.l  #1,%d4
         moveq   #8,%d0
         cmp.l   %d0,%d4
         bne     mf_2
-mf_9:   movem.l (%sp),%d0-%d6/%a0-%a3
-        lea     44(%sp),%sp
+mf_9:   movem.l (%sp),%d0-%d6/%a0-%a4
+        lea     48(%sp),%sp
         jmp     RESUME
+
+| mp_cycle -- d0 = C, the cycle in steps: ceil((L + T) / 256), L = N * 128 the way up, T the way
+| back (END STAY: L alone), at least 1; d3 = N, a1 = this track's k (mp_len). d4 = the track, a3
+| its settings, a4 its v1.2 settings. Registers only (the window calls it too). Clobbers d0, d2.
+mp_cycle:
+        bsr     mp_len
+        bsr     mp_tlen
+        moveq   #E_STAY,%d2
+        cmp.b   2(%a4),%d2
+        bne     mc_1
+        moveq   #0,%d0                  | STAY: no way back in the cycle
+mc_1:   move.l  %d3,%d2
+        lsl.l   #7,%d2
+        add.l   %d2,%d0
+        add.l   #255,%d0
+        lsr.l   #8,%d0
+        rts
+
+| mp_tlen -- d0 = T, the way back in 1/256 steps, from RET of the settings a4 and N = d3:
+| SAME N * 128 (v1.1), 1/2 .. 1/16 of that, BAR 16 steps, BEAT 4, STEP 1, CUT 0. Clobbers d0, d2.
+mp_tlen:
+        mvz.b   (%a4),%d2               | RET
+        moveq   #RETMAX,%d0
+        cmp.l   %d0,%d2
+        bls     mt_1
+        moveq   #0,%d2                  | a stray value: SAME
+mt_1:   moveq   #5,%d0
+        cmp.l   %d0,%d2
+        bcc     mt_fix
+        moveq   #7,%d0                  | SAME .. 1/16: N << (7 - RET)
+        sub.l   %d2,%d0
+        move.l  %d3,%d2
+        lsl.l   %d0,%d2
+        move.l  %d2,%d0
+        rts
+mt_fix: subq.l  #5,%d2                  | BAR BEAT STEP CUT: 4096 >> (2 * (RET - 5)), CUT 0
+        moveq   #3,%d0
+        cmp.l   %d0,%d2
+        bcs     mt_2
+        moveq   #0,%d0
+        rts
+mt_2:   add.l   %d2,%d2
+        move.l  #4096,%d0
+        lsr.l   %d2,%d0
+        rts
 
 | mp_len -- d3 = N = STEPS * x for track d4 (a3 = its settings); STEPS 0 = the track's length in
 | the current pattern (1..64, else 16). x 1..100 (N at most 6400). Clobbers d0, d2 (d1 is the state).
@@ -352,8 +522,9 @@ msm_2:  addq.l  #1,%a0
         bne     msm_1
         rts
 
-| mp_stop1 -- the track at a0: morphing -> stopping (its cycle ends on A, then it is parked);
-| armed -> the fader's; anything else unchanged (a held track is the window's). Clobbers d0.
+| mp_stop1 -- the track at a0: morphing -> stopping (its cycle ends on A, then it is parked; END
+| STAY: it comes back as soon as it is on B); on B (STAY) -> the way back on the next step; armed
+| -> the fader's; anything else unchanged (a held track is the window's). Clobbers d0.
 mp_stop1:
         mvz.b   (%a0),%d0
         subq.l  #S_RUN,%d0
@@ -362,9 +533,14 @@ mp_stop1:
         move.b  %d0,(%a0)
         rts
 ms_1:   subq.l  #S_ARMED-S_RUN,%d0
-        bne     ms_2
+        bne     ms_3
         clr.b   (%a0)
 ms_2:   rts
+ms_3:   subq.l  #S_TOP-S_ARMED,%d0
+        bne     ms_2
+        moveq   #S_RETW,%d0
+        move.b  %d0,(%a0)
+        rts
 
 | ---------------------------------------------------------------- the window
 | [TRACK]+[UP] opens a TEMPO-class window over the page for the tracks held at that moment (the
@@ -419,17 +595,19 @@ ms_2:   rts
         .set    T_MASKS,  0x00240000    | rows 4..7 as a long: FUNC 0x2d, CUE 0x2a
         .set    WINW,     116
         .set    WINH,     64
-        .set    Y_TITLE,  52
-        .set    Y_RULE,   49
-        .set    Y_MORPH,  40
-        .set    Y_STEPS,  32
-        .set    Y_MULT,   24
-        .set    Y_MODE,   16
-        .set    Y_POS,    4
+        .set    Y_TITLE,  52            | v1.2: eight rows 7 px apart (the font is 6 high), in v1.1's
+        .set    Y_MORPH,  45            | y 3..58 (WFRAME's frame and CLEAR's rim outside), no rule;
+        .set    Y_STEPS,  38            | the state at the title's right, the step under the title
+        .set    Y_MULT,   31
+        .set    Y_MODE,   24
+        .set    Y_RET,    17
+        .set    Y_CURV,   10
+        .set    Y_END,    3
         .set    X_LAB,    6
         .set    X_VAL,    112
+        .set    X_TRK,    40            | the window tracks, after the title
         .set    X_SC,     89            | the scene indicator: x 89..111 (stock's 95..117)
-        .set    Y_SC,     3             | y 3..9 (stock's 0..6)
+        .set    Y_SC,     45            | y 45..51, in the step row (v1.1: y 3..9)
         .set    TICK,     2             | the soft timer's period: two ticks, ~17 ms
         .set    LONG,     58            | ~1 s of ticks for the long press
 
@@ -485,6 +663,8 @@ mw_closed:                              | WCREATE's callback: another window of 
 mw_cr:  mvz.b   (%a0,%d1.l),%d0
         subq.l  #S_HELD,%d0
         bcs     mw_cr2                  | not held
+        cmp.l   #S_HELDP-S_HELD,%d0
+        bhi     mw_cr2                  | (7..9: morphing, v1.2's)
         tst.l   mw_go
         bne     mw_cr_go
         tst.l   %d0
@@ -555,6 +735,8 @@ mw_sig:
 mw_sc:
         lea     mp_state,%a0
         mvz.b   (%a0,%d0.l),%d1
+        cmp.l   #S_HELDP,%d1
+        bhi     msc_m                   | 7..9 (STAY: on B, on the way back): its own
         subq.l  #S_RUN,%d1
         beq     msc_m
         subq.l  #S_STOP-S_RUN,%d1
@@ -653,7 +835,7 @@ mw_enc:
         subq.l  #1,%d0
         beq     mw_e_mult
         subq.l  #1,%d0
-        bne     mw_k9                   | D..F: nothing
+        bne     mw_e_ext                | D..F: RET, CURV, END (v1.2)
         moveq   #0,%d0                  | MODE
         tst.l   %d1
         bmi     mw_e_set2
@@ -684,9 +866,41 @@ mw_e_m1: moveq  #XMAX,%d1
         ble     mw_e_m2
         move.l  %d1,%d0
 mw_e_m2: moveq  #1,%d1
+        bra     mw_e_set
+mw_e_ext:                               | D RET 0..8, E CURV 0..3, F END 0..2, by one a click
+        subq.l  #1,%d0                  | 0 RET, 1 CURV, 2 END
+        moveq   #2,%d1
+        cmp.l   %d1,%d0
+        bhi     mw_k9
+        bsr     mw_first                | d0 = the first track (d1 clobbered)
+        lsl.l   #2,%d0
+        lea     mp_ext,%a1
+        add.l   %d0,%a1
+        move.l  4(%sp),%d0
+        subq.l  #3,%d0
+        add.l   %d0,%a1                 | a1 = the first track's byte
+        lea     MW_XMAX,%a0
+        add.l   %d0,%a0                 | a0 = its largest value
+        moveq   #1,%d1                  | one value a click, whatever the speed
+        tst.l   8(%sp)
+        bpl     mw_x0
+        moveq   #-1,%d1
+mw_x0:  mvz.b   (%a1),%d0
+        add.l   %d1,%d0
+        bpl     mw_x1
+        moveq   #0,%d0
+mw_x1:  mvz.b   (%a0),%d1
+        cmp.l   %d1,%d0
+        ble     mw_x2
+        move.l  %d1,%d0
+mw_x2:  move.l  4(%sp),%d1
+        subq.l  #3,%d1                  | the byte: 0 RET, 1 CURV, 2 END
+        lea     mp_ext,%a0
+        bra     mw_e_setx
 | d0 = the value, d1 = the byte (0 STEPS, 1 x, 2 MODE): set on every window track
 mw_e_set:
         lea     mp_set,%a0
+mw_e_setx:                              | (a0 = mp_ext: 0 RET, 1 CURV, 2 END)
         add.l   %d1,%a0
         move.l  mw_targets,%d1
 mw_e_t: btst    #0,%d1
@@ -700,11 +914,16 @@ mw_e_n: addq.l  #4,%a0
 | ---- the paint
 | MORPH  T1                         (the window tracks)
 | ──────────────────────
-|  MORPH                ON          (OFF / ARM / WAIT / ON / STOP / PARK)
+| MORPH  T1                 ON      (the window tracks; OFF / ARM / WAIT / ON / STOP / PARK /
+|                                    TOP / RET)
+|  STEP 12/128      [01]-[09]       (CYCLE 128 when not morphing, BACK 2/4 on the way back;
+|                                    the stock scene indicator)
 |  STEPS (A)            16          (TRK = the track's length)
 |  x (B)                 8
 |  MODE (C)         SMOOTH          (SMOOTH / HOLD)
-|  STEP 12/128      01-09           (CYCLE 128 when not morphing; the stock scene indicator)
+|  RET (D)            SAME          (SAME 1/2 1/4 1/8 1/16 BAR BEAT STEP CUT)
+|  CURV (E)            LIN          (LIN HAND RISE BOTH)
+|  END (F)            LOOP          (LOOP ONCE STAY)
 mw_draw:
         tst.l   mw_win
         beq     mw_d99
@@ -720,32 +939,25 @@ mw_draw:
         lea     T_TITLE,%a0
         bsr     mw_text
         bsr     mw_fmt_tracks
-        moveq   #X_VAL,%d0
+        moveq   #X_TRK,%d0
         moveq   #Y_TITLE,%d1
         lea     mw_buf,%a0
-        bsr     mw_rtext
-        pea     1
-        pea     WINW-4
-        pea     Y_RULE
-        pea     4
-        move.l  %a5,-(%sp)
-        jsr     RULE
-        lea     20(%sp),%sp
+        bsr     mw_text
         bsr     mw_first                | d0 = track, a0 = state, a1 = settings
         move.l  %d0,%d6
         move.l  %a1,%a3
         mvz.b   (%a0),%d7               | the state
-| MORPH row
-        moveq   #X_LAB,%d0
-        moveq   #Y_MORPH,%d1
-        lea     L_MORPH,%a0
-        bsr     mw_text
-        lea     V_STATE,%a0             | 5 bytes a name: OFF ON STOP PARK WAIT ARM ARM
+        move.l  %d6,%d0                 | a4 = its v1.2 settings (mp_cycle, mp_tlen)
+        lsl.l   #2,%d0
+        lea     mp_ext,%a4
+        add.l   %d0,%a4
+| the state, on the right of the title
+        lea     V_STATE,%a0             | 5 bytes a name: OFF ON STOP PARK WAIT ARM ARM TOP RET RET
         move.l  %d7,%d0
         mulu.w  #5,%d0
         add.l   %d0,%a0
         moveq   #X_VAL,%d0
-        moveq   #Y_MORPH,%d1
+        moveq   #Y_TITLE,%d1
         bsr     mw_rtext
 | STEPS row
         moveq   #X_LAB,%d0
@@ -782,39 +994,85 @@ mw_d1:  moveq   #X_VAL,%d0
 mw_d2:  moveq   #X_VAL,%d0
         moveq   #Y_MODE,%d1
         bsr     mw_rtext
-| the step, while morphing
+| RET, CURV, END rows (v1.2)
+        moveq   #X_LAB,%d0
+        moveq   #Y_RET,%d1
+        lea     L_RET,%a0
+        bsr     mw_text
+        lea     V_RET,%a0
+        mvz.b   (%a4),%d0
+        moveq   #RETMAX,%d1
+        bsr     mw_name
+        moveq   #X_VAL,%d0
+        moveq   #Y_RET,%d1
+        bsr     mw_rtext
+        moveq   #X_LAB,%d0
+        moveq   #Y_CURV,%d1
+        lea     L_CURV,%a0
+        bsr     mw_text
+        lea     V_CURV,%a0
+        mvz.b   1(%a4),%d0
+        moveq   #CURVMAX,%d1
+        bsr     mw_name
+        moveq   #X_VAL,%d0
+        moveq   #Y_CURV,%d1
+        bsr     mw_rtext
+        moveq   #X_LAB,%d0
+        moveq   #Y_END,%d1
+        lea     L_END,%a0
+        bsr     mw_text
+        lea     V_END,%a0
+        mvz.b   2(%a4),%d0
+        moveq   #ENDMAX,%d1
+        bsr     mw_name
+        moveq   #X_VAL,%d0
+        moveq   #Y_END,%d1
+        bsr     mw_rtext
+| the step, while morphing: STEP k/C; on the way back after STAY: BACK k/R; else CYCLE C
+        move.l  %d6,%d4                 | mp_cycle: d4 = the track, a3, a4 its settings
+        bsr     mp_cycle                | d0 = C, d3 = N
+        move.l  %d0,%d3                 | d3 = C
         moveq   #S_RUN,%d0
         cmp.l   %d0,%d7
         beq     mw_d3
         moveq   #S_STOP,%d0
         cmp.l   %d0,%d7
         beq     mw_d3
-        move.l  %d6,%d4                 | not morphing: the cycle the settings make
-        bsr     mp_len
-        move.l  %d3,-(%sp)
+        moveq   #S_RET,%d0
+        cmp.l   %d0,%d7
+        beq     mw_d3r
+        move.l  %d3,-(%sp)              | not morphing: the cycle the settings make
         pea     F_CYC
         pea     mw_buf
         jsr     SPRINTF
         lea     12(%sp),%sp
         bra     mw_d5
-mw_d3:  move.l  %d6,%d4                 | mp_len: d4 = the track, a3 = its settings
-        move.l  %d6,%d0
+mw_d3r: bsr     mp_len                  | d3 = N again
+        bsr     mp_tlen                 | d0 = T
+        add.l   #255,%d0
+        lsr.l   #8,%d0
+        bne     mw_d3q
+        moveq   #1,%d0                  | CUT: one step
+mw_d3q: move.l  %d0,%d3                 | d3 = R, the way back in steps
+        lea     F_BACK,%a0
+        bra     mw_d3k
+mw_d3:  lea     F_POS,%a0
+mw_d3k: move.l  %d6,%d0
         lsl.l   #2,%d0
-        lea     mp_k,%a0
-        move.l  (%a0,%d0.l),%d5         | k
-        bsr     mp_len                  | d3 = N
-        cmp.l   %d3,%d5                 | N just shrank under k (an encoder): the frame puts
+        lea     mp_k,%a1
+        move.l  (%a1,%d0.l),%d5         | k
+        cmp.l   %d3,%d5                 | C just shrank under k (an encoder): the frame puts
         bcs     mw_d3b                  | k back in range; until then 0
         moveq   #0,%d5
 mw_d3b: move.l  %d3,-(%sp)
         addq.l  #1,%d5
         move.l  %d5,-(%sp)              | the step, from 1
-        pea     F_POS
+        move.l  %a0,-(%sp)
         pea     mw_buf
         jsr     SPRINTF
         lea     16(%sp),%sp
 mw_d5:  moveq   #X_LAB,%d0
-        moveq   #Y_POS,%d1
+        moveq   #Y_MORPH,%d1
         lea     mw_buf,%a0
         bsr     mw_text
 | the scene indicator, stock's
@@ -876,6 +1134,16 @@ mw_d4:
         movem.l (%sp),%d2-%d7/%a2-%a6
         lea     44(%sp),%sp
 mw_d99: rts
+
+| mw_name -- a0 = the name d0 of the 5-byte table a0 (d1 = the largest; a stray value: the
+| first). Clobbers d0.
+mw_name:
+        cmp.l   %d1,%d0
+        bls     mwn_1
+        moveq   #0,%d0
+mwn_1:  mulu.w  #5,%d0
+        add.l   %d0,%a0
+        rts
 
 | mw_box -- INVERT(a5, d0, d1, d2, d3, d4): 1 set, 0 clear. Clobbers d0, d1, a0, a1.
 mw_box:
@@ -1092,8 +1360,14 @@ lp_long:                                | the time is up (a label for the port's
         subq.l  #S_PARK-S_STOP,%d1
         beq     lp_a0                   | parked
         subq.l  #S_ARMED-S_PARK,%d1
-        bne     lp_t9                   | held: the window's
+        bne     lp_top
         clr.b   (%a0)                   | waiting for its step: back to the fader
+        lea     V_TOFF,%a1
+        bra     lp_toast
+lp_top: subq.l  #S_TOP-S_ARMED,%d1
+        bne     lp_t9                   | held (the window's), or already on the way back
+        moveq   #S_RETW,%d1             | on B (END STAY): the way back, from the next step
+        move.b  %d1,(%a0)
         lea     V_TOFF,%a1
         bra     lp_toast
 lp_a0:  move.l  mp_prime,%d1            | not ARMED: nothing
@@ -1141,7 +1415,6 @@ lp_t9:  rts
 
 S_STOP_T: .asciz "MORPH STOP"
 T_TITLE: .asciz "MORPH"
-L_MORPH: .asciz "MORPH"
 L_STEPS: .asciz "STEPS (A)"
 L_MULT: .asciz  "x (B)"
 L_MODE: .asciz  "MODE (C)"
@@ -1156,6 +1429,38 @@ V_STATE: .asciz "OFF"                   | 5 bytes a name, by the state
         .byte   0
         .asciz  "ARM"
         .byte   0
+        .asciz  "TOP"                   | v1.2: 7 on B (END STAY), 8 and 9 on the way back
+        .byte   0
+        .asciz  "RET"
+        .byte   0
+        .asciz  "RET"
+        .byte   0
+L_RET:  .asciz  "RET (D)"
+L_CURV: .asciz  "CURV (E)"
+L_END:  .asciz  "END (F)"
+V_RET:  .asciz  "SAME"                  | 5 bytes a name
+        .asciz  "1/2"
+        .byte   0
+        .asciz  "1/4"
+        .byte   0
+        .asciz  "1/8"
+        .byte   0
+        .asciz  "1/16"
+        .asciz  "BAR"
+        .byte   0
+        .asciz  "BEAT"
+        .asciz  "STEP"
+        .asciz  "CUT"
+        .byte   0
+V_CURV: .asciz  "LIN"
+        .byte   0
+        .asciz  "HAND"
+        .asciz  "RISE"
+        .asciz  "BOTH"
+V_END:  .asciz  "LOOP"
+        .asciz  "ONCE"
+        .asciz  "STAY"
+MW_XMAX: .byte  RETMAX, CURVMAX, ENDMAX
 V_TRK:  .asciz  "TRK"
 V_SMOOTH: .asciz "SMOOTH"
 V_HOLD: .asciz  "HOLD"
@@ -1164,6 +1469,7 @@ V_TOFF: .asciz  "OFF"
 F_NUM:  .asciz  "%d"
 F_POS:  .asciz  "STEP %d/%d"
 F_CYC:  .asciz  "CYCLE %d"
+F_BACK: .asciz  "BACK %d/%d"
 F_TOAST: .asciz "T%d MORPH %s"
 
 | ---- the window's layer (pushed while it is open): {next, keys, encoders, +12, +16, -1, -1}
@@ -1184,6 +1490,12 @@ MW_ENCS:
         .long   mw_enc, 0, 0, 0, 0
         .byte   2, 0                                | C: MODE
         .long   mw_enc, 0, 0, 0, 0
+        .byte   3, 0                                | D: RET (v1.2)
+        .long   mw_enc, 0, 0, 0, 0
+        .byte   4, 0                                | E: CURV
+        .long   mw_enc, 0, 0, 0, 0
+        .byte   5, 0                                | F: END
+        .long   mw_enc, 0, 0, 0, 0
         .byte   0xff, 0
         .long   0, 0, 0, 0, 0
 
@@ -1194,13 +1506,17 @@ MW_ENCS:
 | payload differs from the one last read or written (mp_saved), at the bank writer and the project
 | store; copied to morph.strd at the store and back at a reload, as MIDI SCENES keeps scenes.work.
 | A file that is not that is never written over: STORE lists it (client 4) and asks.
+| v1.2: version 3, length 72: the same 40 bytes, then mp_ext (8 tracks x RET, CURV, END, pad);
+| written only when one of those is not 0, else version 2 as before (a v1.1 image still reads
+| what a v1.2 one wrote unless the new settings are used). Versions 1, 2 and 3 are read.
 | STORE's handlers may clobber every register (modules/store/README.md).
         .globl  mrp_st_loadall_post, mrp_st_loadmask_post, mrp_st_newproj, mrp_st_bankw_post
         .globl  mrp_st_pstore_pre, mrp_st_pstore_post, mrp_st_preload_post, mrp_st_answer
 | store_path, store_fopen, store_fread, store_fwrite, store_fclose, store_crc32 and store_refuse
 | are STORE's (undefined here: the link resolves them).
         .set    MP_MAGIC, 0x4d525057     | 'MRPW'
-        .set    MP_LEN,   40
+        .set    MP_LEN,   40             | versions 1 and 2 (v1, v1.1)
+        .set    MP_LEN3,  72             | version 3 (v1.2): + RET, CURV, END, pad of the 8 tracks
         .set    MP_CLIENT,4              | STORE's CLIENT_IDS
         .set    F_COPY,   0x40016388     | (dst path, src path, 0) -> < 0 error (MIDI SCENES)
 
@@ -1219,6 +1535,8 @@ mb_2:   mvz.b   (%a0,%d1.l),%d2
         subq.l  #S_RUN,%d2
         beq     mb_on
         subq.l  #S_ARMED-S_RUN,%d2
+        beq     mb_on
+        subq.l  #S_TOP-S_ARMED,%d2      | on B (STAY): morphing too
         bne     mb_3
 mb_on:  moveq   #1,%d2
         lsl.l   %d1,%d2
@@ -1233,7 +1551,12 @@ mb_3:   subq.l  #1,%d1
         lsl.l   #8,%d1
         lsl.l   #8,%d1                  | the two masks in the first bytes, two zero bytes
         move.l  %d1,(%a1)+
-        clr.l   (%a1)
+        clr.l   (%a1)+
+        lea     mp_ext,%a0              | v1.2: bytes 40..71
+        moveq   #8,%d1
+mb_4:   move.l  (%a0)+,(%a1)+
+        subq.l  #1,%d1
+        bne     mb_4
         rts
 
 | mp_save -- write morph.work when the payload differs from mp_saved. Clobbers everything.
@@ -1243,7 +1566,7 @@ mp_save:
         bsr     mp_build
         lea     mp_buf,%a0
         lea     mp_saved,%a1
-        moveq   #MP_LEN/4,%d1
+        moveq   #MP_LEN3/4,%d1
 mps_1:  move.l  (%a0)+,%d0
         cmp.l   (%a1)+,%d0
         bne     mps_2
@@ -1266,17 +1589,30 @@ mps_2:  tst.l   mp_backup
         pea     mp_path
         jsr     F_COPY
         lea     12(%sp),%sp
-mps_3:  lea     mp_buf,%a0
-        moveq   #MP_LEN,%d0
+mps_3:  moveq   #2,%d0                  | version 2 (v1.1: x to 100, the ARMED byte), 40 bytes,
+        moveq   #MP_LEN,%d1             | unless a v1.2 setting is used: version 3, 72
+        lea     mp_buf+MP_LEN,%a0
+        moveq   #8,%d2
+mps_3a: tst.l   (%a0)+
+        bne     mps_3b
+        subq.l  #1,%d2
+        bne     mps_3a
+        bra     mps_3c
+mps_3b: moveq   #3,%d0
+        moveq   #MP_LEN3,%d1
+mps_3c: move.l  %d0,mp_wver
+        move.l  %d1,mp_wlen
+        lea     mp_buf,%a0
+        move.l  mp_wlen,%d0
         moveq   #0,%d1
         jsr     store_crc32
         lea     mp_hdr,%a0
         move.l  %d0,12(%a0)
         move.l  #MP_MAGIC,%d0
         move.l  %d0,(%a0)
-        moveq   #2,%d0                  | version 2 (v1.1: x to 100, the ARMED byte)
+        move.l  mp_wver,%d0
         move.l  %d0,4(%a0)
-        moveq   #MP_LEN,%d0
+        move.l  mp_wlen,%d0
         move.l  %d0,8(%a0)
         lea     FMT_MWORK,%a0
         lea     mp_path,%a1
@@ -1293,7 +1629,7 @@ mps_3:  lea     mp_buf,%a0
         jsr     store_fwrite
         move.l  %d0,%d2
         lea     mp_buf,%a0
-        moveq   #MP_LEN,%d0
+        move.l  mp_wlen,%d0
         jsr     store_fwrite
         move.l  %d0,%d3
         jsr     store_fclose
@@ -1303,7 +1639,7 @@ mps_3:  lea     mp_buf,%a0
         bne     mps_8
         lea     mp_buf,%a0              | written: the payload on the card
         lea     mp_saved,%a1
-        moveq   #MP_LEN/4,%d1
+        moveq   #MP_LEN3/4,%d1
 mps_4:  move.l  (%a0)+,(%a1)+
         subq.l  #1,%d1
         bne     mps_4
@@ -1335,23 +1671,32 @@ mp_load:
         move.l  (%a0),%d0
         cmp.l   #MP_MAGIC,%d0
         bne     mpl_bad
-        move.l  4(%a0),%d0              | version 1 (v1) or 2 (v1.1)
+        move.l  4(%a0),%d0              | version 1 (v1), 2 (v1.1): 40 bytes; 3 (v1.2): 72
         move.l  %d0,mp_ver
+        moveq   #MP_LEN,%d1
         subq.l  #1,%d0
-        moveq   #1,%d1
-        cmp.l   %d1,%d0
-        bhi     mpl_bad
-        moveq   #MP_LEN,%d0
-        cmp.l   8(%a0),%d0
+        moveq   #1,%d2
+        cmp.l   %d2,%d0
+        bls     mpl_1
+        moveq   #MP_LEN3,%d1
+        subq.l  #2,%d0
         bne     mpl_bad
+mpl_1:  cmp.l   8(%a0),%d1
+        bne     mpl_bad
+        move.l  %d1,mp_wlen
+        lea     mp_buf+MP_LEN,%a0       | a 40-byte payload: the v1.2 settings 0 (as v1.1)
+        moveq   #8,%d1
+mpl_2:  clr.l   (%a0)+
+        subq.l  #1,%d1
+        bne     mpl_2
         lea     mp_buf,%a0
-        moveq   #MP_LEN,%d0
+        move.l  mp_wlen,%d0
         jsr     store_fread
         subq.l  #1,%d0
         bne     mpl_bad
         jsr     store_fclose
         lea     mp_buf,%a0
-        moveq   #MP_LEN,%d0
+        move.l  mp_wlen,%d0
         moveq   #0,%d1
         jsr     store_crc32
         cmp.l   mp_hdr+12,%d0
@@ -1379,8 +1724,10 @@ mp_defaults:
 mpd_1:  move.l  %d0,(%a0)+
         subq.l  #1,%d1
         bne     mpd_1
-        clr.l   (%a0)+
-        clr.l   (%a0)
+        moveq   #10,%d1                 | the masks, and the v1.2 settings: SAME LIN LOOP
+mpd_2:  clr.l   (%a0)+
+        subq.l  #1,%d1
+        bne     mpd_2
 | mp_apply -- mp_buf (a payload) into mp_set and the states, each value clamped; mp_saved = it.
 | The tracks that morphed are armed: they start from A on the first step after PLAY. The others
 | go to the fader, a track that was not on the fader by way of PARK (held on A until the fader
@@ -1443,10 +1790,27 @@ mpa_9:  addq.l  #1,%a0
         moveq   #8,%d0
         cmp.l   %d0,%d1
         bne     mpa_6
+        lea     mp_buf+MP_LEN,%a0       | v1.2: RET, CURV, END, each clamped (a stray value: 0)
+        lea     mp_ext,%a1
+        moveq   #8,%d1
+mpa_11: lea     MW_XMAX,%a2
+        moveq   #3,%d3
+mpa_12: mvz.b   (%a0)+,%d0
+        mvz.b   (%a2)+,%d2
+        cmp.l   %d2,%d0
+        bls     mpa_13
+        moveq   #0,%d0
+mpa_13: move.b  %d0,(%a1)+
+        subq.l  #1,%d3
+        bne     mpa_12
+        addq.l  #1,%a0                  | the pad: 0
+        clr.b   (%a1)+
+        subq.l  #1,%d1
+        bne     mpa_11
         bsr     mp_build                | what is on the card (clamped values: a rewrite if any was)
         lea     mp_buf,%a0
         lea     mp_saved,%a1
-        moveq   #MP_LEN/4,%d1
+        moveq   #MP_LEN3/4,%d1
 mpa_10: move.l  (%a0)+,(%a1)+
         subq.l  #1,%d1
         bne     mpa_10
@@ -1555,7 +1919,13 @@ mp_set:    .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
            .byte 16, 8, 0, 0
+| per track, v1.2: RET (0 SAME .. 8 CUT), CURV (0 LIN 1 HAND 2 RISE 3 BOTH), END (0 LOOP 1 ONCE
+| 2 STAY), pad; all 0 = v1.1
         .balign 4
+mp_ext:    .long 0, 0, 0, 0, 0, 0, 0, 0
+mp_cyc:    .long 0                          | the frame's scratch: C, L, T of the track at hand
+mp_lup:    .long 0
+mp_ldn:    .long 0
 mw_win:    .long 0                          | the window, 0 = closed
 mw_timer:  .long -1                         | its soft timer slot
 mw_pushed: .long 0                          | the layer is pushed
@@ -1587,7 +1957,10 @@ mw_buf:    .space 24
 mp_saved:  .byte 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0     | the payload on the card
            .byte 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0, 16, 8, 0, 0     | (no file: the defaults)
            .long 0, 0
-mp_buf:    .space 40
+           .long 0, 0, 0, 0, 0, 0, 0, 0     | (v1.2: SAME LIN LOOP)
+mp_buf:    .space 72
+mp_wver:   .long 2                          | the version and length mp_save writes (mp_load: read)
+mp_wlen:   .long 40
 mp_hdr:    .space 16
 mp_nowrite: .long 0                         | morph.work refused: never written over
 mp_backup: .long 0                          | the next write first copies it to morph.bak

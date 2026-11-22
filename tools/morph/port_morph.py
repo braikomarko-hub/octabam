@@ -13,6 +13,8 @@ STOP holds; [T1]+[DOWN] parks T1 on A after the cycle; TRIG HOLD (encoder C) hol
 step. The long press: T2's window closed with NO (nothing starts), T2 held ~2 s starts it, held
 again stops it on A; the same with the MIXER open. PNGs of the window go to out/morph_port
 (MORPH_SHOTS=<dir> elsewhere).
+v1.2 (22 Nov 2026): T3 with END STAY, RET STEP, CURV HAND rises to B and stays there, the long
+press brings it back to A; PNGs of the eight-row window (9_window_v12, 10_window_top).
 What it cannot see: the toast text, the unit's real frame rate (the port's frame is its model)."""
 import argparse, os, struct, sys
 from pathlib import Path
@@ -118,6 +120,26 @@ def main():
         p.key('t2', True); p.run(2000); shot('7_long_press_off'); p.key('t2', False)
         p.run(int(step_s * 6000))
         check('long press again: T2 parked on A', xf(1) == 127, 'xf %s' % xf(1))
+        # ---- v1.2 on T3: STEPS 2 x 2 (2 steps up), RET STEP, CURV HAND, END STAY: up to B, held there;
+        #      the long press: back to A over a step, then parked
+        p.key('t3', True); p.run(60); p.press('up', settle=120)
+        enc(0, -14); enc(1, -6)
+        for _ in range(7): enc(3, 1)          # RET: one value a click -> STEP
+        enc(4, 1)                             # CURV: HAND
+        for _ in range(2): enc(5, 1)          # END: STAY
+        shot('9_window_v12')
+        p.key('t3', False); p.press('yes', settle=60)
+        p.run(int(step_s * 5000))
+        check('v1.2 STAY: T3 up to B and held there', xf(2) == 0, 'xf %s' % xf(2))
+        p.run(int(step_s * 3000))
+        check('v1.2 STAY: still on B three steps later', xf(2) == 0, 'xf %s' % xf(2))
+        p.key('t3', True); p.run(60); p.press('up', settle=120)
+        shot('10_window_top')
+        p.key('t3', False); p.press('no', settle=60)
+        p.key('t3', True); p.run(2000); p.key('t3', False)
+        p.run(int(step_s * 3000))
+        check('v1.2 STAY: the long press brings T3 back to A', xf(2) == 127, 'xf %s' % xf(2))
+        check('v1.2: T2 untouched meanwhile (parked on A)', xf(1) == 127, 'xf %s' % xf(1))
         p.press('mixer', settle=300)
         p.key('t2', True); p.run(2000); shot('8_mixer_long_press'); p.key('t2', False)
         p.run(int(step_s * 1500))

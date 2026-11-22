@@ -29,6 +29,17 @@ through it).
 - TRACK + DOWN lets the cycle finish on scene A, then the track stays
   parked on A. It follows the crossfader again once the crossfader reaches
   its A end, so nothing jumps.
+- The way back (v1.2), on D, E and F. RET sets how long B → A takes:
+  SAME (as long as the way up), 1/2, 1/4, 1/8 or 1/16 of the way up, BAR,
+  BEAT, STEP, or CUT (straight back to A). CURV shapes it: HAND makes the
+  way back fast at first and soft at the end, as a hand pulls a fader;
+  RISE makes the way up slow at first and fast at the end; BOTH does both.
+  END: LOOP again and again, ONCE one cycle and then parked on A, or STAY:
+  up to B and held there (TOP) until you hold the TRACK key about a second
+  or press TRACK + DOWN; then it comes back over RET and parks on A. Made
+  for risers. SAME, LIN and LOOP are the old behaviour exactly.
+- The way up is always half of STEPS × x; a shorter RET makes the cycle
+  shorter (16 × 8 with RET 1/4: 64 steps up, 16 back).
 - STOP holds the morph where it is; PLAY carries on.
 - The settings of every track, which tracks morph and which are armed are
   saved with the project (`morph.work`, beside the bank files; SAVE
@@ -45,18 +56,23 @@ through it).
 | TRACK + UP | open the window for the held tracks |
 | YES (in the window) | close; the tracks start on the next step |
 | NO, UP (in the window) | close; nothing starts (the tracks stay armed) |
-| TRACK held ~1 s | an armed track's morph on / off |
-| TRACK + DOWN | finish the cycle on A and park there |
+| TRACK held ~1 s | an armed track's morph on / off; on B with STAY: back to A |
+| TRACK + DOWN | finish the cycle on A and park there; on B with STAY: back to A |
 | A | STEPS: TRK (the track's length) or 1..64 |
 | B | x: 1..100 |
 | C | MODE: SMOOTH (moves every frame) or HOLD (one value a step) |
+| D | RET: SAME, 1/2, 1/4, 1/8, 1/16, BAR, BEAT, STEP, CUT |
+| E | CURV: LIN, HAND, RISE, BOTH |
+| F | END: LOOP, ONCE, STAY |
 | DOWN (in the window) | stop, as TRACK + DOWN |
 
-The bottom row shows the cycle (CYCLE 128), or the step while the morph
-runs (STEP 12/128), and on the right the two scenes with the morph's
-position between them, as the main page's footer shows the crossfader's.
-The MORPH row shows ARM (in the window), WAIT (starting on the next step),
-ON, STOP (finishing on A) or PARK.
+The title row shows the window's tracks and, on the right, the two scenes
+with the morph's position between them, as the main page's footer shows
+the crossfader's. The row under it shows the cycle (CYCLE 128), the step
+while the morph runs (STEP 12/128) or on the way back after STAY (BACK
+2/4), and on the right ARM (in the window), WAIT (starting on the next
+step), ON, STOP (finishing on A), PARK, TOP (held on B) or RET (on the
+way back).
 
 ![MORPH window](../../img/morph/window.png)
 
