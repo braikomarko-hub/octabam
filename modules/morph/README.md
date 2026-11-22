@@ -12,6 +12,14 @@ the track stays **parked on A**; it follows the crossfader again once the crossf
 end, so nothing jumps. The settings, which tracks morph and which are armed are saved with the
 project.
 
+**v1.2** adds the way back, on encoders D, E, F: **RET** (how long B → A takes: as long as the way
+up, a fraction of it, a bar, a beat, a step, or a cut), **CURV** (LIN, HAND: the way back fast at
+first and soft at the end, as a hand pulls a fader; RISE: the way up slow at first; BOTH) and
+**END** (LOOP, ONCE: one cycle, then parked on A; **STAY**: up to B and held there until you hold
+the track key ~1 s, or press [TRACK] + [DOWN], then back to A over RET). Made for risers: set the
+rise, let it climb while you prepare the rest, then let it fall back as if by hand. All three at
+their first value (SAME, LIN, LOOP) are v1.1 exactly.
+
 Author: MaMarko (Marko Brajković, [braikomarko-hub](https://github.com/braikomarko-hub)): the idea,
 the listening and the tests on the unit. **The code was written by Claude (Anthropic)**: engine,
 window, saving, integration and gates.
@@ -29,9 +37,9 @@ Markers: ✅ measured, 🟡 inferred.
 | [TRACK] + [UP] | the MORPH window for the held tracks (ARM); it stays open when the keys are let go |
 | YES (in the window) | the window closes; the window's tracks start from A on the next step |
 | NO or UP (in the window) | the window closes; nothing starts |
-| [TRACK] held ~1 s alone, on an armed track | not morphing: it starts from A on the next step (toast T2 MORPH ON). Morphing: it finishes its cycle on A and stops, parked on A (T2 MORPH OFF) |
+| [TRACK] held ~1 s alone, on an armed track | not morphing: it starts from A on the next step (toast T2 MORPH ON). Morphing: it finishes its cycle on A and stops, parked on A (T2 MORPH OFF). END STAY, held on B (TOP): the way back starts on the next step (T2 MORPH OFF) |
 | [TRACK] + [UP] on a morphing track | the window over the running morph: changes apply at once, the morph goes on |
-| [TRACK] + [DOWN] | stop, on every held track: a morphing one finishes its cycle on A, then is parked on A; one waiting for its step goes back to the crossfader |
+| [TRACK] + [DOWN] | stop, on every held track: a morphing one finishes its cycle on A, then is parked on A; one waiting for its step goes back to the crossfader; one held on B (STAY) starts its way back on the next step; one still going up with STAY comes back as soon as it reaches B |
 | crossfader to its A end | a parked track follows the crossfader again |
 | [STOP] | the morph holds where it is; [PLAY] carries on |
 
@@ -44,22 +52,29 @@ step after its own start (not from the bar), each with its own settings.
 The window (hold several track keys and it is for all of them):
 
 ```
- MORPH                      T1      the window's tracks
- ──────────────────────────────
-  MORPH                    ARM      ARM (in the window) / WAIT (next step) / ON / STOP (finishing) / PARK
+ MORPH  T1                 ARM      the window's tracks; ARM (in the window) / WAIT (next step) / ON
+                                    / STOP (finishing) / PARK / TOP (held on B) / RET (on the way back)
+  CYCLE 128           01▸09         STEP 12/128 while morphing, BACK 2/4 on the way back after STAY;
+                                    the scenes, as on the main page
   STEPS (A)                 16      encoder A: TRK (the track's length), 1..64
   x (B)                      8      encoder B: 1..100
   MODE (C)              SMOOTH      encoder C: SMOOTH / HOLD (TRIG HOLD)
-  CYCLE 128             01▸09       STEP 12/128 while morphing; the scenes, as on the main page
+  RET (D)                 SAME      encoder D: SAME 1/2 1/4 1/8 1/16 BAR BEAT STEP CUT
+  CURV (E)                 LIN      encoder E: LIN HAND RISE BOTH
+  END (F)                 LOOP      encoder F: LOOP ONCE STAY
 ```
 
-The bottom right is the scene indicator of the main page's footer, drawn by the same firmware
-calls: scene A, the position between them, scene B. Its position is the window track's own: where
-its morph is while it morphs, A while it is parked, else the crossfader's.
+The right of the second row is the scene indicator of the main page's footer, drawn by the same
+firmware calls: scene A, the position between them, scene B (v1.1 drew it at the bottom; v1.2
+needs the rows: eight rows 7 pixels apart inside v1.1's y 3..58, no rule under the title, the state
+at the title's right, the indicator beside the step). Its position
+is the window track's own: where its morph is while it morphs, A while it is parked, else the
+crossfader's.
 
 | in the window | what happens |
 |---|---|
 | A, B, C | STEPS, x, MODE on every window track |
+| D, E, F | RET, CURV, END on every window track, one value a click (v1.1 let them through to the page under the window) |
 | YES | close; the tracks start on the next step |
 | NO, UP | close; nothing starts |
 | DOWN | stop, as [TRACK] + [DOWN] |
@@ -69,6 +84,14 @@ its morph is while it morphs, A while it is parked, else the crossfader's.
 | STEPS | 0 = TRK, the track's length in the current pattern; 1..64 | 16 |
 | x | 1..100: one cycle is STEPS × x steps (at most 6400) | 8 |
 | MODE | SMOOTH: the morph moves every frame. HOLD (TRIG HOLD): the step's value for the whole step | SMOOTH |
+| RET | the way back B → A: SAME (as long as the way up, v1.1), 1/2, 1/4, 1/8, 1/16 of the way up, BAR (16 steps), BEAT (4), STEP (1), CUT (none) | SAME |
+| CURV | LIN; HAND: the way back fast at first, soft at the end; RISE: the way up slow at first, fast at the end; BOTH | LIN |
+| END | LOOP: again and again; ONCE: one cycle, then parked on A; STAY: up to B and held there (TOP), back over RET when asked | LOOP |
+
+The way up is always half of STEPS × x (64 steps at 16 × 8); RET sets only the way back, so a
+shorter RET makes the cycle shorter: 16 × 8 with RET 1/4 is 64 up + 16 back = 80 steps. When the
+two do not add up to whole steps (a way back of 1/16 of 1 × 1, say) the morph stays on A for
+what is left of the cycle's last step.
 
 ## Saving
 
@@ -81,7 +104,7 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
   file is written until something changes.
 - At a project load (and at power-up) the tracks that were morphing are armed: they start from A
   on the first step after PLAY. A track that was stopping or parked is parked on A.
-- A `morph.work` that is not version 1 or 2 or fails its CRC is never written over: STORE lists it
+- A `morph.work` that is not version 1, 2 or 3 or fails its CRC is never written over: STORE lists it
   (MORPH SETTINGS NOT LOADED) and offers to keep it, start fresh, or back it up to `morph.bak`
   first.
 - File: `MRPW`, version 2 (v1.1; v1 wrote version 1), payload length 40, CRC-32 of the payload;
@@ -89,6 +112,11 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
   morph (bit t), one byte of the armed tracks (0 in version 1), six zero bytes. A version 1 file
   loads with nothing armed and its 41.625 (x byte 17) as x 42. v1 firmware refuses a version 2
   file (and never writes over it).
+- v1.2: version 3, payload length 72: the same 40 bytes, then the eight tracks' RET, CURV, END
+  and a pad byte. It is written only when one of those is not at its first value; otherwise the
+  file is version 2, as v1.1 writes it, so going back to a v1.1 image keeps the project unless
+  the new settings were used (v1.1 refuses version 3, keeps the file and asks). A track held on
+  B (STAY) is saved as morphing: at the next load it is armed and rises again from A.
 
 ## How it works
 
@@ -112,6 +140,15 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
   steps, SMOOTH moves every frame, and neither drifts from the pattern over many cycles. One
   division a frame per morphing track; with every track on the fader only the step-word compare
   runs.
+- ✅ (source simulator) **The way back (v1.2).** The cycle is counted in 1/256 steps: the way up
+  is L = N × 128 (N = STEPS × x), the way back T = N × 128 >> RET for SAME .. 1/16, 4096 (BAR),
+  1024 (BEAT), 256 (STEP) or 0 (CUT); the cycle is C = ⌈(L + T) / 256⌉ steps (STAY: ⌈L / 256⌉).
+  At pos < L the way up: v = pos · 256 / L, xf = 127 − v / 2 (RISE: v² / 512); after it the way
+  back: u = (pos − L) · 256 / T (at most 255), xf = u / 2 (HAND: 127 − (255 − u)² / 512). With
+  SAME and LIN these are v1.1's `x = pos / N` folded at 128, step for step (floor identities:
+  `⌊⌊2p/N⌋/2⌋ = ⌊p/N⌋`), which is why the defaults change nothing. Three new states: TOP (7,
+  held on B), RETW (8, the way back asked, waiting for the next step) and RET (9, on the way back,
+  then parked on A). Two divisions a frame per morphing track at most.
 - ✅ **STEPS 0** reads the track's length in the current pattern (bank blob `0x46c82456` + pattern
   `0x100b14d0` × `0x8ed8` + track × `0x91a`, the byte at `+0x50`, 1..64, else 16), as OCTA303's gate
   does, every frame: a pattern change is followed; a k past the new N starts again from A.
@@ -174,6 +211,15 @@ SCENES keeps `scenes.work`. MORPH is a client of STORE (`modules/store`), which 
 
 ## Measured
 
+- 🟡 **v1.2** (RET, CURV, END; the eight-row window; version 3): in the source simulator only
+  (`tools/morph/test_morph.py`, 22 Nov 2026): every v1.1 check unchanged with the defaults; the
+  model of the cycle checked against the frame, step by step, for 3 lengths × 9 RET × 4 CURV in
+  TRIG HOLD; ONCE parking after one cycle; STAY holding B, the long press, [TRACK] + [DOWN] and
+  the window's DOWN starting the way back on the next step, RET long, then parking; a stop on the
+  way up coming back at B; the window over TOP and RET; encoders D, E, F (one a click, clamped, on
+  every window track) and their names; version 3 written only when needed, read back, version 2
+  clearing the new settings, stray values read as the first. Not yet under the port, not yet on
+  the unit.
 - 🟡 **v1.1** (the window stays open, YES / NO, the long press, x to 100, the scene indicator): in
   the source simulator (`tools/morph/test_morph.py`) and under the port (`tools/morph/port_morph.py`,
   26 Oct 2026: YES starts T1 at the tempo, NO starts nothing, the long press starts and stops T2,

@@ -211,16 +211,33 @@ check('down_on_a_fader_track_does_nothing', state(0) == 0)
 key('morph_up', 0b101)    # T1 and T3: the window
 check('up_opens_the_window', win() == WIN and ui['win_args'][:2] == [116, 64] and ui['win_args'][4] == 5
       and C['MW_LAYER'] in ui['layers'] and len(ui['timers']) == 1)
-tt = {y: s for x, y, s in ui['texts']}
-check('window_paint', tt.get(52) == 'T13' and tt.get(40) == 'ARM' and tt.get(32) == '16'
-      and tt.get(24) == '8' and tt.get(16) == 'SMOOTH' and tt.get(4) == 'CYCLE 128',
+def ext(t, ret, curv, end):
+    a = C['mp_ext'] + 4 * t
+    mem.w(a, 'b', ret); mem.w(a + 1, 'b', curv); mem.w(a + 2, 'b', end)
+def ext_of(t): return [mem.r(C['mp_ext'] + 4 * t + i, 'b') for i in range(4)]
+def rows():                          # v1.2: y -> the texts of that row, left to right
+    r = {}
+    for x, y, s in sorted(ui['texts']): r.setdefault(y, []).append(s)
+    return {y: tuple(v) for y, v in r.items()}
+rr = rows()
+check('window_paint', rr.get(52) == ('MORPH', 'T13', 'ARM') and rr.get(45) == ('CYCLE 128',)
+      and rr.get(38) == ('STEPS (A)', '16') and rr.get(31) == ('x (B)', '8')
+      and rr.get(24) == ('MODE (C)', 'SMOOTH') and rr.get(17) == ('RET (D)', 'SAME')
+      and rr.get(10) == ('CURV (E)', 'LIN') and rr.get(3) == ('END (F)', 'LOOP'),
       str(sorted(ui['texts'], key=lambda r: -r[1])))
+def no_overlap():                    # (the mock's 6 px a character: wider than the unit's font)
+    t = sorted(ui['texts'], key=lambda r: (r[1], r[0]))
+    return all(not (a[1] == b[1] and a[0] + 6 * len(a[2]) > b[0]) for a, b in zip(t, t[1:]))
+check('window_rows_fit', all(3 <= y and y + 6 <= 58 for x, y, s in ui['texts'])   # v1.1's y 3..58
+      and all(x + 6 * len(s) <= 116 for x, y, s in ui['texts']) and no_overlap()
+      and all(x + 6 * len(s) < C['X_SC'] for x, y, s in ui['texts'] if y == C['Y_SC'])
+      and len(set(y for x, y, s in ui['texts'])) == 8, str(ui['texts']))
 check('up_holds_the_window_tracks', (state(0), state(1), state(2)) == (5, 0, 5))
 for _ in range(3): to_next_step()
 check('held_does_not_start_while_the_window_is_open', (state(0), state(2)) == (5, 5)
       and weight(0) == 0x12345678)
 enc(1, -6); tick()
-check('cycle_follows_the_settings', {y: s for x, y, s in ui['texts']}.get(4) == 'CYCLE 32')
+check('cycle_follows_the_settings', rows().get(45, ('',))[0] == 'CYCLE 32')
 enc(1, 6)
 mem.w(HELD, 'l', 0); tick(); tick()
 check('release_leaves_it_open', win() == WIN and (state(0), state(2)) == (5, 5))
@@ -335,18 +352,22 @@ key('morph_up', 0b11000000)          # T7 and T8
 enc(0, -20); enc(1, 3); enc(2, 1)
 s6, s7 = [[mem.r(C['mp_set'] + 4 * t + i, 'b') for i in range(3)] for t in (6, 7)]
 check('enc_sets_every_window_track', s6 == s7 == [0, 11, 1], '%s %s' % (s6, s7))
-tt = {y: s for x, y, s in ui['texts']}
-check('window_shows_trk_and_hold', tt.get(32) == 'TRK' and tt.get(16) == 'HOLD' and tt.get(52) == 'T78')
+rr = rows()
+check('window_shows_trk_and_hold', rr.get(38, ('',))[-1] == 'TRK' and rr.get(24, ('',))[-1] == 'HOLD'
+      and rr.get(52, ('', ''))[1] == 'T78', str(rr))
 enc(0, 100); enc(1, -20); enc(2, -1)
 check('enc_clamps', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0])
 enc(3, 5); enc(0, 0)
-check('enc_d_and_zero_do_nothing', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0])
+check('enc_d_leaves_a_b_c_and_zero_does_nothing', [mem.r(C['mp_set'] + 4 * 6 + i, 'b') for i in range(3)] == [64, 1, 0]
+      and ext_of(6)[0] == 1)
+enc(3, -1)
+check('enc_d_back', ext_of(6) == ext_of(7) == [0, 0, 0, 0])
 enc(1, 30)
 check('x_goes_past_16', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 31)
 enc(1, 200)
-tt = {y: s for x, y, s in ui['texts']}
-check('x_stops_at_100', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 100 and tt.get(24) == '100'
-      and tt.get(4) == 'CYCLE 6400', str((tt.get(24), tt.get(4))))
+rr = rows()
+check('x_stops_at_100', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 100 and rr.get(31, ('',))[-1] == '100'
+      and rr.get(45, ('',))[0] == 'CYCLE 6400', str((rr.get(31), rr.get(45))))
 enc(1, 5)
 check('no_easter_egg', mem.r(C['mp_set'] + 4 * 6 + 1, 'b') == 100)
 settings(6, 16, 8, 0); settings(7, 16, 8, 0)
@@ -355,10 +376,10 @@ check('open_after_the_release', win() == WIN)
 key('mw_yes'); to_next_step(); frame(5)
 check('yes_tracks_run', state(6) == 1 and state(7) == 1)
 key('morph_up', 0b11000000); tick()
-tt = {y: s for x, y, s in ui['texts']}
+rr = rows(); st45 = rr.get(45, ('',))[0]
 check('reopen_keeps_running', state(6) == 1 and state(7) == 1)
-check('window_shows_on_and_the_step', tt.get(40) == 'ON' and (tt.get(4) or '').startswith('STEP ')
-      and tt.get(4, '').endswith('/128'), str(tt.get(4)))
+check('window_shows_on_and_the_step', rr.get(52, ('',))[-1] == 'ON' and st45.startswith('STEP ')
+      and st45.endswith('/128'), str((rr.get(52), st45)))
 n0 = len(ui['texts']); tick()
 check('tick_repaints_only_on_change', len(ui['texts']) == n0)
 key('mw_down')
@@ -553,7 +574,202 @@ ev('loadall_post')
 check('v2_file_x17_is_17', mem.r(C['mp_set'] + 1, 'b') == 17)
 files[W] = b'MRPW' + struct.pack('>III', 3, 40, zlib.crc32(pl)) + pl
 refused.clear(); ev('loadall_post')
-check('version_3_is_refused', refused == [(4, 0)])
+check('version_3_of_40_bytes_is_refused', refused == [(4, 0)])
+files[W] = b'MRPW' + struct.pack('>III', 4, 72, zlib.crc32(pl + bytes(32))) + pl + bytes(32)
+refused.clear(); ev('loadall_post')
+check('version_4_is_refused', refused == [(4, 0)])
 
+# ---- v1.2 (22 Nov 2026): RET, CURV, END on encoders D, E, F (mp_ext); all 0 = v1.1 (every check
+#      above ran with them 0: the triangle, its length, SMOOTH, the stop, the saving as version 2)
+def tlen(n, ret): return n << (7 - ret) if ret < 5 else (4096, 1024, 256, 0)[ret - 5]
+def model(pos, n, ret, curv):        # the xf the frame should write pos/256 steps into the cycle
+    L, T = n * 128, tlen(n, ret)
+    if pos < L:
+        v = pos * 256 // L
+        if curv & 2: v = v * v >> 8
+        return 127 - (v >> 1)
+    if T == 0: return 127
+    u = min(255, (pos - L) * 256 // T)
+    return 127 - ((255 - u) ** 2 >> 9) if curv & 1 else u >> 1
+def cyc(n, ret, end): return -(-(n * 128 + (0 if end == 2 else tlen(n, ret))) // 256)
+def hop():                           # one step in one frame (the step word moves; TRIG HOLD tests)
+    seq.w = (seq.w + 1) & 0xffff; seq.steps += 1; mem.w(STEPW, 'w', seq.w)
+    cpu.a[7] = SP; cpu.call('mf_body')
+def reset8():
+    for t in range(8):
+        mem.w(C['mp_state'] + t, 'b', 0); mem.w(C['mp_k'] + 4 * t, 'l', 0); ext(t, 0, 0, 0)
+    mem.w(XF, 'l', 64)                 # the fader off A: a parked track stays parked
+def still():                         # a frame inside the same step
+    cpu.a[7] = SP; cpu.call('mf_body')
+reset8(); mem.w(TRANSPORT, 'l', 1)
+cpu.a[7] = SP; cpu.call('mf_body')    # (the step word as it stands)
+
+# the model of the defaults is v1.1's triangle, for every N up to 6400 (floor identities)
+check('model_defaults_are_the_triangle', all(model(k * 256 + f, n, 0, 0) == tri(k, n, f)
+      for n in (1, 2, 3, 7, 16, 128, 6400) for k in range(0, n, max(1, n // 50)) for f in (0, 77, 255))
+      and all(cyc(n, 0, 0) == n for n in (1, 3, 16, 6400)))
+
+# LOOP / ONCE, every RET and CURV: the value on each step's first frame (TRIG HOLD) is the model's
+bad = []
+for steps, mult in ((4, 1), (3, 2), (16, 1)):
+    n = steps * mult
+    for ret in range(9):
+        for curv in range(4):
+            reset8(); settings(0, steps, mult, 1); ext(0, ret, curv, 0)
+            mem.w(C['mp_state'], 'b', 4)           # armed
+            hop()                                  # the first step: k = 0, A
+            c = cyc(n, ret, 0); got = [xf_of(0)]
+            for _ in range(c + 1): hop(); got.append(xf_of(0))
+            want = [model((k % c) * 256, n, ret, curv) for k in range(c + 2)]
+            if got != want or state(0) != 1: bad.append((steps, mult, ret, curv, got, want, state(0)))
+check('loop_follows_the_model', not bad, str(bad[:2]))
+bad = []
+for ret, curv in ((1, 0), (4, 1), (8, 0), (6, 3)):
+    reset8(); settings(0, 4, 1, 1); ext(0, ret, curv, 1); mem.w(C['mp_state'], 'b', 4); hop()
+    c = cyc(4, ret, 1)
+    for _ in range(c - 1): hop()
+    s1 = state(0); hop()
+    if not (s1 == 1 and state(0) == 3 and xf_of(0) == 127): bad.append((ret, curv, s1, state(0), xf_of(0)))
+check('once_parks_on_a_after_one_cycle', not bad, str(bad))
+check('model_cut_is_back_on_the_next_step', cyc(4, 8, 0) == 2 and model(512, 4, 8, 0) == 127)
+check('model_hand_is_fast_then_soft', [model(512 + u, 4, 0, 1) for u in (0, 128, 256, 384, 511)]
+      == [0, 56, 96, 120, 127], str([model(512 + u, 4, 0, 1) for u in (0, 128, 256, 384, 511)]))
+
+# STAY: up to B, held there (TOP); the long press, DOWN or the window's DOWN: back over RET, parked
+def stay_up(ret, curv, steps=4, mult=1):
+    reset8(); settings(0, steps, mult, 1); ext(0, ret, curv, 2); mem.w(C['mp_state'], 'b', 4); hop()
+    for _ in range(cyc(steps * mult, ret, 2)): hop()
+stay_up(3, 0)
+check('stay_holds_b', state(0) == 7 and xf_of(0) == 0)
+for _ in range(5): hop()
+check('stay_holds_b_for_ever', state(0) == 7 and xf_of(0) == 0 and mem.r(C['mp_k'], 'l') == 0)
+toasts.clear(); mem.w(HELD, 'l', 0); long_press(0)
+check('long_press_on_top_asks_the_way_back', state(0) == 8 and len(toasts) == 1
+      and text(toasts[0]) == 'T1 MORPH OFF', str([text(a) for a in toasts]))
+still()
+check('the_way_back_waits_for_the_step', state(0) == 8 and xf_of(0) == 0)
+got = []
+for _ in range(4): hop(); got.append((state(0), xf_of(0)))
+n = 4; T = tlen(n, 3)                                # 1/8 of the way up: 64, a quarter of a step
+check('the_way_back_is_ret_long', got[0] == (9, 0) and got[1] == (3, 127) and T == 64, str(got))
+stay_up(5, 1)                                      # BAR: 16 steps, HAND
+key('morph_down', 0b1)
+check('down_on_top_asks_the_way_back', state(0) == 8)
+got = []
+for _ in range(18): hop(); got.append(xf_of(0))
+want = [model(512 + k * 256, 4, 5, 1) for k in range(16)] + [127, 127]
+check('stay_back_over_a_bar_by_hand', got == want and state(0) == 3, str(got))
+stay_up(8, 0)                                      # CUT
+key('morph_down', 0b1); hop()
+check('stay_cut_is_back_on_the_step', state(0) == 3 and xf_of(0) == 127)
+reset8(); settings(0, 16, 1, 1); ext(0, 7, 0, 2); mem.w(C['mp_state'], 'b', 4); hop(); hop()
+key('morph_down', 0b1)
+check('stop_on_the_way_up_is_stop', state(0) == 2)
+for _ in range(8): hop()
+check('a_stop_on_the_way_up_comes_back_at_b', (state(0), xf_of(0)) == (9, 0), str((state(0), xf_of(0))))
+hop(); hop()
+check('then_parks', state(0) == 3 and xf_of(0) == 127)
+
+# END changed while it runs: STAY on the way back parks on A (no jump to B); TOP without STAY
+# goes back on the next step
+reset8(); settings(0, 4, 1, 1); ext(0, 0, 0, 0); mem.w(C['mp_state'], 'b', 4); hop()
+for _ in range(3): hop()                          # k = 3: on the way back (C = 4)
+x0 = xf_of(0); ext(0, 0, 0, 2); hop()
+check('stay_turned_on_going_back_parks', x0 == model(3 * 256, 4, 0, 0) and state(0) == 3
+      and xf_of(0) == 127, str((x0, state(0), xf_of(0))))
+stay_up(0, 0); ext(0, 0, 0, 0); still()
+check('top_without_stay_goes_back', state(0) == 8 and xf_of(0) == 0)
+hop()
+check('top_without_stay_goes_back_on_the_step', state(0) == 9)
+
+# the scene indicator of a fader track is the fader's (review, 22 Nov: 7..9 tested first)
+reset8(); mem.w(XF, 'l', 127); mem.w(C['mp_xf'], 'b', 0)
+cpu.d[0] = 0; cpu.a[7] = SP; cpu.call('mw_sc')
+check('indicator_of_a_fader_track_is_the_fader', cpu.d[0] >> 16 == 0, hex(cpu.d[0]))
+mem.w(C['mp_state'], 'b', 7); cpu.d[0] = 0; cpu.a[7] = SP; cpu.call('mw_sc')
+check('indicator_of_top_is_b', cpu.d[0] >> 16 == 4, hex(cpu.d[0]))
+
+# the largest cycle, 64 x 100 = 6400, every RET, TRIG HOLD: k set near the turns, one step
+bad = []
+for ret in range(9):
+    for curv in (0, 3):
+        L, c = 6400 * 128, cyc(6400, ret, 0)
+        for k in sorted({1, L // 256 - 1, L // 256, L // 256 + 1, c - 2, c - 1}):
+            if not 0 < k < c: continue
+            reset8(); settings(0, 64, 100, 1); ext(0, ret, curv, 0); mem.w(C['mp_state'], 'b', 1)
+            mem.w(C['mp_k'], 'l', k - 1); hop()
+            if xf_of(0) != model(k * 256, 6400, ret, curv): bad.append((ret, curv, k, xf_of(0), model(k * 256, 6400, ret, curv)))
+check('largest_cycle_follows_the_model', not bad, str(bad[:3]))
+
+# SMOOTH: every frame of three cycles of 3 x 1 (odd: the last step half on A), 1/16 back, BOTH
+reset8(); settings(0, 3, 1, 0); ext(0, 4, 3, 0); mem.w(C['mp_state'], 'b', 4)
+to_next_step()
+bad = []; n = 0; c = cyc(3, 4, 0); s0 = seq.steps
+while seq.steps - s0 < 3 * c and n < 20000:
+    frame(); n += 1
+    fs = mem.r(C['mp_fsince'], 'l'); f = min(255, ((min(fs, 0xffff) * BPM * 24) >> 8) * C['SUB_K'] >> 16)
+    k = mem.r(C['mp_k'], 'l'); want = model(k * 256 + f, 3, 4, 3)
+    if xf_of(0) != want: bad.append((k, f, xf_of(0), want))
+check('smooth_follows_the_model', not bad and n > 100 and c == 2, str((len(bad), bad[:3], n, c)))
+
+# the window on a STAY track: open, close, nothing moves; its DOWN starts the way back
+stay_up(0, 0)
+key('morph_up', 0b1)
+check('window_shows_top', rows().get(52, ('',))[-1] == 'TOP' and state(0) == 7, str(rows().get(52)))
+key('mw_no')
+check('window_close_keeps_top', state(0) == 7)
+key('morph_up', 0b1); key('mw_down')
+check('window_down_on_top', state(0) == 8)
+key('mw_no')
+check('window_close_keeps_the_way_back', state(0) == 8)
+for _ in range(2): hop()
+key('morph_up', 0b1)
+check('window_shows_back', rows().get(45, ('',))[0] == 'BACK 2/2' and rows().get(52, ('',))[-1] == 'RET',
+      str((rows().get(45), rows().get(52))))
+key('mw_no')
+
+# encoders D, E, F: one value a click, clamped, on every window track; the rows show them
+reset8(); settings(0, 16, 8, 0); settings(2, 16, 8, 0)
+key('morph_up', 0b101)
+enc(3, 1); enc(3, 5); enc(4, -1); enc(4, 2); enc(5, 1)
+check('enc_d_e_f_set_every_window_track', ext_of(0) == [2, 1, 1, 0] and ext_of(2) == [2, 1, 1, 0]
+      and ext_of(1) == [0, 0, 0, 0], str((ext_of(0), ext_of(2))))
+for _ in range(12): enc(3, 1)
+for _ in range(6): enc(4, 1)
+for _ in range(6): enc(5, 1)
+check('enc_d_e_f_clamp', ext_of(0) == [8, 3, 2, 0])
+r = rows()
+check('window_names', r.get(17) == ('RET (D)', 'CUT') and r.get(10) == ('CURV (E)', 'BOTH')
+      and r.get(3) == ('END (F)', 'STAY') and r.get(45, ('',))[0] == 'CYCLE 64', str(r))
+for _ in range(12): enc(3, -1)
+check('enc_d_floor', ext_of(0)[0] == 0)
+for _ in range(4): enc(3, 4)                       # one value a click, whatever the speed
+r = rows()
+check('window_ret_names', r.get(17) == ('RET (D)', '1/16'), str(r.get(17)))
+key('mw_no')
+
+# saving: version 3 only with a v1.2 setting; read back; v2 still read (all 0)
+files.clear(); writes.clear()
+for i in range(8): settings(i, 16, 8, 0)
+reset8(); ev('newproj'); ev('bankw_post')
+check('v12_untouched_writes_nothing', not writes)
+ext(3, 5, 2, 1); ev('bankw_post')
+f = files.get(W, b'')
+check('v12_writes_version_3', len(f) == 88 and struct.unpack('>III', f[4:16]) == (3, 72, zlib.crc32(f[16:]))
+      and f[16 + 40 + 12:16 + 40 + 16] == bytes([5, 2, 1, 0]) and f[56:68] == bytes(12), f.hex())
+ext(3, 0, 0, 0); ev('loadall_post')
+check('v3_is_read_back', ext_of(3) == [5, 2, 1, 0])
+ext(3, 0, 0, 0); ev('bankw_post')
+f = files.get(W, b'')
+check('all_zero_writes_version_2_again', len(f) == 56 and struct.unpack('>II', f[4:12]) == (2, 40))
+ext(5, 1, 1, 1); ev('loadall_post')
+check('v2_file_clears_the_v12_settings', all(ext_of(t) == [0, 0, 0, 0] for t in range(8)))
+pl = bytes([16, 8, 0, 0] * 8 + [0] * 8) + bytes([9, 4, 3, 7] + [1, 2, 0, 0] * 7)
+files[W] = b'MRPW' + struct.pack('>III', 3, 72, zlib.crc32(pl)) + pl
+ev('loadall_post')
+check('v3_stray_values_are_0', ext_of(0) == [0, 0, 0, 0] and ext_of(1) == [1, 2, 0, 0])
+stay_up(0, 0); ev('bankw_post')
+f = files.get(W, b'')
+check('top_saves_as_morphing', len(f) > 48 and f[48] & 1, f.hex())
 print('%d failure(s)' % fails)
 sys.exit(1 if fails else 0)
