@@ -11,7 +11,8 @@ laws' constant.  The ceiling's table is made of the engine's own knee tables (o3
 modules/octa303/octa303.s): since B3 (22 Nov 2026) as ONE signed table, -KNEG[96..1] then KPOS[0..96] with its last entry
 repeated (the insert reads T[i] and T[i + 1]), written as 24-bit words (negative entries masked, as the repo's other
 tables are).  Since B3 phase 2 (22 Nov 2026) the insert's init copies the table once to Y:$0c00..$0cf9 (YT, NT words; the
-manifest claims that range from the generated block) and proc reads it there: the base literal is the copy's source only."""
+manifest claims that range from the generated block) and proc reads it there: the base literal is the copy's source only.
+Since phase 2c init also sums the words it copies, from this script's start value (ck0()): a wrong copy silences the voice."""
 import os, re, sys, math
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 GH = 91614                      # q31(tpt(fh)) >> 8 of leggi_A_v5.json (prova4.py checks it against the reference's)
@@ -109,13 +110,20 @@ def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
     for k, v in (('@GH@', str(gh)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
                  ('@DKP@', str(drv()[0])), ('@DKN@', str(drv()[1])), ('@DLIM@', str(DLIM)), ('@OMC@', str(OMC)),
                  ('@DTP@', str(DTP)), ('@DTN@', str(DTN)), ('@YT@', '$%x' % YT), ('@NT@', str(len(ptable()))),
-                 ('@YOMC@', '$%x' % (YT + OMC)), ('@YDTP@', '$%x' % (YT + DTP)), ('@YDTN@', '$%x' % (YT + DTN)),
+                 ('@CK0@', '$%06x' % ck0()), ('@YOMC@', '$%x' % (YT + OMC)), ('@YDTP@', '$%x' % (YT + DTP)), ('@YDTN@', '$%x' % (YT + DTN)),
                  ('@GM@', str(consts()[6])), ('@FC3@', str(consts()[7])), ('@FC2@', str(consts()[8])),
                  ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10])), ('@SWK@', str(consts()[12]))):
         assert old or k in s or k in OFFSETS, k; s = s.replace(k, v)
     assert '@' not in s
     assert YT + len(ptable()) <= YEND, 'the table outgrew its place in Y'
     return s
+def ck0():
+    """B3 phase 2c: the start of init's sum.  init adds the 250 words it copies (24-bit, signed) to this, in the 56-bit
+    accumulator, and stores its bits 47..24 (a1) where proc reads the frame's mark: a1 = $7fff + (the copied words' sum -
+    the table's sum), mod 2^24.  So $7fff (frames taken) if the sum is right; any one wrong word moves it (its error is
+    below 2^24 in size), and then no frame of the engine (mark $7fff) is taken."""
+    s = sum(v - (1 << 24) if v & 0x800000 else v for v in ptable())
+    return (0x7fff - s) & 0xffffff
 def ptable():
     """every word of the insert's one table, in order (the manifest's ptable)"""
     t = ceil() + drv()[2] + drv()[3] + mode_consts()

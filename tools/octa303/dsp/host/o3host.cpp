@@ -14,6 +14,14 @@
 //   O3_YPOKE=addr:val    after init, Y:addr = val (a control: one wrong word in the place)
 //   O3_INIT2=f           a second instance (its own state block) is set up at frame f: its init runs between the first
 //                        instance's calls (after the frame's first piece), then its proc runs on its own block every frame
+// B3 phase 2c (22 Nov 2026), init's check of its copy:
+//   O3_SPOKE=i:+d | i:=v | i:sj   before init, the table's SOURCE word i (as loaded, P / X / Y) += d, := v, or swapped
+//                        with word j; several, comma separated
+//   O3_REINIT=f          before frame f the source is put back as loaded and init runs again on the same state block
+//   O3_STATEFILL=v       the state blocks start as v (default $555555); with O3_NOINIT=1: a block no init has written
+//   O3_MEMCHK=1          X, Y and P $0000..$ffff not loaded by the host are filled with tagged words first; at the end the
+//                        words changed outside the state block, the audio and parameter blocks and Y:$0c00..$0cf9 are counted
+//   O3_XDUMP=file        the state block (first instance, $84 words) after the last frame, int32
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -82,15 +90,37 @@ int main(int argc, char** argv) {
     const bool tabP = argv[6][0] == 'p', tabX = argv[6][0] == 'x';   // p<hex>: the table goes to P (a module's P table); x<hex>: to X
                                                                       // (where the build parks it, XTABLE / XHARVEST); else to Y
     const TWord org = strtoul(argv[2], 0, 16), init = strtoul(argv[3], 0, 16), proc = strtoul(argv[4], 0, 16), yaddr = strtoul(argv[6] + (tabP || tabX ? 1 : 0), 0, 16);
+    const char* e_memchk = getenv("O3_MEMCHK"); const bool memchk = e_memchk && e_memchk[0] == '1';
+    auto tag = [](int area, TWord a) { return (TWord)((0x300000 * (TWord)(area + 1)) ^ (a * 0x9e5) ^ 0x0a5a5a) & 0xffffff; };
+    if (memchk) for (TWord a = 0; a < 0x10000; ++a) { dsp.memWrite(MemArea_X, a, tag(0, a)); dsp.memWrite(MemArea_Y, a, tag(1, a)); dsp.memWriteP(a, tag(2, a)); }
     auto b = slurp(argv[1]);
     for (size_t i = 0; i + 2 < b.size(); i += 3) dsp.memWriteP(org + (TWord)(i / 3), b[i] | (b[i + 1] << 8) | (b[i + 2] << 16));
     dsp.memWriteP(SENTINEL, 0);
     auto y = slurp(argv[5]);
-    for (size_t i = 0; i + 3 < y.size(); i += 4) { int32_t w; memcpy(&w, &y[i], 4); if (tabP) dsp.memWriteP(yaddr + (TWord)(i / 4), (TWord)w & 0xffffff); else dsp.memWrite(tabX ? MemArea_X : MemArea_Y, yaddr + (TWord)(i / 4), (TWord)w & 0xffffff); }
-    for (TWord k = 0; k < 0x84; ++k) { dsp.memWrite(MemArea_X, STATE + k, 0x555555); dsp.memWrite(MemArea_X, STATE2 + k, 0x555555); }   // dirty state: init must clear what the loop reads
+    std::vector<TWord> src;
+    for (size_t i = 0; i + 3 < y.size(); i += 4) { int32_t w; memcpy(&w, &y[i], 4); src.push_back((TWord)w & 0xffffff); }
+    auto putSrc = [&](size_t i, TWord v) { if (tabP) dsp.memWriteP(yaddr + (TWord)i, v); else dsp.memWrite(tabX ? MemArea_X : MemArea_Y, yaddr + (TWord)i, v); };
+    for (size_t i = 0; i < src.size(); ++i) putSrc(i, src[i]);
+    if (const char* e = getenv("O3_SPOKE")) {                       // the source spoiled before init
+        for (const char* q = e; q && *q; ) {
+            char* c; const size_t i = strtoul(q, &c, 10); if (*c != ':' || i >= src.size()) { fprintf(stderr, "O3_SPOKE?\n"); return 2; }
+            const char op = c[1]; char* d; long v = strtol(c + 2, &d, 0);
+            TWord w = src[i];
+            if (op == '+') putSrc(i, (TWord)(w + v) & 0xffffff);
+            else if (op == '=') putSrc(i, (TWord)v & 0xffffff);
+            else if (op == 's' && (size_t)v < src.size()) { putSrc(i, src[v]); putSrc(v, w); }
+            else { fprintf(stderr, "O3_SPOKE?\n"); return 2; }
+            q = *d == ',' ? d + 1 : 0;
+        }
+    }
+    const char* e_sf = getenv("O3_STATEFILL"); const TWord sfill = e_sf ? (TWord)strtoul(e_sf, 0, 16) & 0xffffff : 0x555555;
+    for (TWord k = 0; k < 0x84; ++k) { dsp.memWrite(MemArea_X, STATE + k, sfill); dsp.memWrite(MemArea_X, STATE2 + k, sfill); }   // dirty state: init must clear what the loop reads
     { uint32_t z = 0x6a09e667;                                  // Y:$0bf0..$0d0f: the place random, the guards known
       for (TWord a = YLO; a < YHI; ++a) { z ^= z << 13; z ^= z >> 17; z ^= z << 5;
           dsp.memWrite(MemArea_Y, a, (a >= YPLACE && a < YPEND) ? (TWord)(z & 0xffffff) : (TWord)(0x9a0000 + a)); } }
+    std::vector<TWord> snap[3];                                  // O3_MEMCHK: everything as the host set it up
+    if (memchk) for (TWord a = 0; a < 0x10000; ++a) { snap[0].push_back(mem.get(MemArea_X, a)); snap[1].push_back(mem.get(MemArea_Y, a)); snap[2].push_back(mem.get(MemArea_P, a) & 0xffffff); }
+    const char* e_reinit = getenv("O3_REINIT"); const long reinit = e_reinit ? strtol(e_reinit, 0, 10) : -1; uint64_t nreinit = 0;
     uint64_t n = 0, ninit = 0;
     const char* e_noinit = getenv("O3_NOINIT"); const char* e_ydump = getenv("O3_YDUMP"); const char* e_ypoke = getenv("O3_YPOKE"); const char* e_init2 = getenv("O3_INIT2");
     const long init2 = e_init2 ? strtol(e_init2, 0, 10) : -1;
@@ -112,6 +142,10 @@ int main(int argc, char** argv) {
         // (what SONDA 4's run B showed under the port, 17 Nov 2026); 0 = one call of 16 samples.  A guard word after the
         // block tells a call that writes past it.
         const int k = (w[51] >= 1 && w[51] <= 15) ? w[51] : 0;
+        if ((long)(o / FR) == reinit) {                           // the source put back, and init again (same state block)
+            for (size_t i = 0; i < src.size(); ++i) putSrc(i, src[i]);
+            if (!runInit(dsp, init, STATE, nreinit)) return 1;
+        }
         for (int g = 0; g < 48; ++g) dsp.memWrite(MemArea_X, AUDIO + 32 + g, 0x123456 + g);      // the unit's X:$20..$4f is the stock code's
         for (int g = 1; g <= 16; ++g) dsp.memWrite(MemArea_X, AUDIO - g, 0x654321 + g);
         scramble(dsp);
@@ -150,8 +184,21 @@ int main(int argc, char** argv) {
         out[32] = (int32_t)n; fwrite(out, 4, 33, fo);
     }
     fclose(fo);
+    if (memchk) {
+        auto inX = [&](TWord a, TWord lo, TWord len) { return a >= lo && a < lo + len; };
+        size_t cx = 0, cy = 0, cp = 0;
+        for (TWord a = 0; a < 0x10000; ++a) {
+            const bool okX = inX(a, STATE, 0x84) || inX(a, STATE2, 0x84) || inX(a, AUDIO - 16, 16 + 32 + 48) || inX(a, PARAMS, 20) || inX(a, PARAMS2, 20) || inX(a, AUDIO2, 32);
+            if (!okX && mem.get(MemArea_X, a) != snap[0][a]) ++cx;
+            if (!inX(a, YPLACE, YPEND - YPLACE) && mem.get(MemArea_Y, a) != snap[1][a]) ++cy;
+            if ((mem.get(MemArea_P, a) & 0xffffff) != snap[2][a]) ++cp;
+        }
+        printf("memchk: words changed outside the allowed blocks X %zu Y %zu P %zu\n", cx, cy, cp);
+    }
+    if (const char* e = getenv("O3_XDUMP")) { FILE* fx = fopen(e, "wb"); for (TWord a = STATE; a < STATE + 0x84; ++a) { int32_t v = (int32_t)(mem.get(MemArea_X, a) & 0xffffff); fwrite(&v, 4, 1, fx); } fclose(fx); }
     int ymoved = 0; { size_t q = 0; for (TWord a = YLO; a < YHI; ++a, ++q) if ((mem.get(MemArea_Y, a) & 0xffffff) != yafter[q]) ++ymoved; }
     printf("frames %zu, max instructions per frame %llu, frames written outside the audio block %zu\n", in.size() / FR, (unsigned long long)mx, over);
+    if (reinit >= 0) printf("re-init instructions %llu\n", (unsigned long long)nreinit);
     printf("init instructions %llu, second init %llu, Y guard words changed by init %d, Y:$0bf0..$0d0f changed after init %d\n",
            (unsigned long long)ninit, (unsigned long long)ninit2, guards, ymoved);
     return 0;

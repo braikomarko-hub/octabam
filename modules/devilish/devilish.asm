@@ -22,11 +22,15 @@
 ;      clip, and the governor of the self-oscillation, here (it needs y4): the engine sends kq and dq without it
 ;      (tools/octa303/dsp/ref/o3k.c, o3d_*).
 ;      A frame is taken only if the mark, the sum and the six low-byte payloads 2..12 (nothing above bit 7) all agree:
-;      a halfword 11 that is not the one the engine summed is refused like a wrong sum (B2b).
+;      a halfword 11 that is not the one the engine summed is refused like a wrong sum (B2b).  The mark is compared with
+;      x:(r7+$1f), which init's copy sets to $7fff only if the 250 words it copied sum (mod 2^24) to the table's: a wrong
+;      copy, or a state block no init has written ($1f = 0, or dirty), refuses every frame, so the voice is silent until an
+;      init copies a right table (B3 phase 2c; a track without the signature is still passed untouched: it reads no table).
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step; $b..$e the loop's g1..g4 (FM's
 ; G m; the frame writes G there, which FM 0 keeps), $f gv, $10 gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
+; $1f the mark as init's copy left it ($7fff + the error of the table's sum, mod 2^24; B3 phase 2c);
 ; $20..$2f the decoded payloads; from $30 the block r4 walks in the loop, in the order of use: FM's depth F,
 ; pqmax / 2, the cubic's c3 c2 c1, G1..G4, kq, dq, the ladder input's limit, its negative, its cubic's factor, the
 ; peak of y4^2 (SWP), Gm, sm, MUFF's limit, its negative, its factor, Gf5, shp (the 5 Hz high-pass), W (a bit every
@@ -59,10 +63,13 @@ o3v_izero:
         move    #>$ffffff,m2                    ; the copy's source pointer, linear
         move    #>$fab1e0,r2                       ; the table, where the build put it
         move    #>$c00,r5                       ; its place in Y (r5 is free: the six stores above are done)
-        do      #250,o3v_icp                   ; once, at init: 250 words
+        move    #>$fa5f53,a                       ; $7fff minus the table's sum, mod 2^24 (the generator's)
+        do      #250,o3v_icp                   ; once, at init: 250 words, summed while copied
         move    p:(r2)+,x0
         move    x0,y:(r5)+
+        add     x0,a                            ; (at LA: an ALU operation, no memory access)
 o3v_icp:
+        move    a1,x:(r7+$1f)                   ; the frame's mark is compared with this: $7fff only after a right copy
         rts
 proc:
         move    #>$ffffff,m1
@@ -111,7 +118,7 @@ o3v_first:
         move    a1,x:(r2)+
 o3v_dec:
         lua     (r7+$20),r2                     ; r2 = the payloads
-        move    #>$7fff,x0
+        move    x:(r7+$1f),x0                   ; the mark $7fff -- as init's check of its copy left it (B3 phase 2c)
         clr     b
         move    x:(r2)+,a
         cmp     x0,a
