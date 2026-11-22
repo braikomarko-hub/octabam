@@ -43,17 +43,17 @@ init:
         move    a,x:(r5)+
 o3v_izero:
         move    #>320130,x0                      ; FM's cubic: c3, c2, c1
-        move    x0,x:(r7+$32)
+        move    x0,x:(r5-$1a)                   ; (r5 = r7 + $4c here: $32)
         move    #>957597,x0
-        move    x0,x:(r7+$33)
+        move    x0,x:(r5-$19)
         move    #>2915192,x0
-        move    x0,x:(r7+$34)
+        move    x0,x:(r5-$18)
         move    #>88690,x0                       ; Gm, MUFF's one-pole
-        move    x0,x:(r7+$3f)
+        move    x0,x:(r5-$d)
         move    #>2986,x0                      ; Gf5, FM's 5 Hz high-pass
-        move    x0,x:(r7+$44)
+        move    x0,x:(r5-$8)
         move    #>$7fffff,x0                    ; SWP's kgov = 1
-        move    x0,x:(r7+$4b)
+        move    x0,x:(r5-$1)
         rts
 proc:
         move    #>$ffffff,m1
@@ -61,16 +61,14 @@ proc:
         move    #>$ffffff,m4
         move    #>$ffffff,m5
         move    #>$fab1e0,n3                       ; the table, for the loop and the frame's modes
-        move    r6,r1                           ; the record (written well before its use: the AGU rule)
         move    n7,a                            ; (a call of no samples: the dispatcher skips it; a do of 0 would not)
         tst     a
         beq     o3v_pass
-        move    (r1)+
-        move    x:(r1)+,a
+        move    x:(r6+1),a                      ; the record's signature
         move    #>$3a5c00,x0
         cmp     x0,a
         bne     o3v_uns                         ; not an OCTA-303 track: nothing is touched
-        move    x:(r1),a
+        move    x:(r6+2),a
         move    #>$651700,x0
         cmp     x0,a
         bne     o3v_uns
@@ -82,12 +80,8 @@ proc:
 ;      calls the insert once a piece: n7 = the piece's samples, r0 moved on in the same block; SONDA 4, 17 Nov 2026).
 ;      The first piece's own output has overwritten its payloads: nothing is decoded here, the numbers, the gain's step
 ;      and VOL^2 are the ones the first piece latched.
-        move    r7,r2
-        move    #$14,n2
         clr     a
-        clr     b
-        move    (r2)+n2
-        move    x:(r2),b
+        move    x:(r7+$14),b
         move    #>1,x0
         cmp     x0,b
         beq     o3v_run                         ; the frame was taken (1)
@@ -96,24 +90,20 @@ proc:
                                                 ; disagree (each piece has its own r6, SONDA 5M), silence
 o3v_first:
 ; ---- the sixteen payloads: p = (y + y * 672 * 2^-23) >> 8 ----------------------------------------------------
-        move    r0,r1
-        move    r7,r2
-        move    #$20,n2
+        lua     (r0+1),r1                       ; R of sample 0
+        move    #2,n1
+        lua     (r7+$20),r2
         move    #>672,y1
-        move    (r1)+                           ; R of sample 0
-        move    (r2)+n2
         do      #16,o3v_dec
-        move    x:(r1)+,x0
+        move    x:(r1)+n1,x0
         move    x0,a
         mac     x0,y1,a
-        move    (r1)+
         asr     #8,a,a
         move    a1,x:(r2)+
 o3v_dec:
-        move    r7,r2
+        lua     (r7+$20),r2                     ; r2 = the payloads
         move    #>$7fff,x0
         clr     b
-        move    (r2)+n2                         ; r2 = the payloads
         move    x:(r2)+,a
         cmp     x0,a
         bne     o3v_bad
@@ -125,19 +115,15 @@ o3v_sum:
         asr     #8,a,a
         blt     o3v_bad                         ; (its bit 15 is in no sum: the engine never sets it)
         add     a,b
-        move    #>$7fff,x0
-        and     x0,b
+        and     #>$7fff,b
         move    x:(r2),x0
         cmp     x0,b
         bne     o3v_bad
-        move    #$21,n2
-        move    r7,r2
+        lua     (r7+$22),r2                     ; r2 = payload 2
+        move    #2,n2
         clr     b
-        clr     a
-        move    (r2)+n2                         ; r2 = payload 1
         do      #6,o3v_low                      ; the low bytes 2..12: nothing above bit 7 (14's: FM above gt's)
-        move    x:(r2)+,x0
-        move    x:(r2)+,a
+        move    x:(r2)+n2,a
         and     #>$7f00,a
         add     a,b
 o3v_low:
@@ -175,40 +161,26 @@ o3v_asm:
         move    b,x0                            ; FM / 128
         move    #>8279040,y1
         mpy     x0,y1,b                         ; F = FM x 64680 (64680 x 128 / 2^23)
-        move    #$d,n5
+        lua     (r7+7),r2                       ; r2 = the gain
         move    x:(r6),a
         and     #>$ffff00,a                     ; (an LFO's fraction never reaches gv)
-        move    (r5)-n5                         ; r5 = F ($30)
         asr     #7,a,a                          ; gv
-        move    #$21,n5
-        move    b,x:(r5)
-        move    y0,b                            ; gt
-        move    (r5)-n5                         ; r5 = gv ($f)
-        move    a1,x:(r5)+                      ; (gv: a1 alone, positive)
-        move    b,x:(r5)
+        move    b,x:(r7+$30)                    ; F
+        move    a1,x:(r7+$f)                    ; (gv: a1 alone, positive)
+        move    y0,x:(r7+$10)                   ; gt
 ; ---- the gain's step: (gt - gain) >> 4, 48 bits -----------------------------------------------------------
-        move    #7,n2
-        move    r7,r2
-        move    x:(r5),a
-        clr     b
-        move    (r2)+n2                         ; r2 = the gain
+        move    y0,a                            ; gt
         move    x:(r2)+,b
         move    x:(r2)+,b0
         sub     b,a
         asr     #4,a,a
         move    a1,x:(r2)+
-        move    a0,x0
-        move    x0,x:(r2)
-        move    #$a,n2
-        move    r6,r1
-        move    #3,n1
+        move    a0,x:(r2)
+        lua     (r6+3),r1
         move    #>1,x0
-        clr     b
-        move    (r2)+n2                         ; r2 = $14, the frame's verdict
-        move    x0,x:(r2)                       ; 1 = taken: a later piece of this frame runs on these numbers
+        move    x0,x:(r7+$14)                   ; 1 = taken: a later piece of this frame runs on these numbers
+        lua     (r7+$31),r2                     ; r2 = pqmax / 2
 ; ---- the frame's level, DRIV and MUFF (a taken frame only): the level's step = (level^2 - now) >> 4 -----------------
-        move    (r1)+n1
-        move    #$1d,n2
         move    x:(r1)+,x0                      ; the level's halfword
         mpy     x0,x0,a
         move    #>4260619,y1
@@ -217,7 +189,6 @@ o3v_asm:
         move    x:(r1)+,y0                      ; DRIV's word
         move    a,x1                            ; where the level goes
         move    x:(r1),b                        ; halfword 11
-        move    (r2)+n2                         ; r2 = pqmax / 2 ($31)
         tfr     b,a
         and     #>$7ff800,a
         asr     #2,a,a                          ; FM's ceiling: (pqmax >> 10) << 9, the steps Q15
@@ -227,10 +198,9 @@ o3v_asm:
         and     #6,a                            ; MUFF's mode x 2: its pair in the table
         move    #>242,x0
         add     x0,a
-        move    #$10,n2
         move    a1,n5
         move    n3,r5
-        move    (r2)+n2                         ; r2 = MUFF's limit ($41)
+        lua     (r2+$10),r2                     ; r2 = MUFF's limit ($41)
         clr     a
         move    (r5)+n5
         move    p:(r5)+,x0                      ; the limit
@@ -244,11 +214,9 @@ o3v_asm:
 ;      a control step): the peak of y4^2 / 2^23 since the last frame above 1179647 (|y4| 3 x 2^20 or more): kgov x 0.97,
 ;      floor 0.3; else x 1.005, capped at 1 by the move's limit; then kq x kgov and dq / (dq + kgov (1 - dq)), which is
 ;      1 / (1 + kgov kh gam): one division, 24 steps
-        move    #$3e,n5
-        move    r7,r5
+        lua     (r7+$3e),r5                     ; r5 = the peak
         clr     a
         and     #>$100,b                        ; SWP's bit
-        move    (r5)+n5                         ; r5 = the peak ($3e)
         move    x:(r5),y1
         move    a,x:(r5)-                       ; it restarts
         beq     o3v_nsw
@@ -318,18 +286,14 @@ o3v_nsw:
         bne     o3v_run
         move    x1,x:(r2)                       ; no step left: the level itself
 o3v_run:
-        move    #7,n2
-        move    #$b,n5
-        move    r7,r2
-        move    r7,r5
-        move    r7,r1                           ; r1 = s1
-        move    r7,r4
-        move    #$47,n4
-        move    (r2)+n2                         ; r2 = the gain, for the loop
-        move    (r5)+n5                         ; r5 = g1
+        lua     (r7+$39),r4                     ; kq
+        move    #$e,n4
+        lua     (r7+7),r2                       ; r2 = the gain, for the loop
+        lua     (r7+$b),r5                      ; r5 = g1
         move    (r4)+n4                         ; r4 = Yh, the block's last word before DRIV's
         move    #$17,n4                         ; (from Yh back to the block's start)
-        move    r5,r3                           ; r3 = g1, kept
+        move    r7,r1                           ; r1 = s1
+        lua     (r7+$b),r3                      ; r3 = g1, kept
         do      n7,o3v_end
 ; ---- FM: g = G m, m = 2^((pq - 32) / 8), pq = 32 + Yh F table steps (Q15 here, halved) within 0 .. pqmax: m / 16 =
 ;      (2^f / 2, a cubic in f, the place in the octave) x 2^e >> 7, e the octave; g = (G m/16) << 4.  FM 0: m = 1, g = G.
@@ -654,37 +618,27 @@ o3v_pass:
 ;      does the same only after such a first piece: after a taken or a refused one the records disagree, and what is
 ;      in the block is the engine's (payloads in R): silence.
 o3v_uns:
-        move    r7,r2
-        move    #$14,n2
         move    r0,b
         move    #>0,x0
-        move    (r2)+n2
         cmp     x0,b
         bne     o3v_ulat
         move    #>2,x0
-        move    x0,x:(r2)
+        move    x0,x:(r7+$14)
         rts
 o3v_ulat:
-        move    x:(r2),b
+        move    x:(r7+$14),b
         move    #>2,x0
         clr     a
         cmp     x0,b
         bne     o3v_mz
         rts
 o3v_bad:
-        move    #7,n2
-        move    r7,r2
+        lua     (r7+7),r2
         clr     a
-        clr     b
-        move    (r2)+n2
         do      #4,o3v_gz                       ; the gain and its step: the voice ramps in from 0 afterwards
         move    a,x:(r2)+
 o3v_gz:
-        move    #9,n2
-        clr     b
-        clr     a
-        move    (r2)+n2                         ; r2 = $14
-        move    a,x:(r2)                        ; 0 = refused, for the frame's later pieces
+        move    a,x:(r7+$14)                    ; 0 = refused, for the frame's later pieces
 o3v_mz:
         do      n7,o3v_mute                     ; this call's samples, no word more
         move    a,x:(r0)+
