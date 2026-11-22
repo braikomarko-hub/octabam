@@ -32,6 +32,12 @@ Thresholds (written 22 Nov 2026 before any ACIDF10 result; soglie_B3_v2.md 4.4, 
         X regions holding the source after the first copy, and at the end the 250 source words equal the table (0
         different).  SI = S with clean memory and live audio input from boot (--audio-in tones --audio-in-from-boot):
         the late init (frame 1000, after 1000 frames of audio) must still copy the table (init line above).
+  4.4c  (added by the implementer of B3 phase 2c, 22 Nov 2026, before any ACIDF10 result) since 2c dEVILish's init
+        checks its copy against the generator's sum and a wrong one makes the voice SILENT (prova3c on the bench).  So a
+        table the build changed, or a source spoiled before init, would show here as silence, which 4.5b (U = UD) cannot
+        see when both are silent: in U and in UD, T2's and T5's read-back from frame 100 on is not all zero.  (The port
+        cannot write DSP memory before an init -- its pokes are ColdFire memory -- so a deliberately spoiled source is
+        shown on the bench only, prova3c c2.)  DEDUCED, not proven here: that the read-back carries FX1's output.
 With --dsp-dirty the fill itself goes through the write hook before the boot (dsp.cpp DspPair::dirty): its non-zero
 writes, reproduced here exactly, are taken out of the first --dsp-writes line, and watch hits at executed 0 are set
 aside (both printed).
@@ -116,6 +122,18 @@ def fixture(src, out, r_):
     subprocess.run([sys.executable, str(ROOT / "tools/emu/ot_emu/stage_card.py"), str(d), "OCTABAM", "RIG",
                     "--tree", str(out / "tree"), "--out", str(card)], check=True, stdout=subprocess.DEVNULL)
     return card
+
+
+def voce(ril, first=100):
+    """4.4c: per track, the read-back's non-zero words and all its words from frame `first` on -> {track: (nz, tot)}"""
+    out = {}
+    for Tk, fr in (ril or {}).items():
+        nz = tot = 0
+        for f, lst in fr.items():
+            if f < first: continue
+            for w in lst: tot += len(w); nz += sum(1 for v in w if v)
+        out[Tk] = (nz, tot)
+    return out
 
 
 def bursts(rows, core, lo_region):
@@ -309,6 +327,16 @@ def main():
             verdict["4.5b memoria sporcata: 0 campioni diversi"] = tot > 0 and diff == 0 and miss == 0 and R["U"]["ran"] and R["UD"]["ran"]
         else:
             verdict["4.5b memoria sporcata: 0 campioni diversi"] = False
+    ok_c = None
+    for k in ("U", "UD"):
+        if k in R:
+            v_ = voce(R[k].get("ril"))
+            print(f"sonda 11 4.4c {k}: rilettura dal frame 100, parole diverse da zero: "
+                  + (", ".join(f"{t} {n(a)} su {n(b)}" for t, (a, b) in sorted(v_.items())) or "nessuna rilettura"))
+            good = R[k].get("ran", False) and len(v_) == 2 and all(a > 0 and b > 0 for a, b in v_.values())
+            ok_c = good if ok_c is None else (ok_c and good)
+    if ok_c is not None:
+        verdict["4.4c dEVILish non in silenzio (controllo della copia riuscito) in U e UD"] = ok_c
     for k, v in verdict.items():
         print(f"{k}: {'PASS' if v else 'FAIL'}")
     return 0 if verdict and all(verdict.values()) else 1
