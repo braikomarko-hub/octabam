@@ -122,7 +122,7 @@ def git_show(path, rev=BASE):
 def old_insert(rev=BASE):
     """rev's insert, assembled -> its proc (the binary: SCR/o3v_<rev>.bin)"""
     src = git_show('tools/octa303/dsp/voice/o3v.asm.in', rev)
-    if rev == PREV: src = P3.gen_module.subst(src, pt=str(P3.PTP), ab=str(P3.AB), gh=P3.gen_module.GH)
+    if rev == PREV: src = P3.gen_module.subst(src, pt=str(P3.PTP), ab=str(P3.AB), gh=P3.gen_module.GH, old=True)
     for k, v in (('@GH@', str(P3.gen_module.GH)), ('@LIM@', str((P3.KN - 1) << 14)), ('@PT@', str(P3.PTP)), ('@CV@', str(P3.CV)), ('@AB@', str(P3.AB)),
                  ('@DKP@', str(P3.DKP)), ('@DKN@', str(P3.DKN)), ('@DLIM@', str(P3.gen_module.DLIM))):
         src = src.replace(k, v)

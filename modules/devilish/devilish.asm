@@ -57,17 +57,14 @@ o3v_izero:
         rts
 proc:
         move    #>$ffffff,m1
-        move    #>$ffffff,m2
-        move    #>$ffffff,m3
+        move    #>$ffffff,m2                    ; (no m3: r3 is only ever copied, never an address)
         move    #>$ffffff,m4
         move    #>$ffffff,m5
         move    #>$fab1e0,n3                       ; the table, for the loop and the frame's modes
+        move    r6,r1                           ; the record (written well before its use: the AGU rule)
         move    n7,a                            ; (a call of no samples: the dispatcher skips it; a do of 0 would not)
         tst     a
         beq     o3v_pass
-        move    r6,r1
-        move    r7,r2
-        move    #6,n2
         move    (r1)+
         move    x:(r1)+,a
         move    #>$3a5c00,x0
@@ -227,7 +224,7 @@ o3v_asm:
         move    a1,x:(r2)
         tfr     b,a
         asr     #8,a,a
-        and     #>6,a                           ; MUFF's mode x 2: its pair in the table
+        and     #6,a                            ; MUFF's mode x 2: its pair in the table
         move    #>244,x0
         add     x0,a
         move    #$10,n2
@@ -257,7 +254,8 @@ o3v_asm:
         beq     o3v_nsw
         move    #>6457553,x0
         move    x0,x:(r5)-                      ; the cubic's factor ($3d)
-        move    #>6291456,x0                      ; u within +-sqrt 2 So, then u - u f^2: saturating at 4 x 2^20
+        move    #$60,x0                         ; u within +-sqrt 2 So = 6 x 2^20 (gen_module asserts it; the short form
+                                                ; loads bits 23..16), then u - u f^2: saturating at 4 x 2^20
         move    x0,a
         neg     a
         move    a,x:(r5)-
@@ -515,7 +513,7 @@ o3v_nfm:
         move    a,x1                            ; y, limited: its sign and its integer part
         move    x1,a
         abs     a
-        move    #>1572864,x0
+        move    #$18,x0                         ; LIM = 96 x 2^14 (gen_module asserts it; the short form: bits 23..16)
         cmp     x0,a
         tgt     x0,a                            ; |y| above the table's end: the end
         move    a,y0
@@ -593,15 +591,14 @@ o3v_sgn:
         move    x:(r4),a
         tlt     x0,a                            ; on a 4th sample, Yh = the high-pass
         move    a,x:(r4)+
-        move    y0,a                            ; y, for DRIV
+        move    y0,a                            ; y, for DRIV (and in y0)
 ; ---- DRIV: x = y G; above the knee the mixer's soft ceiling, K + W tanh((|x| - K) / W) from the table -----------
-        move    x:(r4)+,y1                      ; DRIV's word; r4 on the level's step
-        move    y1,b
-        move    #>$100000,x0
+        move    x:(r4)+,b                       ; DRIV's word; r4 on the level's step
+        move    #$10,x0                         ; $100000 = DRIV 0 (the short form: bits 23..16)
         cmp     x0,b
         beq     o3v_koff                        ; DRIV 0: nothing
-        move    a,x0
-        mpy     x0,y1,a
+        move    b,y1
+        mpy     y1,y0,a
         asl     #3,a,a                          ; x = y G
         move    a,x1                            ; x, limited: its sign and its size
         move    x1,a
@@ -630,13 +627,11 @@ o3v_kside:
         asl     #10,a,a
         move    a,x0                            ; the fraction, 23 bits
         move    (r1)+n1
-        move    p:(r1)+,y0
-        move    p:(r1),b
+        move    p:(r1)+,y0                      ; T0
+        move    p:(r1),y1                       ; T1
         move    y0,a
-        sub     a,b
-        move    b,y1
-        mpy     x0,y1,a
-        add     y0,a                            ; the curve: never above |x| past the knee, K under it
+        mac     x0,y1,a
+        mac     -y0,x0,a                        ; the curve T0 + f (T1 - T0), exactly: never above |x| past the knee, K under it
         move    a,x0
         move    x1,a
         abs     a
@@ -657,11 +652,10 @@ o3v_koff:
         move    (r4)-                           ; (r4 back on Yh)
         mpy     x0,y1,a
         asl     #3,a,a
-        move    a,x0
         move    r7,r1
+        move    a,x:(r0)+                       ; L = R = the voice (the same limiting as through x0)
+        move    a,x:(r0)+
         move    r3,r5
-        move    x0,x:(r0)+
-        move    x0,x:(r0)+
 o3v_end:
 o3v_pass:
         rts

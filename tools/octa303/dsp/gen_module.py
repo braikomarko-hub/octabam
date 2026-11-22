@@ -68,12 +68,25 @@ def consts():
     swk = round(2.0 ** 46 / (math.sqrt(6.0) * so)); assert swk < (1 << 23)
     return mode_consts()[:6] + [q31(tpt(150.0)) >> 8] + list(fm_cubic()) + [q31(tpt(5.0)) >> 8, round(math.sqrt(2.0) * so), swk]
 OMC = 2 * (KN + 1) + 2 * DN                            # the mode constants' place in the table (after DRIV's)
-def subst(s, pt='$fab1e0', ab='0', gh=GH):
-    for k, v in (('@GH@', str(gh)), ('@LIM@', str((KN - 1) << 14)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
+# B3 (22 Nov 2026): two constants of the laws are written in the source as one-word short immediates, which load bits
+# 23..16 (`move #$18,x0`, `move #$60,x0`): the ceiling's LIM and SWP's limit.  They are no placeholders any more, so a
+# change to KN or to So must fail here, not build a module that clamps at the old value.
+LIM = (KN - 1) << 14                                   # the ceiling's end: 96 steps of 2^14
+SHORT = ('move    #$18,x0', 'move    #$60,x0')
+def check_short(s):
+    assert LIM == 0x180000, 'LIM moved: o3v.asm.in spells it #$18'
+    assert consts()[11] == 0x600000, 'SWP\'s limit (round(sqrt 2 So)) moved: o3v.asm.in spells it #$60'
+    for lit in SHORT: assert lit in s, lit
+def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
+    """the placeholders resolved.  old=True: an older commit's source (the bench builds them from git), which may lack
+    a placeholder of today's and carry @LIM@ / @SWL@ (resolved here to the same values)"""
+    if old: s = s.replace('@LIM@', str(LIM)).replace('@SWL@', str(consts()[11]))
+    else: check_short(s)
+    for k, v in (('@GH@', str(gh)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
                  ('@DKP@', str(drv()[0])), ('@DKN@', str(drv()[1])), ('@DLIM@', str(DLIM)), ('@OMC@', str(OMC)),
                  ('@GM@', str(consts()[6])), ('@FC3@', str(consts()[7])), ('@FC2@', str(consts()[8])),
-                 ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10])), ('@SWL@', str(consts()[11])), ('@SWK@', str(consts()[12]))):
-        assert k in s, k; s = s.replace(k, v)
+                 ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10])), ('@SWK@', str(consts()[12]))):
+        assert old or k in s, k; s = s.replace(k, v)
     assert '@' not in s
     return s
 def ptable():
