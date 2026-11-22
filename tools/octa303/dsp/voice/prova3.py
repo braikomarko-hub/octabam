@@ -48,15 +48,21 @@ def frames(C,X,mark=0x7fff):
         assert gv%2==0 and gv<(1<<16)
         F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700; F[f,35]=vol; F[f,36]=drv; F[f,37]=hw<<8
     return F
-def run_host(F,proc,init):
-    kp=np.concatenate([m.KPOS,[m.KPOS[-1]],m.KNEG,[m.KNEG[-1]],DTP,DTN,gen_module.mode_consts()]).astype(np.int32); kp.tofile(WORK+'/ytab.bin')
+def table_file(old=False):
+    """the insert's P table as o3host loads it -> its path.  The one gen_module writes into the manifest (B3: the ceiling as
+    one signed table, 24-bit words), or with old=True the layout of the inserts before B3 (the bench's old commits)"""
+    p=WORK+('/ytab_old.bin' if old else '/ytab.bin')
+    np.array(gen_module.ptable_old() if old else gen_module.ptable(),np.int64).astype(np.int32).tofile(p); return p
+def run_host(F,proc,init,binf=None,old=False):
+    """F through an insert (this tree's o3v.bin, or binf) on o3host; old=True: with the table's pre-B3 layout (a control)"""
+    tab=table_file(old)
     F.astype(np.int32).tofile(WORK+'/in.bin')
-    r=subprocess.run([HOST,WORK+'/o3v.bin','%x'%ORG,'%x'%init,'%x'%proc,WORK+'/ytab.bin','p%x'%PTP,WORK+'/in.bin',WORK+'/out.bin'],capture_output=True,text=True)
+    r=subprocess.run([HOST,binf or WORK+'/o3v.bin','%x'%ORG,'%x'%init,'%x'%proc,tab,'p%x'%PTP,WORK+'/in.bin',WORK+'/out.bin'],capture_output=True,text=True)
     assert r.returncode==0, r.stdout+r.stderr
     o=np.fromfile(WORK+'/out.bin',np.int32).reshape(-1,33)
     return o[:,:32], o[:,32], r.stdout.strip()
 DC=[]
-def stress(seed, nf=4000, loud=True):
+def stress(seed, nf=4000, loud=True, proc=None, **kw):
     """random coefficients and (loud) full-scale L samples: the limiting moves and the table's end are exercised"""
     r=np.random.default_rng(seed); gh=GH
     C=np.zeros((nf,13),np.int32); C[:,9]=r.integers(0,0x7fff,nf)*256
@@ -73,7 +79,7 @@ def stress(seed, nf=4000, loud=True):
     y=np.zeros(16*nf,np.int32); ip=lambda a:a.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
     L.o3d_run.restype=ctypes.c_longlong
     sat=L.o3d_run(ip(np.ascontiguousarray(C)),ip(X),nf,ip(y),ip(m.KNEG),ip(m.KPOS))
-    out,ni,msg=run_host(frames(C,X),PROC,ORG)
+    out,ni,msg=run_host(frames(C,X),proc or PROC,ORG,**kw)
     yl=out[:,0::2].reshape(-1)
     L.o3d_get_dcnt.restype=ctypes.c_longlong; DC.append([int(L.o3d_get_dcnt(k)) for k in range(3)])
     return int((yl!=y).sum()), 16*nf, int(sat), int(abs(y).max())

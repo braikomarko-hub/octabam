@@ -13,6 +13,7 @@ coefficients travel in the R channel (sixteen 15-bit payloads a frame); slow val
 | `ref/prova_a.py` | the R channel's payload decode, exhaustive |
 | `voice/o3v.asm.in` | the voice as an FX insert (init / proc), assembled by the repo's `dsp_asm` |
 | `voice/prova3.py` | phase 3: the assembled voice on the emulator against the reference, sample by sample |
+| `voice/prova3t.py` | B3: the ceiling as one signed table: the ceiling's block alone against d42ce4b9's on 64,920 edge inputs (the reviewer's adversarial test), the generated `devilish.asm` and the manifest's ptable against the bench, and a control (the old table must fail) |
 | `host/o3host.cpp` | a small bench on the vendored dsp56300 emulator library: it loads only this insert (no stock payload) |
 | `voice/dis_check.py` | the bench's binary disassembled against its source, instruction by instruction (the assembler mis-encodes silently) |
 | `cf/prova4.py`, `cf/prova5.py`, `cf/prova6.py` | the ColdFire side and the whole chain; B1's knobs; B2 (MUFF, FM, SWP on the DSP, thresholds written before the results) |
@@ -21,6 +22,7 @@ coefficients travel in the R channel (sixteen 15-bit payloads a frame); slow val
 tools/octa303/dsp/build.sh                      # needs the built vendor/dsp56300 (make setup)
 python3 tools/octa303/dsp/ref/grid3.py          # phase 2
 python3 tools/octa303/dsp/voice/prova3.py       # phase 3
+python3 tools/octa303/dsp/voice/prova3t.py      # B3: the signed ceiling table
 python3 tools/octa303/dsp/cf/prova6.py          # B2 (O3_WORK=<dir>: a run's own bench files, for two runs at once)
 ```
 

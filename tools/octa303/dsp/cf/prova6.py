@@ -133,9 +133,11 @@ def old_insert(rev=BASE):
     ls = [l for l in r.stdout.splitlines() if l[6:7] == ':']; k = [i for i, l in enumerate(ls) if ' rts' in l][0]
     return int(ls[k + 1][:6], 16)
 def host(F, binf, proc):
-    P3.run_host(F[:1], built()[0], P3.ORG)              # (writes the table file)
+    """F through the insert binf (proc its entry).  This tree's insert reads this tree's table; an old commit's insert
+    (built from git, before B3) reads the old layout (KPOS, KNEG, DRIV's, the modes': prova3.table_file(old=True))"""
+    tab = P3.table_file(old=os.path.abspath(binf) != os.path.abspath(P3.WORK + '/o3v.bin'))
     F.astype(np.int32).tofile(SCR + '/in.bin')
-    r = subprocess.run([P3.HOST, binf, '%x' % P3.ORG, '%x' % P3.ORG, '%x' % proc, P3.WORK + '/ytab.bin', 'p%x' % P3.PTP, SCR + '/in.bin', SCR + '/out.bin'], capture_output=True, text=True)
+    r = subprocess.run([P3.HOST, binf, '%x' % P3.ORG, '%x' % P3.ORG, '%x' % proc, tab, 'p%x' % P3.PTP, SCR + '/in.bin', SCR + '/out.bin'], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     return np.fromfile(SCR + '/out.bin', np.int32).reshape(-1, 33)[:, :32]
 GEN = ('| ---- o3e generated:', '| ---- o3e generated: end')

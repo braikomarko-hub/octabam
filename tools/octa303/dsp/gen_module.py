@@ -5,10 +5,12 @@
                                                      of modules/devilish/manifest.py (between its markers)
     python3 tools/octa303/dsp/gen_module.py --check  exit 1 if either file is not what this script writes
 
-devilish.asm is voice/o3v.asm.in with the bench's placeholders resolved for the build: the ceiling's two tables and DRIV's two
-are the manifest's ptable, one after the other (the build points the base literal at it), gh is the laws' constant.
-The tables are the engine's own knee tables (o3e_kpos / o3e_kneg in modules/octa303/octa303.s), each with its last
-entry repeated (the insert reads T[i] and T[i + 1])."""
+devilish.asm is voice/o3v.asm.in with the bench's placeholders resolved for the build: the ceiling's table, DRIV's two and
+the modes' constants are the manifest's ptable, one after the other (the build points the base literal at it), gh is the
+laws' constant.  The ceiling's table is made of the engine's own knee tables (o3e_kpos / o3e_kneg in
+modules/octa303/octa303.s): since B3 (22 Nov 2026) as ONE signed table, -KNEG[96..1] then KPOS[0..96] with its last entry
+repeated (the insert reads T[i] and T[i + 1]), written as 24-bit words (negative entries masked, as the repo's other
+tables are)."""
 import os, re, sys, math
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 GH = 91614                      # q31(tpt(fh)) >> 8 of leggi_A_v5.json (prova4.py checks it against the reference's)
@@ -67,23 +69,40 @@ def consts():
     so = 4.0 * 1048576.0 / (2.0 * math.sqrt(2.0) / 3.0)            # SWP: the soft clip saturating at 4 x 2^20 (o3k.c So_d)
     swk = round(2.0 ** 46 / (math.sqrt(6.0) * so)); assert swk < (1 << 23)
     return mode_consts()[:6] + [q31(tpt(150.0)) >> 8] + list(fm_cubic()) + [q31(tpt(5.0)) >> 8, round(math.sqrt(2.0) * so), swk]
-OMC = 2 * (KN + 1) + 2 * DN                            # the mode constants' place in the table (after DRIV's)
+def ceil():
+    """the BA662's ceiling as one signed table (B3): T[k] = -KNEG[96 - k] for k < 96, T[96 + k] = KPOS[k], KPOS[96]
+    repeated: y = -(k 2^14 + r) read at T[95 - k], T[96 - k] with the fraction 2^14 - r is the old -(KNEG[k] + r D) to
+    the bit; y = 0 and y = -1 need KPOS[0] = KNEG[0] = 0"""
+    kp, kn = knee('o3e_kpos'), knee('o3e_kneg')
+    assert kp[0] == 0 and kn[0] == 0, 'the signed table needs KPOS[0] = KNEG[0] = 0'
+    t = [-x for x in kn[KN - 1:0:-1]] + kp
+    assert len(t) == 2 * (KN - 1) + 2
+    return t
+DTP = 2 * (KN - 1) + 2; DTN = DTP + DN                 # DRIV's two sides' places in the table (after the ceiling's)
+OMC = DTN + DN                                         # the mode constants' place (after DRIV's): 242
+OLD = dict(DTP=2 * (KN + 1), DTN=2 * (KN + 1) + DN, OMC=2 * (KN + 1) + 2 * DN)   # the layout before B3 (196, 220, 244)
+def ptable_old():
+    """the table as the inserts before B3 read it (the bench's old commits, built from git): KPOS, KNEG (each 98), DRIV's
+    two, the modes'"""
+    return knee('o3e_kpos') + knee('o3e_kneg') + drv()[2] + drv()[3] + mode_consts()
 # B3 (22 Nov 2026): two constants of the laws are written in the source as one-word short immediates, which load bits
-# 23..16 (`move #$18,x0`, `move #$60,x0`): the ceiling's LIM and SWP's limit.  They are no placeholders any more, so a
+# 23..16 (`move #$18,x0` and `#$e8` for -LIM, `move #$60,x0`): the ceiling's LIM and SWP's limit.  They are no placeholders any more, so a
 # change to KN or to So must fail here, not build a module that clamps at the old value.
 LIM = (KN - 1) << 14                                   # the ceiling's end: 96 steps of 2^14
-SHORT = ('move    #$18,x0', 'move    #$60,x0')
+SHORT = ('move    #$18,x0', 'move    #$e8,x0', 'move    #$60,x0')
 def check_short(s):
-    assert LIM == 0x180000, 'LIM moved: o3v.asm.in spells it #$18'
+    assert LIM == 0x180000 and -LIM & 0xffffff == 0xe80000, 'LIM moved: o3v.asm.in spells it #$18 and -LIM #$e8'
     assert consts()[11] == 0x600000, 'SWP\'s limit (round(sqrt 2 So)) moved: o3v.asm.in spells it #$60'
     for lit in SHORT: assert lit in s, lit
 def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
     """the placeholders resolved.  old=True: an older commit's source (the bench builds them from git), which may lack
     a placeholder of today's and carry @LIM@ / @SWL@ (resolved here to the same values)"""
-    if old: s = s.replace('@LIM@', str(LIM)).replace('@SWL@', str(consts()[11]))
+    if old:                                                     # (an old commit reads the old layout: OLD)
+        s = s.replace('@LIM@', str(LIM)).replace('@SWL@', str(consts()[11])).replace('@OMC@', str(OLD['OMC']))
     else: check_short(s)
     for k, v in (('@GH@', str(gh)), ('@CV@', str(CV)), ('@PT@', pt), ('@AB@', ab),
                  ('@DKP@', str(drv()[0])), ('@DKN@', str(drv()[1])), ('@DLIM@', str(DLIM)), ('@OMC@', str(OMC)),
+                 ('@DTP@', str(DTP)), ('@DTN@', str(DTN)),
                  ('@GM@', str(consts()[6])), ('@FC3@', str(consts()[7])), ('@FC2@', str(consts()[8])),
                  ('@FC1@', str(consts()[9])), ('@GF5@', str(consts()[10])), ('@SWK@', str(consts()[12]))):
         assert old or k in s, k; s = s.replace(k, v)
@@ -91,7 +110,9 @@ def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
     return s
 def ptable():
     """every word of the insert's one table, in order (the manifest's ptable)"""
-    return knee('o3e_kpos') + knee('o3e_kneg') + drv()[2] + drv()[3] + mode_consts()
+    t = ceil() + drv()[2] + drv()[3] + mode_consts()
+    assert len(t) == OMC + 8 and t[DTP:DTN] == drv()[2] and t[OMC:] == mode_consts()
+    return [v & 0xffffff for v in t]
 def asm():
     s = subst(open(os.path.join(ROOT, 'tools', 'octa303', 'dsp', 'voice', 'o3v.asm.in')).read())
     head = ('; dEVILish -- GENERATED by tools/octa303/dsp/gen_module.py from tools/octa303/dsp/voice/o3v.asm.in (do not edit).\n'
@@ -101,8 +122,8 @@ def asm():
 B0, B1 = '# ---- o3v tables: generated by tools/octa303/dsp/gen_module.py (do not edit) ----\n', '# ---- o3v tables: end ----\n'
 def tables():
     f = lambda n, v: '%s = (\n%s)\n' % (n, ''.join('    ' + ', '.join(str(x) for x in v[i:i + 10]) + ',\n' for i in range(0, len(v), 10)))
-    return B0 + f('O3V_KPOS', knee('o3e_kpos')) + f('O3V_KNEG', knee('o3e_kneg')) + f('O3V_DRVP', drv()[2]) + f('O3V_DRVN', drv()[3]) + \
-        f('O3V_MODES', mode_consts()) + B1
+    t = ptable()
+    return B0 + f('O3V_CEIL', t[:DTP]) + f('O3V_DRVP', t[DTP:DTN]) + f('O3V_DRVN', t[DTN:OMC]) + f('O3V_MODES', t[OMC:]) + B1
 def main():
     pa = os.path.join(ROOT, 'modules', 'devilish', 'devilish.asm'); pm = os.path.join(ROOT, 'modules', 'devilish', 'manifest.py')
     m = open(pm).read(); i, j = m.index(B0), m.index(B1) + len(B1)

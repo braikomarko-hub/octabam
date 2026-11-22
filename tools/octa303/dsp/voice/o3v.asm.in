@@ -29,8 +29,8 @@
 ; peak of y4^2 (SWP), Gm, sm, MUFF's limit, its negative, its factor, Gf5, shp (the 5 Hz high-pass), W (a bit every
 ; 4th sample), Yh (FM's source, held); $48 DRIV's word, $49 the output level's step, $4a the level; $4b SWP's kgov.
 ; An address register written by a move is not used in the next two instructions (MODULES.md, the rules for DSP code;
-; agu_check.py checks the listing).  One table in P (its base in n3): the ceiling's two sides (98 entries each), DRIV's
-; two (24 each), then the modes' limits and factors (MUFF OFF, SOFT, HARD, OFF).
+; agu_check.py checks the listing).  One table in P (its base in n3): the ceiling as one signed table (194 entries, B3),
+; DRIV's two sides (24 each), then the modes' limits and factors (MUFF OFF, SOFT, HARD, OFF).
 ; CYCLES_FORWARD_BRANCHES
 init:
         move    #>$ffffff,m5                    ; not guaranteed linear at init (DSP.md)
@@ -506,41 +506,32 @@ o3v_nfm:
         move    a1,y1
         mpy     x0,y1,a
         asl     #3,a,a
-; ---- the BA662's ceiling: two tables in P, 98 entries each, step 2^14 (the idiom of fet76's f76_tab) -----------
-        move    a,x1                            ; y, limited: its sign and its integer part
-        move    x1,a
-        abs     a
+; ---- the BA662's ceiling: ONE signed table in P, step 2^14 (B3, the audit's T35): T = -KNEG[96..1], then KPOS[0..96]
+;      and KPOS[96] again (194 words).  y within -LIM..LIM, u = y + LIM; the curve = T0 + f (T1 - T0), T0 = T[u >> 14],
+;      T1 the next, f = u's 14 low bits.  A negative y reads the reflected interval, which gives the same sum to the bit;
+;      the sign is in the table, no branch.  The clamp compares all 56 bits (a0 as the VCA left it): only a1 is read after.
         move    #$18,x0                         ; LIM = 96 x 2^14 (gen_module asserts it; the short form: bits 23..16)
         cmp     x0,a
-        tgt     x0,a                            ; |y| above the table's end: the end
+        tgt     x0,a                            ; y above the table's end: the end
+        move    #$e8,x0                         ; -LIM
+        cmp     x0,a
+        tlt     x0,a
+        move    n3,r5
+        sub     x0,a                            ; u = y + LIM
+        move    n3,r1                           ; the table's base, for DRIV (r1 is past lp2: free until the loop's end)
         move    a,y0
         asr     #14,a,a
-        move    x1,b
-        tst     b
-        bge     o3v_pos
-        move    #>98,x0
-        add     x0,a                            ; the negative side's table follows
-o3v_pos:
+        move    y0,b
         move    a1,n5
-        move    n3,r5
-        move    y0,a
-        and     #>$3fff,a
-        asl     #9,a,a
-        move    a,x0                            ; the fraction, 23 bits
-        move    r5,r1                           ; the table's base, for DRIV (r1 is past lp2: free until the loop's end)
+        and     #>$3fff,b
+        asl     #9,b,b
         move    (r5)+n5
-        move    p:(r5)+,y0                      ; (fet76's two reads)
-        move    p:(r5),b
+        move    b,x0                            ; the fraction, 23 bits
+        move    p:(r5)+,y0                      ; T0 (fet76's two reads)
+        move    p:(r5),y1                       ; T1
         move    y0,a
-        sub     a,b
-        move    b,y1
-        mpy     x0,y1,a
-        add     y0,a
-        move    x1,b
-        tst     b
-        bge     o3v_sgn
-        neg     a
-o3v_sgn:
+        mac     x0,y1,a
+        mac     -y0,x0,a                        ; T0 + f (T1 - T0), exactly
 ; ---- MUFF: low = y's one-pole at 150 Hz, h = y - low (24 bits each), limited to the mode's +-L, then h - h f^2 with
 ;      f = (h K) << 4 (SOFT: the cubic soft clip, L = sqrt 2 Sm, saturating at 314,572; HARD: L = 314,572, K = 0; OFF:
 ;      no limit, K = 0, y as it came); y = low + h
@@ -601,12 +592,12 @@ o3v_sgn:
         move    a,x1                            ; x, limited: its sign and its size
         move    x1,a
         abs     a
-        move    #>196,y1                        ; the + side's table
+        move    #>@DTP@,y1                      ; the + side's table
         move    x1,b
         tst     b
         bge     o3v_kside
         move    #>@DKN@,y0
-        move    #>220,y1
+        move    #>@DTN@,y1
 o3v_kside:
         sub     y0,a                            ; |x| - K
         move    #0,x0
