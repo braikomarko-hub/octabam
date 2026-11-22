@@ -26,8 +26,8 @@
 #include "dsp56kEmu/agu.h"
 using namespace dsp56k;
 class AllowAll : public IMemoryValidator { public: bool memValidateAccess(EMemArea, TWord, bool) const override { return true; } };
-static const TWord SENTINEL = 0x03f000, AUDIO = 0x5000, PARAMS = 0x5100, PARAMS2 = 0x5180, STATE = 0x4000;
-static const TWord STATE2 = 0x4200, AUDIO2 = 0x5200, YLO = 0x0bf0, YPLACE = 0x0c00, YPEND = 0x0cfa, YHI = 0x0d10;
+static const TWord SENTINEL = 0x03f000, AUDIO = 0x5000, PARAMS = 0x5100, PARAMS2 = 0x5180, STATE = 0x4009;   // (reviewer B3p2: not 16-aligned, so a modulo m catches short walks)
+static const TWord STATE2 = 0x4209, AUDIO2 = 0x5200, YLO = 0x0bf0, YPLACE = 0x0c00, YPEND = 0x0cfa, YHI = 0x0d10;
 // what a call must not lean on: the registers an insert may use arrive with anything in them (m1..m5 not linear, as at init)
 // An m register is written as DSP::set_m (private) writes it: the emulator's AGU reads the mask and the modulo set_m
 // derives, so a write to regs().m[q].var alone leaves the old ones in force -- before B3 phase 2, "m1..m5 not linear"
@@ -38,10 +38,11 @@ static void set_m(DSP& dsp, int q, TWord v) {
     if ((v & 0xffff) == 0 || (v & 0xffff) > 0x7fff) { fprintf(stderr, "o3host: m value %06x not supported\n", v); exit(2); }
     dsp.regs().mMask[q] = AGU::calcModuloMask(v); dsp.regs().mModulo[q] = v + 1;
 }
+static const TWord MNL = 0x000002;   // m1..m5 at entry: modulo 3 (reviewer B3p2: $f with a 16-aligned state block missed proc's m2)
 static void scramble(DSP& dsp) {
     static uint32_t z = 0x2545f491;
     auto nx = [&]() { z ^= z << 13; z ^= z >> 17; z ^= z << 5; return (TWord)(z & 0xffffff); };
-    for (int q = 1; q <= 5; ++q) { dsp.regs().r[q].var = nx(); dsp.regs().n[q].var = nx(); set_m(dsp, q, 0x00000f); }
+    for (int q = 1; q <= 5; ++q) { dsp.regs().r[q].var = nx(); dsp.regs().n[q].var = nx(); set_m(dsp, q, MNL); }
     dsp.regs().x.var = ((uint64_t)nx() << 24) | nx(); dsp.regs().y.var = ((uint64_t)nx() << 24) | nx();
     dsp.regs().a.var = ((uint64_t)nx() << 24) | nx(); dsp.regs().b.var = ((uint64_t)nx() << 24) | nx();
 }
@@ -58,7 +59,7 @@ static bool runToRts(DSP& dsp, TWord pc, uint64_t& n) {
 // it does not return or leaves one of those (or an m2..m5 neither as it was nor linear) changed
 static bool runInit(DSP& dsp, TWord init, TWord state, uint64_t& n) {
     scramble(dsp);
-    for (int q = 1; q <= 5; ++q) set_m(dsp, q, 0x00000f);
+    for (int q = 1; q <= 5; ++q) set_m(dsp, q, MNL);
     const TWord want[8] = { AUDIO, 0x123, PARAMS, state, 0x00abcd, 0x0000ff, 0x00ffff, 0x00ffff };   // r0 r1 r6 r7 n7 m0 m6 m7
     dsp.regs().r[0].var = want[0]; dsp.regs().r[1].var = want[1]; dsp.regs().r[6].var = want[2]; dsp.regs().r[7].var = want[3];
     dsp.regs().n[7].var = want[4]; set_m(dsp, 0, want[5]); set_m(dsp, 6, want[6]); set_m(dsp, 7, want[7]);
@@ -68,8 +69,8 @@ static bool runInit(DSP& dsp, TWord init, TWord state, uint64_t& n) {
     static const char* nm[8] = { "r0", "r1", "r6", "r7", "n7", "m0", "m6", "m7" };
     bool ok = true;
     for (int k = 0; k < 8; ++k) if ((got[k] & 0xffffff) != want[k]) { fprintf(stderr, "init changed %s\n", nm[k]); ok = false; }
-    for (int q = 2; q <= 5; ++q) { TWord v = (TWord)dsp.regs().m[q].var & 0xffffff; if (v != 0x00000f && v != 0xffffff) { fprintf(stderr, "init left m%d neither as found nor linear\n", q); ok = false; } }
-    for (int k = 0; k < 8; ++k) set_m(dsp, k, (k >= 1 && k <= 5) ? 0x00000f : 0xffffff);   // proc's entry as before B3
+    for (int q = 2; q <= 5; ++q) { TWord v = (TWord)dsp.regs().m[q].var & 0xffffff; if (v != MNL && v != 0xffffff) { fprintf(stderr, "init left m%d neither as found nor linear\n", q); ok = false; } }
+    for (int k = 0; k < 8; ++k) set_m(dsp, k, (k >= 1 && k <= 5) ? MNL : 0xffffff);   // proc's entry as before B3
     return ok;
 }
 static std::vector<uint8_t> slurp(const char* p) { std::vector<uint8_t> v; FILE* f = fopen(p, "rb"); if (!f) { perror(p); exit(2); }
@@ -94,7 +95,7 @@ int main(int argc, char** argv) {
     const char* e_noinit = getenv("O3_NOINIT"); const char* e_ydump = getenv("O3_YDUMP"); const char* e_ypoke = getenv("O3_YPOKE"); const char* e_init2 = getenv("O3_INIT2");
     const long init2 = e_init2 ? strtol(e_init2, 0, 10) : -1;
     if (!(e_noinit && e_noinit[0] == '1')) { if (!runInit(dsp, init, STATE, ninit)) return 1; }
-    else for (int k = 0; k < 8; ++k) set_m(dsp, k, (k >= 1 && k <= 5) ? 0x00000f : 0xffffff);
+    else for (int k = 0; k < 8; ++k) set_m(dsp, k, (k >= 1 && k <= 5) ? MNL : 0xffffff);
     int guards = 0;
     for (TWord a = YLO; a < YHI; ++a) if (!(a >= YPLACE && a < YPEND) && (mem.get(MemArea_Y, a) & 0xffffff) != (TWord)(0x9a0000 + a)) ++guards;
     if (e_ydump) { FILE* fy = fopen(e_ydump, "wb"); for (TWord a = YLO; a < YHI; ++a) { int32_t v = (int32_t)(mem.get(MemArea_Y, a) & 0xffffff); fwrite(&v, 4, 1, fy); } fclose(fy); }
