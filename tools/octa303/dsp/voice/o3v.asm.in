@@ -345,8 +345,8 @@ o3v_run:
         tfr     b,a
         and     #>$3ffff,a
         asl     #5,a,a
+        asr     #18,b,b                         ; e (b1) (fills the asl's wait)
         move    a,x0                            ; f (Q23)
-        asr     #18,b,b                         ; e (b1)
         move    x:(r4)+,y1                      ; c3
         move    x:(r4)+,a                       ; c2
         mac     x0,y1,a
@@ -358,20 +358,20 @@ o3v_run:
         mac     x0,y1,a                         ; 2^f / 2
         asl     b1,a,a
         asr     #7,a,a
+        move    x:(r4)+,x0                      ; G1 (fills the asr's wait)
         move    a,y1                            ; m / 16
-        move    x:(r4)+,x0                      ; G1
-        mpy     x0,y1,a x:(r4)+,x0              ; (G2)
+        mpy     x0,y1,a x:(r4)+,x0              ; G1 m (G2)
+        mpy     x0,y1,b x:(r4)+,x0              ; G2 m (G3): the g alternate a and b, no store waits on its asl
         asl     #4,a,a
+        asl     #4,b,b
         move    a,x:(r5)+                       ; g1
-        mpy     x0,y1,a x:(r4)+,x0              ; (G3)
+        mpy     x0,y1,a x:(r4)+,x0              ; G3 m (G4)
+        move    b,x:(r5)+                       ; g2
+        mpy     x0,y1,b                         ; G4 m
         asl     #4,a,a
-        move    a,x:(r5)+                       ; g2
-        mpy     x0,y1,a x:(r4)+,x0              ; (G4)
-        asl     #4,a,a
+        asl     #4,b,b
         move    a,x:(r5)+                       ; g3
-        mpy     x0,y1,a
-        asl     #4,a,a
-        move    a,x:(r5)+                       ; g4
+        move    b,x:(r5)+                       ; g4
         move    r3,r5
 o3v_nfm:
         lua     (r7+$39),r4                     ; r4 = kq
@@ -418,15 +418,15 @@ o3v_nfm:
         move    x:(r4)+,x0
         cmp     x0,a
         tlt     x0,a
+        move    x:(r4)+,y1                      ; K (fills the tlt's wait)
         move    a,x0                            ; SWP: u - u f^2, f = u K (K = 0 without SWP)
-        move    x:(r4)+,y1
         mpy     x0,y1,b
+        move    x:(r1),x1                       ; s1, for the first pole (fills the mpy's wait)
         move    b,y0
         mpy     y0,y0,b
         move    b,y1
         mac     -x0,y1,a
 ; ---- four poles: v = (in - s) g, y = s + v, s = y + v --------------------------------------------------------
-        move    x:(r1),x1
         sub     x1,a
         move    x:(r5)+,y1
         move    a,x0
@@ -467,8 +467,8 @@ o3v_nfm:
         mpy     y0,y0,b x:(r4),x0               ; SWP: the peak of y4^2 / 2^23
         cmp     x0,b
         tlt     x0,b
+        move    x:(r1),x1                       ; (fills the tlt's wait)
         move    b,x:(r4)+
-        move    x:(r1),x1
         sub     x1,a
         move    #>@GH@,y1                       ; gh, a constant of the laws
         move    a,x0
@@ -476,12 +476,12 @@ o3v_nfm:
         tfr     a,b
         add     x1,a
         add     a,b
-        move    b,x:(r1)+
         neg     a
+        move    b,x:(r1)+                       ; (fills the add's wait)
         add     y0,a                            ; hp = y4 - lo
 ; ---- the VCA input's high-pass ------------------------------------------------------------------------------
+        move    x:(r1),x1                       ; (fills the add's wait)
         move    a,y0
-        move    x:(r1),x1
         sub     x1,a
         move    x:(r5)+,y1
         move    a,x0
@@ -492,9 +492,9 @@ o3v_nfm:
         move    b,x:(r1)+
         move    y0,b
         sub     a,b                             ; v
-        move    b,x0
 ; ---- the VCA: gain += step (48 bits), y = v gain << 3 ----------------------------------------------------------
-        move    x:(r2)+,a
+        move    x:(r2)+,a                       ; (fills the sub's wait)
+        move    b,x0
         move    x:(r2)+,a0
         move    x:(r2)+,b
         move    x:(r2)-,b0
@@ -561,8 +561,8 @@ o3v_sgn:
         move    x:(r4)+,x0
         cmp     x0,a
         tlt     x0,a
+        move    x:(r4)+,y1                      ; K (fills the tlt's wait)
         move    a,x0
-        move    x:(r4)+,y1
         mpy     x0,y1,b
         asl     #4,b,b
         move    b,y0                            ; f (y is in x1 + h now; y1 y1 is not a multiplier pair)
@@ -579,12 +579,12 @@ o3v_sgn:
         tfr     a,b
         add     x1,a
         add     a,b
-        neg     a b,x:(r4)+                     ; shp
-        add     y0,a
+        neg     a
+        add     y0,a b,x:(r4)+                  ; the high-pass; shp
+        move    x:(r4),b                        ; W: its top bit (in b: the add's wait is filled; the asl's N and V are a's)
         move    a,x0                            ; the high-pass
-        move    x:(r4),a                        ; W: its top bit
-        asl     #1,a,a
-        move    a1,x:(r4)+
+        asl     #1,b,b
+        move    b1,x:(r4)+
         move    x:(r4),a
         tlt     x0,a                            ; on a 4th sample, Yh = the high-pass
         move    a,x:(r4)+
@@ -597,10 +597,10 @@ o3v_sgn:
         move    b,y1
         mpy     y1,y0,a
         asl     #3,a,a                          ; x = y G
+        move    #>@DKP@,y0                      ; (fills the asl's wait)
         move    a,x1                            ; x, limited: its sign and its size
         move    x1,a
         abs     a
-        move    #>@DKP@,y0
         move    #>196,y1                        ; the + side's table
         move    x1,b
         tst     b
@@ -618,23 +618,23 @@ o3v_kside:
         move    a,y0
         asr     #13,a,a
         add     y1,a
+        move    y0,b                            ; (b, for the fraction: fills the add's wait)
         move    a1,n1
-        move    y0,a
-        and     #>$1fff,a
-        asl     #10,a,a
-        move    a,x0                            ; the fraction, 23 bits
+        and     #>$1fff,b
+        asl     #10,b,b
         move    (r1)+n1
+        move    b,x0                            ; the fraction, 23 bits
         move    p:(r1)+,y0                      ; T0
         move    p:(r1),y1                       ; T1
         move    y0,a
         mac     x0,y1,a
         mac     -y0,x0,a                        ; the curve T0 + f (T1 - T0), exactly: never above |x| past the knee, K under it
+        move    x1,b                            ; (fills the mac's wait)
         move    a,x0
         move    x1,a
         abs     a
         cmp     x0,a
         tgt     x0,a                            ; the smaller of |x| and the curve (no branch: the cycle count's rule)
-        move    x1,b
         tst     b
         bge     o3v_koff
         neg     a
