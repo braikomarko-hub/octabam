@@ -1,6 +1,7 @@
 """OCTA303 vFable B3 phase 2 (22 Nov 2026, written by Claude): d42ce4b9's whole insert against this tree's, directly.
 
     python3 tools/octa303/dsp/voice/prova3d.py [mutated_o3v.asm.in]     (build.sh first; O3_WORK as prova3's)
+    O3_REF=03e42417 python3 tools/octa303/dsp/voice/prova3d.py          (the same against another commit, e.g. phase 2a's)
 
 The independent reviewer's recommendation R1 (revisione_B3_fase2a.md), kept as a fixed part of the bench.  The old side is
 d42ce4b9 as it was: its o3v.asm.in, its gen_module.subst and its manifest's ptable, all taken with `git archive d42ce4b9`
@@ -15,8 +16,8 @@ the audio block; and the control (this tree's table with one word changed) must 
 import os, sys, subprocess, tarfile, io, importlib.util, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 import prova3 as P3
-REF = 'd42ce4b9'
-W = os.path.join(P3.WORK, 'd42'); os.makedirs(W, exist_ok=True)
+REF = os.environ.get('O3_REF', 'd42ce4b9')              # O3_REF=03e42417: the same comparison against phase 2a's insert
+W = os.path.join(P3.WORK, 'cmp_' + REF); os.makedirs(W, exist_ok=True)
 def old_tree():
     """d42ce4b9's tools/octa303 and modules/{octa303,devilish}, from git, into W/tree (fresh every run)"""
     t = os.path.join(W, 'tree')
@@ -33,8 +34,8 @@ def old_manifest_table(t, go):
     m = open(os.path.join(t, 'modules', 'devilish', 'manifest.py')).read()
     i, j = m.index(go.B0), m.index(go.B1)
     ns = {}; exec(m[i:j], ns)
-    names = [k for k in ns if k.startswith('O3V_')]
-    return [v for k in ('O3V_KPOS', 'O3V_KNEG', 'O3V_DRVP', 'O3V_DRVN', 'O3V_MODES') if k in ns for v in ns[k]], names
+    names = [k for k in ns if k.startswith('O3V_') and isinstance(ns[k], tuple)]   # the table's blocks, in their order
+    return [v for k in names for v in ns[k]], names
 def asm(tag, text):
     open(W + '/%s.asm' % tag, 'w').write(text)
     r = subprocess.run([P3.DA, '-in', W + '/%s.asm' % tag, '-org', '%x' % P3.ORG, '-out', W + '/%s.bin' % tag, '-list'], capture_output=True, text=True)
