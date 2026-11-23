@@ -20,14 +20,15 @@
 ;      (tools/octa303/dsp/ref/o3k.c, o3d_*).
 ;      A frame is taken only if the mark, the sum and the six low-byte payloads 2..12 (nothing above bit 7) all agree:
 ;      a halfword 11 that is not the one the engine summed is refused like a wrong sum (B2b).  The mark is compared with
-;      x:(r7+$1f), which init's copy sets to $7fff only if the 250 words it copied sum (mod 2^24) to the table's: a wrong
+;      x:(r7+$1f), which init's copy sets to $7fff only if the 250 words it copied XOR to the table's (eor works on a1
+;      alone: no carry into a2, nothing for the saturation mode SM to clamp, whatever SR holds -- review of 2c): a wrong
 ;      copy, or a state block no init has written ($1f = 0, or dirty), refuses every frame, so the voice is silent until an
 ;      init copies a right table (B3 phase 2c; a track without the signature is still passed untouched: it reads no table).
 ; Out: L = R = the voice.  A refused frame is silenced (the payloads must never reach the output) and the gain
 ;      restarts from 0, so the voice ramps in when the frames are good again.
 ; State at x:(r7): 0..5 s1 s2 s3 s4 lp lp2; 7,8 the gain (48 bits); 9,$a its step; $b..$e the loop's g1..g4 (FM's
 ; G m; the frame writes G there, which FM 0 keeps), $f gv, $10 gt; $14 the frame's verdict (1 taken, 0 refused, 2 no signature: passed untouched);
-; $1f the mark as init's copy left it ($7fff + the error of the table's sum, mod 2^24; B3 phase 2c);
+; $1f the mark as init's copy left it ($7fff XOR the copy's error; B3 phase 2c);
 ; $20..$2f the decoded payloads; from $30 the block r4 walks in the loop, in the order of use: FM's depth F,
 ; pqmax / 2, the cubic's c3 c2 c1, G1..G4, kq, dq, the ladder input's limit, its negative, its cubic's factor, the
 ; peak of y4^2 (SWP), Gm, sm, MUFF's limit, its negative, its factor, Gf5, shp (the 5 Hz high-pass), W (a bit every
@@ -60,11 +61,11 @@ o3v_izero:
         move    #>$ffffff,m2                    ; the copy's source pointer, linear
         move    #>@PT@,r2                       ; the table, where the build put it
         move    #>@YT@,r5                       ; its place in Y (r5 is free: the six stores above are done)
-        move    #>@CK0@,a                       ; $7fff minus the table's sum, mod 2^24 (the generator's)
-        do      #@NT@,o3v_icp                   ; once, at init: 250 words, summed while copied
+        move    #>@CK0@,a                       ; $7fff XOR the table's words (the generator's)
+        do      #@NT@,o3v_icp                   ; once, at init: 250 words, XOR-ed while copied
         move    p:(r2)+,x0
         move    x0,y:(r5)+
-        add     x0,a                            ; (at LA: an ALU operation, no memory access)
+        eor     x0,a                            ; (at LA: a logical operation on a1 only, no memory access)
 o3v_icp:
         move    a1,x:(r7+$1f)                   ; the frame's mark is compared with this: $7fff only after a right copy
         rts

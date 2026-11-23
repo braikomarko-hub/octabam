@@ -12,7 +12,7 @@ modules/octa303/octa303.s): since B3 (22 Nov 2026) as ONE signed table, -KNEG[96
 repeated (the insert reads T[i] and T[i + 1]), written as 24-bit words (negative entries masked, as the repo's other
 tables are).  Since B3 phase 2 (22 Nov 2026) the insert's init copies the table once to Y:$0c00..$0cf9 (YT, NT words; the
 manifest claims that range from the generated block) and proc reads it there: the base literal is the copy's source only.
-Since phase 2c init also sums the words it copies, from this script's start value (ck0()): a wrong copy silences the voice."""
+Since phase 2c init also XORs the words it copies into this script's start value (ck0()): a wrong copy silences the voice."""
 import os, re, sys, math
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 GH = 91614                      # q31(tpt(fh)) >> 8 of leggi_A_v5.json (prova4.py checks it against the reference's)
@@ -118,12 +118,14 @@ def subst(s, pt='$fab1e0', ab='0', gh=GH, old=False):
     assert YT + len(ptable()) <= YEND, 'the table outgrew its place in Y'
     return s
 def ck0():
-    """B3 phase 2c: the start of init's sum.  init adds the 250 words it copies (24-bit, signed) to this, in the 56-bit
-    accumulator, and stores its bits 47..24 (a1) where proc reads the frame's mark: a1 = $7fff + (the copied words' sum -
-    the table's sum), mod 2^24.  So $7fff (frames taken) if the sum is right; any one wrong word moves it (its error is
-    below 2^24 in size), and then no frame of the engine (mark $7fff) is taken."""
-    s = sum(v - (1 << 24) if v & 0x800000 else v for v in ptable())
-    return (0x7fff - s) & 0xffffff
+    """B3 phase 2c: the start of init's check.  init XORs the 250 words it copies into this (eor x0,a: a1 only, so neither
+    a carry into a2 nor the saturation mode SM can change it; the review of 2c: a plain add reached 8 x full scale and
+    would be clamped if SR.SM were set on the unit, which the emulator does not model) and stores a1 where proc reads the
+    frame's mark: a1 = $7fff XOR (the copied words' XOR XOR the table's).  So $7fff (frames taken) if the copy is right;
+    any one wrong word moves it, and then no frame of the engine (mark $7fff) is taken."""
+    x = 0x7fff
+    for v in ptable(): x ^= v & 0xffffff
+    return x
 def ptable():
     """every word of the insert's one table, in order (the manifest's ptable)"""
     t = ceil() + drv()[2] + drv()[3] + mode_consts()
