@@ -2629,13 +2629,16 @@ O3_DRV_TH:
         .set    E_DSPON, E_BASE+720     | O3_DSP: 1 = the loops in force are the DSP's
         .set    E_TRW,   E_BASE+724     | O3_DSP: TRANSPORT as the last call with the insert saw it (o3_dquiet)
         .set    E_DSPZ,  E_BASE+728     | O3_DSP: frames still to be sent as zeros
-        .set    E_PAYOK, E_BASE+732     | O3_DSP: 1 = a control step has made the payloads since the DSP's loops came
+        .set    E_PAYOK, E_BASE+732     | O3_DSP: not 0 = a control step has made the payloads since the DSP's loops came
         .set    E_ZP,    E_BASE+736     | O3_DSP: where this call's samples went
         .set    E_UXV,   E_BASE+740     | O3_DSP: the track's own AMP XVOL halfword, as the frame builder wrote it
         .set    E_XZ,    E_BASE+748     | O3_DSP: frames still to go out as zeros after the insert has gone (o3_xquiet)
         .set    E_STG,   E_BASE+744     | O3_DSP: frames a note started with the sequencer stopped still sounds (o3_gate)
         .set    E_HW11,  E_BASE+752     | O3_DSP: the record's halfword 11 of the last control step (o3e_pay)
         .set    E_HWK,   E_BASE+756     | O3_DSP: its part from the knobs (o3e_kC)
+        .set    E_HP8,   E_BASE+760     | O3_DSP (ACIDF11): halfword 11's fields above the low bytes of payloads 8, 10, 12
+        .set    E_HP10,  E_BASE+764     |   (o3e_kC; with FM, o3e_pay writes 8 and 10 every frame)
+        .set    E_HP12,  E_BASE+636
         .endif
         .set    E_KN,    97             | the knee tables' entries (step 2^14 in y)
         .set    E_KLAST, 4*(E_KN-1)     | the last entry's offset
@@ -3092,6 +3095,21 @@ O3_DRV_TH:
         move.w  #0x8000,%d0
         move.l  %d0,(%a0)+
         .endm
+        .macro  E_PAY1H src, hp         | ACIDF11: E_PAY1, with hp (a field of halfword 11) above the low byte, in the sum too
+        move.l  \src(%a3),%d0
+        move.l  %d0,%d1
+        move.w  #0x8000,%d1
+        move.l  %d1,(%a0)+
+        swap    %d1
+        add.l   %d1,%d3
+        lsr.l   #8,%d0
+        and.l   #0xff,%d0
+        add.l   \hp(%a3),%d0
+        add.l   %d0,%d3
+        swap    %d0
+        move.w  #0x8000,%d0
+        move.l  %d0,(%a0)+
+        .endm
         .macro  E_LOOPX wv, dv, ls, lp  | the stage-B loop: every feature, each while its knob is not neutral
 \ls:
         subq.l  #1,E_CNT(%a3)
@@ -3530,49 +3548,38 @@ o3e_sil:                                | silence: d7 zero samples, the state un
 |      and 12 (so in the sum), the record's copy is no longer read by the insert (E_HWK, its part from the knobs, is
 |      o3e_kC's).  Clobbers d0, d1, d3, a0.
 o3e_pay:
-        moveq   #1,%d0
-        move.l  %d0,E_PAYOK(%a3)
+        move.l  E_HWK(%a3),%d0          | halfword 11 (the record's, o3_dwrite): the knobs' part, and with FM pqmax >> 10
+        tst.l   E_FMON(%a3)             | above it.  ACIDF11: its fields also ride in payloads 8, 10, 12 (E_HP8 E_HP10
+        beq     .Lpy_f                  | E_HP12, o3e_kC's; with FM the ceiling's two here), so that they travel with
+        move.l  E_PQMAX(%a3),%d1        | the audio: on the unit the insert is given the record and the audio of
+        lsr.l   #7,%d1                  | different frames (Marko's recordings, 24 Nov 2026)
+        and.l   #0x7ff8,%d1
+        or.l    %d1,%d0
+        move.l  %d1,%d3
+        and.l   #0x7f00,%d3
+        move.l  %d3,E_HP8(%a3)          | payload 8's bits 8..14: the ceiling field's bits 5..11
+        and.l   #0xf8,%d1
+        lsl.l   #5,%d1
+        move.l  %d1,E_HP10(%a3)         | payload 10's bits 8..12: its bits 0..4
+.Lpy_f:
+        move.l  %d0,E_HW11(%a3)
         lea     E_PAY(%a3),%a0
         move.l  #0x7fff8000,%d0
+        move.l  %d0,E_PAYOK(%a3)        | (not 0: a control step has made the payloads; only tested for 0, o3_dquiet)
         move.l  %d0,(%a0)+
         moveq   #0,%d3
         E_PAY1  E_G1
         E_PAY1  E_G2
         E_PAY1  E_G3
-        E_PAY1  E_G4
-        E_PAY1  E_KQ
-        E_PAY1  E_DQ
+        E_PAY1H E_G4, E_HP8
+        E_PAY1H E_KQ, E_HP10
+        E_PAY1H E_DQ, E_HP12
         E_PAY1  E_GQ
         move.l  E_FMON(%a3),%d0         | B2: FM's depth (0..127) above gt's low byte, payload 14's bits 8..14
         lsl.l   #8,%d0
         add.l   %d0,%d3
         swap    %d0
         add.l   %d0,-4(%a0)
-        move.l  E_HWK(%a3),%d0          | halfword 11: the knobs' part, and with FM pqmax >> 10 above it
-        tst.l   E_FMON(%a3)
-        beq     .Lpy_f
-        move.l  E_PQMAX(%a3),%d1
-        lsr.l   #7,%d1
-        and.l   #0x7ff8,%d1
-        or.l    %d1,%d0
-.Lpy_f:
-        move.l  %d0,E_HW11(%a3)
-        move.l  %d0,%d1                 | ACIDF11: halfword 11 rides in the payloads, above the low bytes: 8 gets its bits
-        and.l   #0x7f00,%d1             | 8..14 (FM's ceiling field's 5..11), 10 its bits 3..7 (the field's 0..4) << 5, 12
-        add.l   %d1,%d3                 | its bits 0..2 (SWP, MUFF) << 8.  The insert is given the record and the audio of
-        swap    %d1                     | different frames on the unit (Marko's recordings, 24 Nov 2026)
-        add.l   %d1,-28(%a0)
-        move.l  %d0,%d1
-        and.l   #0xf8,%d1
-        lsl.l   #5,%d1
-        add.l   %d1,%d3
-        swap    %d1
-        add.l   %d1,-20(%a0)
-        and.l   #7,%d0
-        lsl.l   #8,%d0
-        add.l   %d0,%d3
-        swap    %d0
-        add.l   %d0,-12(%a0)
         and.l   #0x7fff,%d3
         swap    %d3
         move.w  #0x8000,%d3
@@ -4486,6 +4493,16 @@ o3e_ova:                                | {raw, a at raw (Q24), the step down pe
         or.l    #4095<<3,%d0
 .LkC7:
         move.l  %d0,E_HWK(%a3)
+        move.l  %d0,%d1                 | ACIDF11: its fields above the low bytes of payloads 8 (bits 8..14), 10 (bits
+        and.l   #0x7f00,%d1             | 3..7 << 5) and 12 (bits 0..2 << 8): o3e_pay (with FM it writes 8 and 10 itself)
+        move.l  %d1,E_HP8(%a3)
+        move.l  %d0,%d1
+        and.l   #0xf8,%d1
+        lsl.l   #5,%d1
+        move.l  %d1,E_HP10(%a3)
+        and.l   #7,%d0
+        lsl.l   #8,%d0
+        move.l  %d0,E_HP12(%a3)
         .endif
         moveq   #2,%d0
         and.l   E_WAVE(%a3),%d0         | +D: the note's WAVE bit 1

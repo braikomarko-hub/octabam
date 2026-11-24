@@ -11,10 +11,11 @@ counts the frames of exact zeros inside the sound, and where halfword 11 changes
   prova8.py d      f.6: refused frames inside a held note (this tree's and d0f49088's)
   prova8.py e      f.1: aligned, this tree's engine and insert against d0f49088's (from git)
   prova8.py m      mutants of the new code
+  prova8.py f      f.10: the ColdFire's cost and the FX2 / no-DSP paths against d0f49088
 Run tools/octa303/dsp/build.sh first."""
 import os, sys, subprocess, collections, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-PARTS = sys.argv[1:] or ['a', 'b', 'c', 'd', 'e', 'm']; sys.argv[1:] = []
+PARTS = sys.argv[1:] or ['a', 'b', 'c', 'd', 'e', 'm', 'f']; sys.argv[1:] = []
 import prova6 as P6
 P5 = P6.P5; P4 = P5.P4; P3 = P4.P3; T7 = P4.T7; DFN = T7.DFN
 SR = 44100; STEP = 4464                                  # 148 BPM, a sixteenth: 4469.6 samples, on a frame boundary here
@@ -266,6 +267,21 @@ def part_m():
         print('   %-34s words differing from the right insert %d %s' % (nm, d, 'seen' if d else 'NOT SEEN'))
     print('   -> mutants %s' % ('PASS' if FAIL == 0 else 'FAIL'))
     return FAIL
+
+def part_f():
+    """f.10: the ColdFire against d0f49088 -- instructions a frame (engine and shell, within + 20) and, the build
+    without O3_DSP and the FX2 path (the engine's own loops) with it: L and R the same"""
+    print('F. (f.10) the ColdFire against d0f49088')
+    FAIL = P6.t10(OLD, 20, True)
+    use = [P6.pattern(nm, df, res=res, wave=w) for nm, df, res, drv, w in P6.cases() if not drv][::3]
+    dx = nx = 0
+    for dsp in (0, 1):
+        new = P4.SRC_D if dsp else P6.harness.source(local={'O3_DSP': 0}); old = P6.old_source(OLD, dsp)
+        for s_ in use:
+            a = T7.run_engine(s_, P6.EngOld(new)); b = T7.run_engine(s_, P6.EngOld(old))
+            dx += (a[0] != b[0]) + (a[1] != b[1]); nx += len(a[0])
+    print('   without O3_DSP and on the FX2 path, %d samples: runs whose L or R differ %d -> %s' % (nx, dx, 'PASS' if dx == 0 else 'FAIL'))
+    return FAIL + dx
 
 if __name__ == '__main__':
     FAIL = 0
