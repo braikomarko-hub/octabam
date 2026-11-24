@@ -24,7 +24,8 @@
 //   O3_XDUMP=file        the state block (first instance, $84 words) after the last frame, int32
 // ACIDF11 (24 Nov 2026), the record and the audio of different frames, as on Marko's unit (his recordings of 24 Nov):
 //   O3_HWLAG=L | E       the record's halfword 11 (x:(r6+5)) is the PREVIOUS frame's (L: the record one frame late on the
-//                        payloads) or the NEXT frame's (E: one frame early); the first / last frame keeps its own
+//                        payloads) or the NEXT frame's (E: one frame early); the first / last frame keeps its own;
+//                        A: the previous frame's on odd frames only (late every other frame); 2: two frames late
 //   O3_RECLAG=L | E      the same for the whole record, words 0..17 (gv, signature, level, DRIV, halfword 11 ...; 18, 19
 //                        are this bench's own controls, kept)
 #include <cstdio>
@@ -140,10 +141,12 @@ int main(int argc, char** argv) {
     auto in = slurp(argv[7]); FILE* fo = fopen(argv[8], "wb");
     const size_t FR = 52 * 4; uint64_t mx = 0; size_t over = 0;
     const char* e_hwl = getenv("O3_HWLAG"); const char* e_rcl = getenv("O3_RECLAG");
-    const int lagd = (e_hwl && e_hwl[0] == 'L') || (e_rcl && e_rcl[0] == 'L') ? -1 : (e_hwl && e_hwl[0] == 'E') || (e_rcl && e_rcl[0] == 'E') ? 1 : 0;
+    const char lagc = e_hwl && e_hwl[0] ? e_hwl[0] : e_rcl && e_rcl[0] ? e_rcl[0] : 0;
+    const int lagd0 = lagc == 'L' || lagc == 'A' ? -1 : lagc == 'E' ? 1 : lagc == '2' ? -2 : 0;
     const int lagw0 = e_rcl && e_rcl[0] ? 32 : 37, lagw1 = e_rcl && e_rcl[0] ? 50 : 38;   // the words taken from the other frame
     for (size_t o = 0; o + FR <= in.size(); o += FR) {
         int32_t w[52]; memcpy(w, &in[o], FR);
+        const int lagd = lagc == 'A' && !((o / FR) & 1) ? 0 : lagd0;
         if (lagd) {
             const long oo = (long)o + lagd * (long)FR;
             if (oo >= 0 && oo + (long)FR <= (long)in.size()) { int32_t v[52]; memcpy(v, &in[oo], FR); for (int q = lagw0; q < lagw1; ++q) w[q] = v[q]; }

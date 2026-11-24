@@ -3557,19 +3557,19 @@ o3e_pay:
         or.l    %d1,%d0
 .Lpy_f:
         move.l  %d0,E_HW11(%a3)
-        move.l  %d0,%d1                 | ACIDF11: halfword 11 rides in the payloads, above the low bytes of 8 (its bits
-        and.l   #0x7f00,%d1             | 8..14), 10 (bits 0..6, << 8) and 12 (bit 7, << 1): the insert is given the
-        add.l   %d1,%d3                 | record and the audio of different frames on the unit (Marko's recordings, 24 Nov)
-        swap    %d1
+        move.l  %d0,%d1                 | ACIDF11: halfword 11 rides in the payloads, above the low bytes: 8 gets its bits
+        and.l   #0x7f00,%d1             | 8..14 (FM's ceiling field's 5..11), 10 its bits 3..7 (the field's 0..4) << 5, 12
+        add.l   %d1,%d3                 | its bits 0..2 (SWP, MUFF) << 8.  The insert is given the record and the audio of
+        swap    %d1                     | different frames on the unit (Marko's recordings, 24 Nov 2026)
         add.l   %d1,-28(%a0)
-        moveq   #127,%d1
-        and.l   %d0,%d1
-        lsl.l   #8,%d1
+        move.l  %d0,%d1
+        and.l   #0xf8,%d1
+        lsl.l   #5,%d1
         add.l   %d1,%d3
         swap    %d1
         add.l   %d1,-20(%a0)
-        and.l   #0x80,%d0
-        add.l   %d0,%d0
+        and.l   #7,%d0
+        lsl.l   #8,%d0
         add.l   %d0,%d3
         swap    %d0
         add.l   %d0,-12(%a0)

@@ -36,8 +36,12 @@ def build(gh):
     for l in open(WORK+'/o3v.sym') if os.path.exists(WORK+'/o3v.sym') else []: k,v=l.split(); lab[k]=int(v,16)
     return r.stdout, lab
 def hw_pieces(hw):
-    """ACIDF11: halfword 11 inside payloads 8, 10, 12 (above their low bytes): -> what each gets"""
-    return {8: hw&0x7f00, 10: (hw&0x7f)<<8, 12: (hw&0x80)<<1}
+    """ACIDF11: halfword 11 inside payloads 8, 10, 12 (above their low bytes): 8 its bits 8..14 (FM's ceiling field's
+    5..11), 10 its bits 3..7 (the field's 0..4) << 5, 12 its bits 0..2 (SWP, MUFF) << 8 -> what each gets"""
+    return {8: hw&0x7f00, 10: (hw&0xf8)<<5, 12: (hw&7)<<8}
+def hw_of(p):
+    """the inverse: halfword 11 from the decoded payloads p (16 numbers)"""
+    return (p[8]&0x7f00)|((p[10]>>5)&0xf8)|((p[12]>>8)&7)
 def frames(C,X,mark=0x7fff):
     """C: frames of 13 numbers (wide()); halfword 11 into the record (which the insert no longer reads) and, since
     ACIDF11, into payloads 8, 10, 12 (so into the sum); FM's depth into payload 14's bits 8..14"""
@@ -57,12 +61,14 @@ def decode(y):                    # the insert's decode of one R sample (prova4.
 def to_b2b(F):
     """frames of this tree (ACIDF11: halfword 11 in payloads 8, 10, 12) as the inserts from B2b to ACIDF10 (d0f49088)
     take them: those payloads' low bytes alone, and halfword 11 (the record's, x:(r6+5)) in the sum instead.  A frame
-    whose payloads do not hold the record's halfword 11 is made so that the old insert refuses it too (its sum + 1)."""
+    whose payloads do not hold the record's halfword 11 is made so that the old insert refuses it too (its sum + 1).
+    A frame without the engine's signature is left as it is (both inserts pass it as it came)."""
     F=F.copy()
     for f in range(len(F)):
+        if (int(F[f,33])&0xffffff,int(F[f,34])&0xffffff)!=(0x3a5c00,0x651700): continue   # not signed: passed as it came
         p=[decode(v) for v in F[f,1:32:2]]; hw=(int(F[f,37])>>8)&0x7fff
-        q=list(p); h=(p[10]>>8)&0x7f|((p[12]>>1)&0x80)|(p[8]&0x7f00)
-        for k in (8,10,12): q[k]=p[k]&0xff|(p[k]&0x7e00 if k==12 else 0)
+        q=list(p); h=hw_of(p)
+        for k,keep in ((8,0),(10,0x6000),(12,0x7800)): q[k]=p[k]&0xff|(p[k]&keep)   # (bits no field uses: as they came)
         s=(p[15]-sum(p[1:15])+sum(q[1:15])+hw)&0x7fff
         if h!=hw and (sum(p[1:15])&0x7fff)==p[15]: s=(s+1)&0x7fff
         q[15]=s

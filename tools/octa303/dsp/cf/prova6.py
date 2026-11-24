@@ -443,7 +443,7 @@ def t12():
     FAIL = same = 0; first = None; nrec = npay = 0
     def put(G, f, v):                                            # payloads 8, 10, 12 carrying v (the sum as it was)
         p = [P4.decode(G[f, 1 + 2 * k]) for k in range(16)]
-        for k, x in P3.hw_pieces(v & 0x7fff).items(): G[f, 1 + 2 * k] = P3.send(p[k] & 0xff | x)
+        for k, x in P3.hw_pieces(v & 0x7fff).items(): G[f, 1 + 2 * k] = P3.send(p[k] & 0xff | x)   # (8, 10, 12: no other bits)
     for v in vals:
         for mask in (np.arange(nf) > 0, sub):                    # every frame after the first good one; a third of them
             m = mask & (hw != v); same += int((mask & (hw == v)).sum())

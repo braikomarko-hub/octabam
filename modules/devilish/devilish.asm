@@ -9,17 +9,17 @@
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
 ;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  Halfword 11 (below) rides in payloads 8, 10, 12 above their
-;      low bytes (bits 8..14 of 8: its bits 8..14; of 10: its bits 0..6; bit 8 of 12: its bit 7; ACIDF11, 24 Nov 2026):
-;      on Marko's unit the voice record and the audio block the insert is given are of different frames, so whatever
-;      must agree with the payloads travels in them.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
+;      low bytes (ACIDF11, 24 Nov 2026): 8's bits 8..14 = FM's ceiling field's bits 5..11, 10's bits 8..12 = its bits
+;      0..4, 12's bit 8 = SWP, bits 9..10 = MUFF.  On Marko's unit the voice record and the audio block the insert is
+;      given are of different frames, so whatever must agree with the payloads travels in them.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
 ;      x:(r6+3) = the level's halfword (<< 8; the engine's VOL x XVOL's law): the output is the voice x 4 x
 ;      (it / $7f00)^2, reached a sixteenth of the way a sample (no steps a frame).
 ;      x:(r6+4) = DRIV's gain G (Q12) as a halfword (<< 8): $100000 = DRIV 0, nothing; else x = y G and, above the
 ;      knee, the output mixer's soft ceiling from a table (24 points a side, behind the BA662's two; ref/o3k.c).
 ;      x:(r6+1), x:(r6+2) = $3a5c00, $651700: the engine's signature in the voice record.  Without it the track is not
 ;      an OCTA-303: the audio is left exactly as it came (Marko, 17 Nov 2026).
-;      Halfword 11 (B2, 19 Nov 2026; in the payloads since ACIDF11, x:(r6+5) is not read): bits 14..3 FM's ceiling
-;      pqmax >> 10, bits 2..1 MUFF (0 OFF, 1 SOFT, 2 HARD), bit 0 SWP above ACID.  FM's depth (0..127) rides in payload 14's bits 8..14, above gt's low
+;      Halfword 11 (B2, 19 Nov 2026; in the payloads since ACIDF11, x:(r6+5) is not read): FM's ceiling pqmax >> 10
+;      (12 bits), MUFF (0 OFF, 1 SOFT, 2 HARD), SWP above ACID.  FM's depth (0..127) rides in payload 14's bits 8..14, above gt's low
 ;      byte.  MUFF: after the ceiling, y = low + h, low the 150 Hz one-pole of y, h the rest limited by the mode.  FM:
 ;      the four g = G m, m from the output's 5 Hz high-pass held every 4th sample.  SWP: the ladder input's cubic soft
 ;      clip, and the governor of the self-oscillation, here (it needs y4): the engine sends kq and dq without it
@@ -153,7 +153,7 @@ o3v_low:
         move    x:(r2)+,a
         asl     #8,a,a
         move    x:(r2)+,b
-        and     #>$ff,b                         ; the low byte (8 10 12 carry halfword 11 above it)
+        and     #>$ff,b                         ; the low byte (8 10 12 carry halfword 11's fields above it)
         add     b,a
         move    a1,x:(r5)+                      ; G1 G2 G3 G4 kq dq
         move    a1,x:(r1)+                      ; (kq and dq land on gv and gt, written below)
@@ -205,20 +205,15 @@ o3v_asm:
         mpy     x0,y1,a                         ; x ($8000 / $7f00)^2 / 2: with the loop's << 3, the voice x 4
         move    x:(r1)+,y0                      ; DRIV's word
         move    a,x1                            ; where the level goes
-        move    x:(r7+$2a),b                    ; halfword 11 << 8 from the payloads: 10's bits 8..14 are its bits 0..6,
+        move    x:(r7+$28),a                    ; FM's ceiling: (pqmax >> 10) << 9, the steps Q15: payload 8's bits 8..14 are
+        and     #>$7f00,a                       ; the field's bits 5..11,
+        asl     #5,a,a
+        move    x:(r7+$2a),b                    ; payload 10's bits 8..12 its bits 0..4
         and     #>$7f00,b
-        move    x:(r7+$2c),a                    ; 12's bit 8 its bit 7,
-        and     #>$100,a
-        asl     #7,a,a
-        add     a,b
-        move    x:(r7+$28),a                    ; 8's bits 8..14 its bits 8..14
-        and     #>$7f00,a
-        asl     #8,a,a
-        add     a,b
-        tfr     b,a
-        and     #>$7ff800,a
-        asr     #2,a,a                          ; FM's ceiling: (pqmax >> 10) << 9, the steps Q15
+        add     b,a
+        asl     #1,a,a
         move    a1,x:(r2)
+        move    x:(r7+$2c),b                    ; payload 12: bit 8 SWP above ACID, bits 9..10 MUFF
         tfr     b,a
         asr     #8,a,a
         and     #6,a                            ; MUFF's mode x 2: its pair in the table
@@ -240,7 +235,7 @@ o3v_asm:
 ;      1 / (1 + kgov kh gam): one division, 24 steps
         lua     (r7+$3e),r5                     ; r5 = the peak
         clr     a
-        and     #>$100,b                        ; SWP's bit
+        and     #>$100,b                        ; SWP's bit (payload 12's bit 8)
         move    x:(r5),y1
         move    a,x:(r5)-                       ; it restarts
         beq     o3v_nsw
