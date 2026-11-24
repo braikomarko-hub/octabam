@@ -440,7 +440,7 @@ def t12():
     y, C, X = P4.reference(pattern('t12', df), INCC3); F = P3.frames(C, X); nf = len(F); hw = F[:, 37] >> 8
     vals = [0x3200, 0, 0x8000 | 0x3200] + [int(v) for v in np.random.default_rng(1212).integers(0, 32768, 20)]
     sub = np.random.default_rng(12).random(nf) < 0.3
-    FAIL = same = 0; first = None; nrec = npay = 0
+    FAIL = same = 0; first = None; nrec = npay = ncol = 0
     def put(G, f, v):                                            # payloads 8, 10, 12 carrying v (the sum as it was)
         p = [P4.decode(G[f, 1 + 2 * k]) for k in range(16)]
         for k, x in P3.hw_pieces(v & 0x7fff).items(): G[f, 1 + 2 * k] = P3.send(p[k] & 0xff | x)   # (8, 10, 12: no other bits)
@@ -448,9 +448,14 @@ def t12():
         for mask in (np.arange(nf) > 0, sub):                    # every frame after the first good one; a third of them
             m = mask & (hw != v); same += int((mask & (hw == v)).sum())
             A = F.copy(); A[m, 37] = (v << 8) & 0xffffff
+            # (the payloads carry 15 bits: v's bit 15 cannot travel there; and a v whose fields add up to the same 15-bit
+            # sum as the engine's passes, as any change of the payloads that leaves their sum alone: those are left out, counted)
+            ps = lambda h: sum(P3.hw_pieces(int(h) & 0x7fff).values()) & 0x7fff
+            same_sum = np.array([ps(h) == ps(v) for h in hw]) & (hw != (v & 0x7fff))
+            mp = mask & (hw != (v & 0x7fff)) & ~same_sum; ncol += int((mask & same_sum).sum())
             P = F.copy()
-            for f in np.nonzero(m)[0]: put(P, f, v)
-            B = F.copy(); B[m, 31] = [P3.send((P4.decode(B[f, 31]) + 1) & 0x7fff) for f in np.nonzero(m)[0]]
+            for f in np.nonzero(mp)[0]: put(P, f, v)
+            B = F.copy(); B[mp, 31] = [P3.send((P4.decode(B[f, 31]) + 1) & 0x7fff) for f in np.nonzero(mp)[0]]
             for k in (0, 7):
                 A[:, 51] = B[:, 51] = P[:, 51] = F[:, 51] = k
                 o = host(F, P3.WORK + '/o3v.bin', built()[0])
@@ -459,8 +464,8 @@ def t12():
                 if first is None: first = int((b[m] == 0).all()), int(m.sum())
     print('   %d values x (every frame after the first, a third of the frames) x (whole, cut at 7): record: %d words differ from'
           ' the clean run; payloads: %d words differ from a wrong sum; frames where the value was the engine\'s own (left as'
-          ' they were) %d; the first run\'s %d foreign frames all silent: %s -> %s' % (
-              len(vals), nrec, npay, same, first[1], bool(first[0]), 'PASS' if FAIL == 0 else 'FAIL'))
+          ' they were) %d; payload frames left out (same sum: the sum cannot see them) %d; the first run\'s %d foreign frames all silent: %s -> %s' % (
+              len(vals), nrec, npay, same, ncol, first[1], bool(first[0]), 'PASS' if FAIL == 0 else 'FAIL'))
     return FAIL
 
 def t13(): return t10(PREV, 10, True)
