@@ -13,7 +13,12 @@ for the output.  The thresholds were written before the results (the vFable note
       governor and largest value reported
   cost the ColdFire's instructions a frame (cfsim), now against a4691b8d: on prova5's cost pattern (RES 100, DEC 60)
       +- 0 (threshold 6); at DEC 0 / RES 0 reported, not gated: the count there depends on the data (the first run,
-      20 Nov 2026, held these rows to +- 0 too and they moved by -0.10 .. +0.60 instructions a frame)
+      20 Nov 2026, held these rows to +- 0 too and they moved by -0.10 .. +0.60 instructions a frame).
+      ACIDF11 (24 Nov 2026) changes the engine on purpose (halfword 11's fields in the payloads: + 1.0 instruction a frame
+      on this pattern, measured): its threshold f.10 (soglie_ACIDF11.md, written before any result) is "within +- 20
+      instructions a frame of d0f49088", measured against d0f49088 by prova8.py f.  So here the O3_DSP row of the
+      prova5 pattern is held to that bound against a4691b8d (= d0f49088 there: the same count, the ACIDF10 run of 23
+      Nov), and the FX2 path (no O3_DSP code) still to +- 0
 Run tools/octa303/dsp/build.sh first.  `prova7.py t3` (etc.): that part only.  O3_WORK=<dir>: a run's own bench files."""
 import os, sys, random, numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
@@ -164,10 +169,10 @@ def cost():
         a = P4.run_engine(s, P6.EngOld(S['new1']))[3]; b = P4.run_engine(s, P6.EngOld(S['old1']))[3]
         ca, cb = 16.0 * a / s['nsamp'], 16.0 * b / s['nsamp']
         a0 = sum(T7.run_engine(s, P6.EngOld(S['new0']))[2]); b0 = sum(T7.run_engine(s, P6.EngOld(S['old0']))[2])
-        gate = nm.startswith('prova5'); FAIL += gate and ((a != b) + (a0 != b0))
+        gate = nm.startswith('prova5'); ok = abs(ca - cb) <= 20 and a0 == b0; FAIL += gate and not ok
         print('   %-38s O3_DSP: %.3f | %.3f (%+d instructions in all) ; FX2 path: %.3f | %.3f (%+d) -> %s' % (
             nm, ca, cb, a - b, 16.0 * a0 / s['nsamp'], 16.0 * b0 / s['nsamp'], a0 - b0,
-            ('PASS' if a == b and a0 == b0 else 'FAIL') if gate else 'reported'))
+            ('PASS (O3_DSP within +- 20 a frame, f.10; FX2 path +- 0)' if ok else 'FAIL') if gate else 'reported'))
     return FAIL
 
 if __name__ == '__main__':
