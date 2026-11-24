@@ -3526,8 +3526,9 @@ o3e_sil:                                | silence: d7 zero samples, the state un
 | ---- o3e_pay (O3_DSP): the frame's sixteen payloads from the control step's numbers, each a 15-bit p sent as the
 |      24-bit sample p * 256 + 128: the mark 0x7fff, g1 g2 g3 g4 kq dq gt (two each), the sum of the fourteen.
 |      B2: payload 14 carries FM's depth in its bits 8..14; halfword 11 (E_HW11, o3_dwrite writes it), FM's ceiling
-|      (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 | SWP above ACID, once a frame and in the sum too (B2b: the insert
-|      refuses a halfword 11 that is not this one; E_HWK, its part from the knobs, is o3e_kC's).  Clobbers d0, d1, d3, a0.
+|      (pqmax >> 10; FM off: 4095) << 3 | MUFF << 1 | SWP above ACID, once a frame; since ACIDF11 inside payloads 8, 10
+|      and 12 (so in the sum), the record's copy is no longer read by the insert (E_HWK, its part from the knobs, is
+|      o3e_kC's).  Clobbers d0, d1, d3, a0.
 o3e_pay:
         moveq   #1,%d0
         move.l  %d0,E_PAYOK(%a3)
@@ -3556,7 +3557,22 @@ o3e_pay:
         or.l    %d1,%d0
 .Lpy_f:
         move.l  %d0,E_HW11(%a3)
+        move.l  %d0,%d1                 | ACIDF11: halfword 11 rides in the payloads, above the low bytes of 8 (its bits
+        and.l   #0x7f00,%d1             | 8..14), 10 (bits 0..6, << 8) and 12 (bit 7, << 1): the insert is given the
+        add.l   %d1,%d3                 | record and the audio of different frames on the unit (Marko's recordings, 24 Nov)
+        swap    %d1
+        add.l   %d1,-28(%a0)
+        moveq   #127,%d1
+        and.l   %d0,%d1
+        lsl.l   #8,%d1
+        add.l   %d1,%d3
+        swap    %d1
+        add.l   %d1,-20(%a0)
+        and.l   #0x80,%d0
+        add.l   %d0,%d0
         add.l   %d0,%d3
+        swap    %d0
+        add.l   %d0,-12(%a0)
         and.l   #0x7fff,%d3
         swap    %d3
         move.w  #0x8000,%d3

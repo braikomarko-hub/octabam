@@ -5,21 +5,24 @@
 ;      two calls, see o3v_first).  L = the oscillator (x << 2, through the gain ahead of FX1).
 ;      R = sixteen 15-bit payloads p, each sent as p*256+128: 0 the mark $7fff (the largest value: the first to
 ;      decode wrong if the gain ahead of FX1 is not the settled one); 1..14 = g1 g2 g3 g4 kq dq gt as (bits 22..8,
-;      bits 7..0); 15 = the sum of payloads 1..14 and of halfword 11 (below), 15 bits.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
+;      bits 7..0); 15 = the sum of payloads 1..14, 15 bits.  Halfword 11 (below) rides in payloads 8, 10, 12 above their
+;      low bytes (bits 8..14 of 8: its bits 8..14; of 10: its bits 0..6; bit 8 of 12: its bit 7; ACIDF11, 24 Nov 2026):
+;      on Marko's unit the voice record and the audio block the insert is given are of different frames, so whatever
+;      must agree with the payloads travels in them.  x:(r6+0) = gv >> 1 as a record halfword (<< 8).
 ;      x:(r6+3) = the level's halfword (<< 8; the engine's VOL x XVOL's law): the output is the voice x 4 x
 ;      (it / $7f00)^2, reached a sixteenth of the way a sample (no steps a frame).
 ;      x:(r6+4) = DRIV's gain G (Q12) as a halfword (<< 8): $100000 = DRIV 0, nothing; else x = y G and, above the
 ;      knee, the output mixer's soft ceiling from a table (24 points a side, behind the BA662's two; ref/o3k.c).
 ;      x:(r6+1), x:(r6+2) = $3a5c00, $651700: the engine's signature in the voice record.  Without it the track is not
 ;      an OCTA-303: the audio is left exactly as it came (Marko, 17 Nov 2026).
-;      x:(r6+5) = halfword 11 (B2, 19 Nov 2026), << 8: bits 14..3 FM's ceiling pqmax >> 10, bits 2..1 MUFF (0 OFF,
-;      1 SOFT, 2 HARD), bit 0 SWP above ACID.  FM's depth (0..127) rides in payload 14's bits 8..14, above gt's low
+;      Halfword 11 (B2, 19 Nov 2026; in the payloads since ACIDF11, x:(r6+5) is not read): bits 14..3 FM's ceiling
+;      pqmax >> 10, bits 2..1 MUFF (0 OFF, 1 SOFT, 2 HARD), bit 0 SWP above ACID.  FM's depth (0..127) rides in payload 14's bits 8..14, above gt's low
 ;      byte.  MUFF: after the ceiling, y = low + h, low the 150 Hz one-pole of y, h the rest limited by the mode.  FM:
 ;      the four g = G m, m from the output's 5 Hz high-pass held every 4th sample.  SWP: the ladder input's cubic soft
 ;      clip, and the governor of the self-oscillation, here (it needs y4): the engine sends kq and dq without it
 ;      (tools/octa303/dsp/ref/o3k.c, o3d_*).
-;      A frame is taken only if the mark, the sum and the six low-byte payloads 2..12 (nothing above bit 7) all agree:
-;      a halfword 11 that is not the one the engine summed is refused like a wrong sum (B2b).  The mark is compared with
+;      A frame is taken only if the mark, the sum and the three low-byte payloads 2, 4, 6 (nothing above bit 7) all
+;      agree.  The mark is compared with
 ;      x:(r7+$1f), which init's copy sets to $7fff only if the 250 words it copied XOR to the table's (eor works on a1
 ;      alone: no carry into a2, nothing for the saturation mode SM to clamp, whatever SR holds -- review of 2c): a wrong
 ;      copy, or a state block no init has written ($1f = 0, or dirty), refuses every frame, so the voice is silent until an
@@ -125,10 +128,6 @@ o3v_dec:
         move    x:(r2)+,x0
         add     x0,b
 o3v_sum:
-        move    x:(r6+5),a                      ; halfword 11 (<< 8) is in the sum too
-        asr     #8,a,a
-        blt     o3v_bad                         ; (its bit 15 is in no sum: the engine never sets it)
-        add     a,b
         and     #>$7fff,b
         move    x:(r2),x0
         cmp     x0,b
@@ -136,7 +135,7 @@ o3v_sum:
         lua     (r7+$22),r2                     ; r2 = payload 2
         move    #2,n2
         clr     b
-        do      #6,o3v_low                      ; the low bytes 2..12: nothing above bit 7 (14's: FM above gt's)
+        do      #3,o3v_low                      ; the low bytes 2, 4, 6: nothing above bit 7 (8 10 12: halfword 11, 14: FM)
         move    x:(r2)+n2,a
         and     #>$7f00,a
         add     a,b
@@ -150,8 +149,9 @@ o3v_low:
         do      #6,o3v_asm
         move    x:(r2)+,a
         asl     #8,a,a
-        move    x:(r2)+,x0
-        add     x0,a
+        move    x:(r2)+,b
+        and     #>$ff,b                         ; the low byte (8 10 12 carry halfword 11 above it)
+        add     b,a
         move    a1,x:(r5)+                      ; G1 G2 G3 G4 kq dq
         move    a1,x:(r1)+                      ; (kq and dq land on gv and gt, written below)
 o3v_asm:
@@ -202,7 +202,16 @@ o3v_asm:
         mpy     x0,y1,a                         ; x ($8000 / $7f00)^2 / 2: with the loop's << 3, the voice x 4
         move    x:(r1)+,y0                      ; DRIV's word
         move    a,x1                            ; where the level goes
-        move    x:(r1),b                        ; halfword 11
+        move    x:(r7+$2a),b                    ; halfword 11 << 8 from the payloads: 10's bits 8..14 are its bits 0..6,
+        and     #>$7f00,b
+        move    x:(r7+$2c),a                    ; 12's bit 8 its bit 7,
+        and     #>$100,a
+        asl     #7,a,a
+        add     a,b
+        move    x:(r7+$28),a                    ; 8's bits 8..14 its bits 8..14
+        and     #>$7f00,a
+        asl     #8,a,a
+        add     a,b
         tfr     b,a
         and     #>$7ff800,a
         asr     #2,a,a                          ; FM's ceiling: (pqmax >> 10) << 9, the steps Q15

@@ -98,7 +98,8 @@ def check(s, e, built):
         for c in C[f][:7]: want += [int(c) >> 8, int(c) & 0xff]
         want.append(sum(want[1:]) & 0x7fff)
         want[14] |= int(C[f][12]) << 8                 # B2: FM's depth above gt's low byte
-        want[15] = (sum(want[1:15]) + int(C[f][11])) & 0x7fff   # B2b: halfword 11 in the sum
+        for k_, v_ in P3.hw_pieces(int(C[f][11])).items(): want[k_] |= v_   # ACIDF11: halfword 11 in payloads 8, 10, 12
+        want[15] = sum(want[1:15]) & 0x7fff
         d2 += (p != want) + ((gv[f] >> 8) != int(C[f][7])) + (HWS[f] != int(C[f][11]))
     F = np.zeros((nf, 52), np.int32)
     for f in range(nf):

@@ -21,7 +21,9 @@ B2b (halfword 11 latched and in the sum, FM skipped at 0; thresholds soglie_B2b.
   t11 the output the same as d24e7173's (its engine and insert, from git): the insert on prova3's inputs, the engine on
       t2's and t3's scenarios, the shell on t2's runs; the build without O3_DSP and the FX2 path (the engine on the
       ColdFire) the same too (thresholds 2 and 7)
-  t12 a foreign halfword 11 (0x3200, 0, 20 random values) is refused exactly like a wrong sum in the same frames (3)
+  t12 a foreign halfword 11 (0x3200, 0, 20 random values) is refused exactly like a wrong sum in the same frames (3);
+      since ACIDF11 (halfword 11 in payloads 8, 10, 12): a foreign one in the record changes nothing, a foreign one in
+      the payloads is refused like a wrong sum
   t13 the ColdFire's cost against d24e7173: engine and shell within + 10 instructions a frame (6)
 C1 (20 Nov 2026): the older commits' engines are built with this tree's generated block (old_source, with_tables_now):
 these parts prove code (the old commits run THEIR code with TODAY's laws, not their own source); a knob law's change is
@@ -166,8 +168,8 @@ def engine_diff(s, src):
     a = P4.run_engine(s, P4.EngD()); hw = list(P4.HWS); b = P4.run_engine(s, EngOld(src))
     if len(a[0]) != len(b[0]): return 1, len(a[0])
     d = sum(x != y for x, y in zip(a[0], b[0])) + sum(x != y for x, y in zip(a[2], b[2]))
-    for i, (x, y) in enumerate(zip(a[1], b[1])):                 # each R long: p << 16 | 0x8000
-        d += x != y if i % 16 != 15 else (x >> 16) & 0x7fff != ((y >> 16) + hw[i // 16]) & 0x7fff
+    # each R long: p << 16 | 0x8000; ACIDF11: src's with halfword 11 put into payloads 8, 10, 12 and the sum
+    d += sum(x != y for x, y in zip(a[1], P3.r_now(b[1], hw, insum=False)))
     return d, len(a[0])
 class EngOld(T7.Eng):
     def __init__(self, src):
@@ -182,7 +184,7 @@ def t3():
     CASES = [(0,0,127,0),(0,127,127,1),(127,0,127,1),(127,127,127,0),(64,64,64,0),(40,100,64,1),(90,127,0,0),(20,64,127,1),(0,0,127,1),(127,127,127,1),(64,127,64,1),(127,100,0,0)]
     for c in CASES:
         y, C, X = P3.ref(P3.ev(*c)); F = P3.frames(C, X)
-        a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_%s.bin' % BASE, oproc); d += int((a != b).sum()); n += a.size
+        a, b = host(F, newb, built()[0]), host(oldsum(P3.to_b2b(F)), SCR + '/o3v_%s.bin' % BASE, oproc); d += int((a != b).sum()); n += a.size
     for seed, loud in ((1, True), (2, True), (3, False), (4, False)):
         r = np.random.default_rng(seed); nf = 4000
         C = np.zeros((nf, 13), np.int32); C[:, 9] = r.integers(0, 0x7fff, nf) * 256; C[:, 11] = P3.HW0
@@ -192,7 +194,7 @@ def t3():
         F = P3.frames(C, X)
         for k in (0, 1, 7, 15):
             F[:, 51] = k if k else r.integers(0, 16, nf)
-            a, b = host(F, newb, built()[0]), host(oldsum(F), SCR + '/o3v_%s.bin' % BASE, oproc); d += int((a != b).sum()); n += a.size
+            a, b = host(F, newb, built()[0]), host(oldsum(P3.to_b2b(F)), SCR + '/o3v_%s.bin' % BASE, oproc); d += int((a != b).sum()); n += a.size
     print('   (a) the insert, prova3\'s inputs (whole frames and in pieces): %d words, %d differ' % (n, d)); FAIL += d
     # (b) the engine alone: prova4's engine scenarios and prova5's patterns -- L, R and gv the same
     SRC_OLD = old_source()
@@ -391,13 +393,13 @@ def t11():
     for F in runs:
         for k in (0, 1, 7, 15):
             F[:, 51] = k
-            a, b = host(F, newb, built()[0]), host(oldsum(F), ob, oproc); w = (a != b).any(axis=1)
+            a, b = host(F, newb, built()[0]), host(oldsum(P3.to_b2b(F)), ob, oproc); w = (a != b).any(axis=1)
             d += int((a != b).sum()); n += a.size
             FAIL += int(w.sum()); nr += 1
     for Fo, Fk in stress:                                      # out of contract (FM 0, ceiling at random): every difference
         for k in (0, 7):                                       # is the ceiling's alone -- the new insert on them = d24e7173's
             Fo[:, 51] = Fk[:, 51] = k                          # insert on the same frames with the ceiling at 4095
-            a, b = host(Fo, newb, built()[0]), host(oldsum(Fk), ob, oproc); dx = int((a != b).sum()); FAIL += dx; why.append(dx)
+            a, b = host(Fo, newb, built()[0]), host(oldsum(P3.to_b2b(Fk)), ob, oproc); dx = int((a != b).sum()); FAIL += dx; why.append(dx)
     print('   (a) the insert, prova3\'s inputs (whole and in pieces, the stress runs within the engine\'s contract), %d runs: %d words,'
           ' %d differ; frames that differ %d; out of contract (FM 0, the ceiling at random) against d24e7173 with the ceiling at 4095:'
           ' %d words differ' % (nr, n, d, FAIL - sum(why), sum(why)))
@@ -432,25 +434,33 @@ def t11():
     return FAIL
 
 def t12():
-    print('t12. a foreign halfword 11 against a wrong sum in the same frames (the insert, FM 40, MUFF SOFT, SWP WHST)')
+    print('t12. ACIDF11: a foreign halfword 11 in the RECORD changes nothing (the insert no longer reads it); a foreign one in'
+          ' the PAYLOADS (8, 10, 12, the sum left as it was) is refused like a wrong sum (the insert, FM 40, MUFF SOFT, SWP WHST)')
     df = list(DFN); df[1] = 40; df[9] = 1; df[7] = 1
     y, C, X = P4.reference(pattern('t12', df), INCC3); F = P3.frames(C, X); nf = len(F); hw = F[:, 37] >> 8
-    vals = [0x3200, 0] + [int(v) for v in np.random.default_rng(1212).integers(0, 32768, 20)]
+    vals = [0x3200, 0, 0x8000 | 0x3200] + [int(v) for v in np.random.default_rng(1212).integers(0, 32768, 20)]
     sub = np.random.default_rng(12).random(nf) < 0.3
-    FAIL = same = 0; first = None
+    FAIL = same = 0; first = None; nrec = npay = 0
+    def put(G, f, v):                                            # payloads 8, 10, 12 carrying v (the sum as it was)
+        p = [P4.decode(G[f, 1 + 2 * k]) for k in range(16)]
+        for k, x in P3.hw_pieces(v & 0x7fff).items(): G[f, 1 + 2 * k] = P3.send(p[k] & 0xff | x)
     for v in vals:
         for mask in (np.arange(nf) > 0, sub):                    # every frame after the first good one; a third of them
             m = mask & (hw != v); same += int((mask & (hw == v)).sum())
-            A = F.copy(); A[m, 37] = v << 8
+            A = F.copy(); A[m, 37] = (v << 8) & 0xffffff
+            P = F.copy()
+            for f in np.nonzero(m)[0]: put(P, f, v)
             B = F.copy(); B[m, 31] = [P3.send((P4.decode(B[f, 31]) + 1) & 0x7fff) for f in np.nonzero(m)[0]]
             for k in (0, 7):
-                A[:, 51] = B[:, 51] = k
-                a, b = host(A, P3.WORK + '/o3v.bin', built()[0]), host(B, P3.WORK + '/o3v.bin', built()[0])
-                FAIL += int((a != b).sum())
-                if first is None: first = int((a[m] == 0).all()), int(m.sum())
-    print('   %d values x (every frame after the first, a third of the frames) x (whole, cut at 7): %d words differ; frames where'
-          ' the value was the engine\'s own (left as they were) %d; the first run\'s %d foreign frames all silent: %s -> %s' % (
-              len(vals), FAIL, same, first[1], bool(first[0]), 'PASS' if FAIL == 0 else 'FAIL'))
+                A[:, 51] = B[:, 51] = P[:, 51] = F[:, 51] = k
+                o = host(F, P3.WORK + '/o3v.bin', built()[0])
+                a, b, c = [host(G, P3.WORK + '/o3v.bin', built()[0]) for G in (A, P, B)]
+                d1 = int((a != o).sum()); d2 = int((b != c).sum()); nrec += d1; npay += d2; FAIL += d1 + d2
+                if first is None: first = int((b[m] == 0).all()), int(m.sum())
+    print('   %d values x (every frame after the first, a third of the frames) x (whole, cut at 7): record: %d words differ from'
+          ' the clean run; payloads: %d words differ from a wrong sum; frames where the value was the engine\'s own (left as'
+          ' they were) %d; the first run\'s %d foreign frames all silent: %s -> %s' % (
+              len(vals), nrec, npay, same, first[1], bool(first[0]), 'PASS' if FAIL == 0 else 'FAIL'))
     return FAIL
 
 def t13(): return t10(PREV, 10, True)

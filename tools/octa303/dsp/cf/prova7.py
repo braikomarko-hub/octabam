@@ -46,6 +46,7 @@ def srcs():
 def chain_run(s, src):
     """the engine of src (O3_DSP = 1) on s, its frames into the insert -> (L, R, gv, the insert's output, instructions a frame)"""
     L, R, gv, steps = P4.run_engine(s, P6.EngOld(src)); hws = list(P4.HWS)
+    if src is not P4.SRC_D: R = P3.r_now(R, hws)              # ACIDF11: REV's payloads as this tree's engine sends them
     nf = s['nsamp'] // 16; n = nf * 16
     Lg = [P4.gain(P4.s24(v)) for v in L[:n]]; Rg = [P4.gain(P4.s24(v)) for v in R[:n]]
     F = np.zeros((nf, 52), np.int32)

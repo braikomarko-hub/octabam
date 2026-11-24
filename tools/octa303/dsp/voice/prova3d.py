@@ -101,7 +101,7 @@ def main():
     tn = gn.ptable()
     tot = words = outs = 0; ctl = 0; first = None
     for k, (nm, F) in enumerate(sets()):
-        a, oa = run(ob, to, F, 'o'); b, onew = run(nb, tn, F, 'n')
+        a, oa = run(ob, to, P3.to_b2b(F), 'o'); b, onew = run(nb, tn, F, 'n')   # ACIDF11: the old insert takes the old format
         d = int((a != b).sum()); tot += d; words += a.size; outs += oa + onew
         if first is None: first = (F, a)
         print('   %-46s frames %5d words %8d differ %d | outside the block old/new %d / %d' % (nm, len(F), a.size, d, oa, onew), flush=True)

@@ -35,19 +35,50 @@ def build(gh):
     lab={}
     for l in open(WORK+'/o3v.sym') if os.path.exists(WORK+'/o3v.sym') else []: k,v=l.split(); lab[k]=int(v,16)
     return r.stdout, lab
+def hw_pieces(hw):
+    """ACIDF11: halfword 11 inside payloads 8, 10, 12 (above their low bytes): -> what each gets"""
+    return {8: hw&0x7f00, 10: (hw&0x7f)<<8, 12: (hw&0x80)<<1}
 def frames(C,X,mark=0x7fff):
-    """C: frames of 13 numbers (wide()); the halfword 11 into the record (and into the sum, B2b), FM's depth into
-    payload 14's bits 8..14"""
+    """C: frames of 13 numbers (wide()); halfword 11 into the record (which the insert no longer reads) and, since
+    ACIDF11, into payloads 8, 10, 12 (so into the sum); FM's depth into payload 14's bits 8..14"""
     n=len(C); F=np.zeros((n,52),np.int32)
     for f in range(n):
         g1,g2,g3,g4,kq,dq,gt,gv,gh,vol,drv,hw,fm=[int(v) for v in C[f][:13]]
         pay=[mark]
         for c in (g1,g2,g3,g4,kq,dq,gt): assert 0<=c<(1<<23); pay+=[c>>8,c&0xff]
         assert 0<=fm<128 and 0<=hw<32768; pay[14]|=fm<<8
-        pay.append((sum(pay[1:])+hw)&0x7fff)
+        for k,v in hw_pieces(hw).items(): pay[k]|=v
+        pay.append(sum(pay[1:])&0x7fff)
         assert gv%2==0 and gv<(1<<16)
         F[f,0:32:2]=X[16*f:16*f+16]; F[f,1:32:2]=[send(p) for p in pay]; F[f,32]=(gv>>1)<<8; F[f,33]=0x3a5c00; F[f,34]=0x651700; F[f,35]=vol; F[f,36]=drv; F[f,37]=hw<<8
     return F
+def decode(y):                    # the insert's decode of one R sample (prova4.decode)
+    y=int(y); return ((y<<24)+((y*672)<<1))>>32
+def to_b2b(F):
+    """frames of this tree (ACIDF11: halfword 11 in payloads 8, 10, 12) as the inserts from B2b to ACIDF10 (d0f49088)
+    take them: those payloads' low bytes alone, and halfword 11 (the record's, x:(r6+5)) in the sum instead.  A frame
+    whose payloads do not hold the record's halfword 11 is made so that the old insert refuses it too (its sum + 1)."""
+    F=F.copy()
+    for f in range(len(F)):
+        p=[decode(v) for v in F[f,1:32:2]]; hw=(int(F[f,37])>>8)&0x7fff
+        q=list(p); h=(p[10]>>8)&0x7f|((p[12]>>1)&0x80)|(p[8]&0x7f00)
+        for k in (8,10,12): q[k]=p[k]&0xff|(p[k]&0x7e00 if k==12 else 0)
+        s=(p[15]-sum(p[1:15])+sum(q[1:15])+hw)&0x7fff
+        if h!=hw and (sum(p[1:15])&0x7fff)==p[15]: s=(s+1)&0x7fff
+        q[15]=s
+        F[f,1:32:2]=[send(v) if 0<=v<32768 else int(F[f,1+2*k]) for k,v in enumerate(q)]
+    return F
+def r_now(R, hws, insum=True):
+    """an engine's R longs (p << 16 | 0x8000) from before ACIDF11 as this tree's engine sends them: halfword 11 (hws, a
+    frame each) added into payloads 8, 10, 12, payload 15 = their sum (insum: the old payload 15 had halfword 11 in it,
+    B2b to ACIDF10; False: before B2b)"""
+    R = list(R)
+    for f in range(len(R) // 16):
+        hw = int(hws[f]); pc = hw_pieces(hw)
+        for k, v in pc.items(): R[16 * f + k] += v << 16
+        p15 = ((R[16 * f + 15] >> 16) & 0x7fff) - (hw if insum else 0) + sum(pc.values())
+        R[16 * f + 15] = ((p15 & 0x7fff) << 16) | (R[16 * f + 15] & 0xffff)
+    return R
 def table_file(old=False):
     """the insert's P table as o3host loads it -> its path.  The one gen_module writes into the manifest (B3: the ceiling as
     one signed table, 24-bit words), or with old=True the layout of the inserts before B3 (the bench's old commits)"""
