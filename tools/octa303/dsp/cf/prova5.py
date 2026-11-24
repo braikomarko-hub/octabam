@@ -119,7 +119,7 @@ def main():
                         T7.scen('kq', 16 * NOTE_F, cut=60, res=100, env=0, dec=0, dfon=1, df=df, knobs=kn)
                     L, R, gv, _ = P4.run_engine(s, P4.EngD())
                     Rg = [P4.gain(P4.s24(v)) for v in R]
-                    kq = [(P4.decode(Rg[16 * f + 9]) << 8) | P4.decode(Rg[16 * f + 10]) for f in range(len(R) // 16)]
+                    kq = [(P4.decode(Rg[16 * f + 9]) << 8) | (P4.decode(Rg[16 * f + 10]) & 0xff) for f in range(len(R) // 16)]   # (ACIDF11: 10 carries a field above its low byte)
                     C = P4.reference(s, INCC3)[1]; nr = sum(int(C[f][4]) != kq[f] for f in range(len(kq)))
                     jump = max(abs(b - a) / a for a, b in zip(kq, kq[1:]))
                     still = sum(a != b for a, b in zip(kq[KQ_F0:], kq[KQ_F0 + 1:])) if not full else 0   # (OVDR 25: the MEG's tail, shown)
