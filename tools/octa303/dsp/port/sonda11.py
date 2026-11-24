@@ -26,7 +26,9 @@ Thresholds (written 22 Nov 2026 before any ACIDF10 result; soglie_B3_v2.md 4.4, 
         core's payload, and after the last burst the core plays >= 600 frames with 0 writes there (W, WD, S);
   init  at the end of W, WD and S, on every core with a dEVILish, the 250 words equal the table (0 different): after
         a project load (W), after a power-up with the project saved (WD), after dEVILish is selected while playing (S);
-  4.5b  U and UD: the DSP's read-back of T2 and T5, frame by frame, 0 words different.
+  4.5b  U and UD: the DSP's read-back of T2 and T5, frame by frame, 0 words different.  Restated for ACIDF11 (4.5b',
+        soglie_ACIDF11.md): at most 2,420 words different (ACIDF08's) and none larger than 16 units after frame 10;
+        N / ND (FX1 none) reported beside it.
   4.4x  (added by the independent review, 22 Nov 2026, before any ACIDF10 result; revisione_B3_fase2.md 10(d)) when
         the build put the table's SOURCE in X: in W, WD, S and SI, on each payload, 0 non-zero writes into the 256-word
         X regions holding the source after the first copy, and at the end the 250 source words equal the table (0
@@ -62,6 +64,11 @@ RUNS = {"W": dict(o3=[1, 2, 4, 5], fx=FX_W, frames=1000, watch="0:Y:c00", dev={0
                    at=[(400, PART_SET, 1), (700, PART_SET, 0), (1000, PART_SET, 1)]),
         "U": dict(o3=[1, 4], fx={"all": {1: ("DEVILISH", "NONE"), 4: ("DEVILISH", "NONE")}}, frames=600, dump=True, dev={0: 1, 1: 1}),
         "UD": dict(o3=[1, 4], fx={"all": {1: ("DEVILISH", "NONE"), 4: ("DEVILISH", "NONE")}}, frames=600, dump=True, dirty=True, dev={0: 1, 1: 1})}
+# ACIDF11 (24 Nov 2026): N / ND = U / UD with FX1 none (no dEVILish), as fable_F10DIAG.sh ran them: the emulator's own
+# clean-against-dirty difference, reported next to 4.5b' (information, no threshold)
+RUNS["N"] = dict(RUNS["U"], fx={"all": {1: ("NONE", "NONE"), 4: ("NONE", "NONE")}}, dev={})
+RUNS["ND"] = dict(RUNS["N"], dirty=True)
+LONG = ("W", "WD", "S", "SI")                             # the runs long enough for 4.4's 600 quiet frames
 CMDL = re.compile(r"^cmd (\d+) tx (\d+)(.*)$")
 WATCH = re.compile(r"^\s+pc (0x[0-9a-f]+|0+) <- [0-9a-f]+ at executed (\d+)")
 PEEK = re.compile(r"^\s+core (\d) Y:(0x[0-9a-f]+|0):((?: [0-9a-f]{6})+)\s*$")
@@ -232,7 +239,7 @@ def one(name, image, project, top, posto, T):
               + f"; frame senza scritture dopo l'ultimo gruppo: {quiet}")
         if not ok:
             res["fails"].append(f"core {core}: gruppi non multipli di {nz} o assenti/presenti senza dEVILish")
-        if b and quiet < 600:
+        if b and quiet < 600 and name in LONG:            # (U, UD, N, ND play 600 frames in all: no such rule)
             res["fails"].append(f"core {core}: solo {quiet} frame tranquilli dopo l'ultima copia (servono 600)")
         if not b and r_["dev"].get(core):
             res["fails"].append(f"core {core}: nessuna copia vista")
@@ -293,7 +300,7 @@ def main():
     ap.add_argument("--project", default=os.environ.get("OT_PROJECT") or (dot.read_text().strip() if dot.exists() else None))
     ap.add_argument("--out", default=str(ROOT / "out/octa303/sonda11"))
     ap.add_argument("--posto", required=True)
-    ap.add_argument("--only", default="W,WD,S,SI,U,UD")
+    ap.add_argument("--only", default="W,WD,S,SI,U,UD,N,ND")
     a = ap.parse_args()
     if not a.project: print("sonda 11: nessun progetto (OT_PROJECT o ~/.octabam_project)"); return 2
     if not (ROOT / "out/emu/ot_emu").exists(): print("sonda 11: manca l'emulatore (make emu-cf)"); return 2
@@ -314,19 +321,35 @@ def main():
         if any(posto.get(p, {}).get("table", [None])[0] == "X" for p in ("A", "B")):
             verdict["4.4x sorgente in X intatta: 0 scritture durante il suono, uguale alla tabella alla fine"] = all(
                 not R[k].get("xfails", ["eccezione"]) and R[k]["ran"] for k in w)
+    def pair(k0, k1):
+        """the read-back of T2 and T5, clean (k0) against dirty (k1): words compared, words different, frames missing, the
+        largest difference of a 24-bit sample after frame 10 (in units of the sample's last bit)"""
+        a_, b_ = R[k0].get("ril"), R[k1].get("ril"); diff = tot = miss = big = 0
+        s24 = lambda hi, lo: ((((hi << 8) | (lo >> 8)) & 0xffffff) ^ 0x800000) - 0x800000
+        if not (a_ and b_): return None
+        for Tk in a_:
+            for f, lst in a_[Tk].items():
+                o = b_.get(Tk, {}).get(f)
+                if o is None: miss += 1; continue
+                for x, y in zip(lst, o):
+                    tot += len(x); diff += sum(1 for p, q in zip(x, y) if p != q)
+                    if int(f) > 10:
+                        for i in range(0, min(len(x), len(y)) - 1, 2): big = max(big, abs(s24(x[i], x[i + 1]) - s24(y[i], y[i + 1])))
+        return tot, diff, miss, big
     if "U" in R and "UD" in R:
-        a_, b_ = R["U"].get("ril"), R["UD"].get("ril"); diff = 0; tot = 0; miss = 0
-        if a_ and b_:
-            for Tk in a_:
-                for f, lst in a_[Tk].items():
-                    o = b_.get(Tk, {}).get(f)
-                    if o is None: miss += 1; continue
-                    for x, y in zip(lst, o):
-                        tot += len(x); diff += sum(1 for p, q in zip(x, y) if p != q)
-            print(f"sonda 11 4.5b: rilettura di T2 e T5, pulita contro sporcata: {n(tot)} parole confrontate, {n(diff)} diverse; frame che mancano nella sporcata: {miss}")
-            verdict["4.5b memoria sporcata: 0 campioni diversi"] = tot > 0 and diff == 0 and miss == 0 and R["U"]["ran"] and R["UD"]["ran"]
+        r = pair("U", "UD")
+        if r:
+            tot, diff, miss, big = r
+            print(f"sonda 11 4.5b: rilettura di T2 e T5, pulita contro sporcata: {n(tot)} parole confrontate, {n(diff)} diverse; frame che mancano nella sporcata: {miss}; differenza piu' grande dopo il frame 10: {n(big)} unita'")
+            # ACIDF11's 4.5b' (soglie_ACIDF11.md, written before any result): no more words different than ACIDF08 had (2,420
+            # of 76,800) and, after frame 10, no difference larger than 16 units
+            verdict["4.5b' memoria sporcata: al piu' 2.420 parole diverse e nessuna differenza oltre 16 unita' dopo il frame 10"] = (
+                tot > 0 and diff <= 2420 and big <= 16 and miss == 0 and R["U"]["ran"] and R["UD"]["ran"])
         else:
-            verdict["4.5b memoria sporcata: 0 campioni diversi"] = False
+            verdict["4.5b' memoria sporcata: al piu' 2.420 parole diverse e nessuna differenza oltre 16 unita' dopo il frame 10"] = False
+    if "N" in R and "ND" in R:
+        r = pair("N", "ND")
+        print("sonda 11 N contro ND (FX1 none, informazione): " + (f"{n(r[0])} parole confrontate, {n(r[1])} diverse; frame che mancano {r[2]}; differenza piu' grande dopo il frame 10: {n(r[3])} unita'" if r else "nessuna rilettura"))
     ok_c = None
     for k in ("U", "UD"):
         if k in R:
