@@ -24,7 +24,7 @@ MODULE = Module(
     kind=Kind.HYBRID,
     category=Category.REFERENCE, author="sambanks", author_url="https://github.com/sambanks",
     proof=Proof.CHECK,
-    proof_note="verify_keybus under the port",
+    proof_note="verify_keybus (dsp_host)",
     doc="Every track's key level (block peak of |mono| and block mean square) each block, in shared words for DSP readers on either core.",
     claims=Claims(dsp_ranges=(
         DspRange("x", KEY_WORDS, 8, "every track's key word, track t at +t, rewritten each block"),

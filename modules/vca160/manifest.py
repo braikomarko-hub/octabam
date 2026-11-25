@@ -96,7 +96,7 @@ MODULE = Module(
     # BRAIN's store id stays the one it had as dB666 (octabam.<module directory> then): the defaults and
     # templates the author saved on his card keep applying after the rename (README "FX id")
     store=Store("octabam.db666"),
-    proof=Proof.HARDWARE,
+    proof=Proof.CHECK,
     proof_note="as dB666 (its own side-chain bus), on the owner's MKI in the acidtrack images from 11 Oct 2026, hours of live use; in this form (KEY read from KEYBUS's mean-square words) bit-exact against its fixed-point model (verify_vca160, dsp_host), not yet on a unit",
     doc="Modelled on the dbx 160 compressor: true-RMS detector, threshold, ratio to infinity and beyond, side-chain KEY from any track.",
     menu=MenuEntry(
