@@ -11,10 +11,12 @@ REMIX = Remix(
                "OCTA303 v7.1, dEVILish, MORPH v1, DISTORX, dB666, TAPE ECHO, BRAIN) 'works perfectly'; ACIDV68..ACIDV71 "
                "(October 2026): hours of live use with two or three OCTA-303 tracks, dEVILish, DISTORX and dB666",
     doc="aCiDhYb: the hybrid OCTA303 (FM, filter, VCA, MUFF, DIST and output on the DSP) + dEVILish + MORPH (track + UP/DOWN: the scene morph by itself) + DISTORX (BOSS SD-1 + Pro Co RAT + Turbo RAT) + dB666 (side-chain from any track) + FET76 (the UREI 1176LN limiter, for the master after dB666) + LOAD METER + USB AUDIO OUT MASTER + BRAIN (FX presets from the card; switch remixes from the card); DARK REV the one reverb.",
-    modules=('OCTA303', 'OCTA303 SEAM', 'DEVILISH', 'MORPH', 'STORE', 'USB', 'BRAIN', 'MEMORY', 'FILTER',
-             'COMB FILTER', 'DELAY', 'DARK REV', 'DISTORX', 'DB666', 'FET76',
-             'LOAD METER'),
-    fx1=('FILTER', 'COMB FILTER', 'DEVILISH', 'DISTORX', 'DB666'),
+    modules=('OCTA303', 'OCTA303 SEAM', 'DEVILISH', 'MORPH', 'STORE', 'USB', 'BRAIN', 'MEMORY',
+             'SPECTRUM', 'DELAY', 'DARK REV', 'DISTORX', 'VCA160', 'KEYBUS', 'FET76',
+             'LOAD METER', 'TRACK PATTERNS', 'REC CS1 SKIP', 'RECORDER LOOP FIX'),
+    fx1=('SPECTRUM', 'DEVILISH', 'DISTORX', 'VCA160'),
+    # dB666 is VCA160 now and DISTORX sorts before it: pinned to the ids the author's saved projects use
+    ids={"VCA160": 0x1b, "DISTORX": 0x06},
     # The shared window: LOAD METER's DSP half in the gap below 0x37F00 (dB666's side-chain bus sits at Y:0x37FF8 /
     # 0x3FFF8). ACIDV91: AtoMizer and the demand loader (DLCOPY, its stub, DARK REV's guard) are out.
     window=(("LOAD METER", 0x37DA3), ("LOAD METER:B", 0x37E50)),
