@@ -46,18 +46,23 @@ int main(int argc, char** argv) {
       FILE* fd = fopen(argv[7], "w"); fputs(s.c_str(), fd); fclose(fd); }
     { FILE* ft = fopen(argv[4], "r"); unsigned w; TWord k = 0; while (fscanf(ft, "%x", &w) == 1) dsp.memWrite(MemArea_X, TAB + k++, w); fclose(ft); }
     auto in = slurp(argv[5]);
-    const size_t FR = 101 * 4; uint64_t mx = 0, tot = 0, nfr = 0, bad = 0, badw = 0, stockok = 0;
+    const size_t FR = 101 * 4; uint64_t mx = 0, tot = 0, nfr = 0, bad = 0, badw = 0, stockok = 0, badok = 0;
     TWord ring[4] = {0x1e00, 0x1e80, 0x1f00, 0x1f80};
     for (size_t o = 0; o + FR <= in.size(); o += FR) {
         int32_t w[101]; memcpy(w, &in[o], FR);
         const TWord t = (TWord)w[0] & 3, rec = 0x80 + 84 * t;
-        for (int stock = 0; stock < 2; ++stock) {
-            if (stock && nfr % 7) break;
+        for (int pass = 0; pass < 3; ++pass) {
+            const int stock = pass == 1, badrec = pass == 2;                     // v10.0: pass 2 = a record whose sizes
+            if (stock && nfr % 7) continue;                                   // do not add up (every 11th frame):
+            if (badrec && nfr % 11) continue;                                    // 32 zeros, nothing else written
             for (int k = 0; k < 84; ++k) {
                 TWord v = stock ? (nx() & 0xffff) : (TWord)w[1 + k] & 0xffff;
                 if (stock && k == 0) v = 0;                                   // stock: the sample count's high half
+                if (badrec && k == 3 && (nfr / 11) % 2 == 0) v = (v & 0xff00) | (16 + (nx() % 240));   // start past 15
+                if (badrec && k == 4 && (nfr / 11) % 2 == 1) v = (v + 1 + nx() % 200) & 0xffff;        // piece 0's n too big
                 dsp.memWrite(MemArea_X, rec + k, v | (nx() & 0xff0000));
             }
+            if (badrec) for (TWord k = 32; k < 0x80; ++k) dsp.memWrite(MemArea_X, k, 0x3c3c3c ^ k);
             dsp.memWrite(MemArea_X, 0x209, rec); dsp.memWrite(MemArea_X, 0x418, t * 0x20); dsp.memWrite(MemArea_X, 0x20b, ring[t]);
             for (TWord k = 0; k < 32; ++k) dsp.memWrite(MemArea_X, k, 0x5a5a5a ^ k);
             scramble(dsp);
@@ -74,6 +79,13 @@ int main(int argc, char** argv) {
             for (i = 0; i < 2000000; ++i) { if (tr) fprintf(ftr, " %x", dsp.getPC().toWord()); dsp.execInterpreter(); if (ftr) dsp.doLoopEnd(); pc = dsp.getPC().toWord(); if (pc == CONT || pc == BACK) break; }
             if (tr) fprintf(ftr, "\n");
             const uint64_t c = dsp.getInstructionCounter() - i0;
+            if (badrec) {
+                bool ok = pc == CONT && dsp.regs().sp.var == sp0;
+                for (TWord k = 0; k < 32; ++k) ok = ok && (mem.get(MemArea_X, k) & 0xffffff) == 0;
+                for (TWord k = 32; k < 0x80; ++k) ok = ok && (mem.get(MemArea_X, k) & 0xffffff) == (0x3c3c3c ^ k);
+                if (!ok) { fprintf(stderr, "frame %llu: a bad record was not refused cleanly (pc %x)\n", (unsigned long long)nfr, pc); return 1; }
+                ++badok; continue;
+            }
             if (stock) {
                 bool ok = pc == BACK && dsp.regs().sp.var == sp0 && dsp.regs().r[0].var == keep[0] && dsp.regs().r[3].var == keep[1]
                           && dsp.regs().r[5].var == keep[2] && dsp.regs().r[7].var == keep[3] && dsp.regs().y.var == keep[4] && dsp.regs().b.var == keep[5]
@@ -98,8 +110,8 @@ int main(int argc, char** argv) {
         }
         ++nfr;
     }
-    printf("frames %llu (%llu stock records back untouched), frames differing %llu (%llu words), instructions a frame: mean %.1f, max %llu (%.1f a sample)\n",
-           (unsigned long long)nfr, (unsigned long long)stockok, (unsigned long long)bad, (unsigned long long)badw, nfr ? (double)tot / nfr : 0.0,
+    printf("bad records refused %llu; frames %llu (%llu stock records back untouched), frames differing %llu (%llu words), instructions a frame: mean %.1f, max %llu (%.1f a sample)\n",
+           (unsigned long long)badok, (unsigned long long)nfr, (unsigned long long)stockok, (unsigned long long)bad, (unsigned long long)badw, nfr ? (double)tot / nfr : 0.0,
            (unsigned long long)mx, nfr ? (double)tot / nfr / 16 : 0.0);
     return bad ? 1 : 0;
 }

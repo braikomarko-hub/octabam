@@ -158,6 +158,21 @@ simulator checks in seconds. Not done: `cfsim.py`'s output has not been compared
 the same calls under `ot_emu`; the port gate and the unit are what catch a simulator that reads an
 instruction differently from the chip.
 
+### v10.0 (25 Nov 2026): Yves Rosius's ColdFire savings, ported
+
+From sambanks/octabam#1244 (Yves Rosius; Sam had not merged it yet), ported by hand to this engine, which has moved
+on from the copy in Sam's tree: a call that cannot be OCTA303's goes straight to the stock renderer, before the
+register frame (298000b0); KB and RAWW read their byte with one `mvz.b` (ff2ef4dd); the render call's setup and
+o3_voice without address-use stalls (b609e4ed); KBTAB/TABNEXT for every knob-to-table run in o3_params and o3_setup,
+and o3_inc's mask between its lea and its load (5d7bdd44). Two of his seven do not apply here: our square already
+had the inline polyBLEP guard, and our output stage has one shift. Ours on the same lines (cf_scan's detail): the
+square's two table reads no longer follow the write of their index, and every `lea O3_*,%aN` that was followed at
+once by the indexed load swaps with the instruction before it when that instruction does not touch the register
+(22 sites). `tools/build/cf_scan.py price` on the play-gate fixture (two voices, 2,000 frames under the port):
+sy_render 4,556 -> 4,296 cycles a frame, o3_params 398 -> 353, o3_ctrl 572 -> 544, o3_setup 145 -> 120 (models
+from the V4 manual, not the unit). `verify_cf_ident.py` against v9.1: equal up to time shifts; `test_octa303` and
+`test_seam_cf` bit-exact.
+
 ### v9.1 (25 Nov 2026): FM's source through a one-pole
 
 dEVILish FM moves the cutoff, per sample, by the VCA's last word. With FM, DEC, CUT, RES and ENV high that loop went

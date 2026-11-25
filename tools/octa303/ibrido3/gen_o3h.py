@@ -25,15 +25,15 @@ import o3tables as T
 
 import ref303 as R
 STATE = 0x7C00                         # four voice blocks of 64 words (x:$418 * 2): the state, then the control
-NSTATE, CB, NCTL = 32, 32, 29       # block at +CB (all of it by r7: the (r7+N) forms are stock's own)
+NSTATE, CB, NCTL = 32, 32, 30       # block at +CB (all of it by r7: the (r7+N) forms are stock's own)
 # state X:(r7+n): 24-bit words, the ladder's four 32-bit (low 24 bits here, the high byte at +8)
 (S_FB, S_Y1, S_Y2, S_Y3, S_Y4, S_VP1, S_VP2, S_DC, S_AMP, S_FBV, S_Y0V, S_OV, S_Y1H, S_Y2H, S_Y3H, S_Y4H,
  S_FLP, S_MLO, S_TONE, S_OVC, S_KC1, S_KB, S_KK, S_KCLG, S_KCLI, S_KCLL, S_KCLN, S_T1, S_T2) = range(29)
 HI = {S_Y1: S_Y1H, S_Y2: S_Y2H, S_Y3: S_Y3H, S_Y4: S_Y4H}
 # control block X:(r6+n): P_N..P_OSIN decoded from the piece by the glue (its 15 halves in order), the rest derived
 (P_N, P_C1, P_B, P_K, P_CLG, P_CLI, P_CLL, P_CLN, P_W2, P_GC, P_AMP0, P_STEP, P_FLG, P_OSIN,
- P_SCT, P_KM, P_UD, P_FMQ, P_FMF, P_MUF, P_DIS, P_ACI, P_DRV, P_TB, P_FMT, P_CLT, P_DRT, P_DRC, P_ANY) = range(29)
-assert NCTL == 29 and S_T2 < NSTATE
+ P_SCT, P_KM, P_UD, P_FMQ, P_FMF, P_MUF, P_DIS, P_ACI, P_DRV, P_TB, P_FMT, P_CLT, P_DRT, P_DRC, P_ANY, P_TBP) = range(30)
+assert NCTL == 30 and S_T2 < NSTATE
 W_U, W_PC, PIECE = 52, 4, 15
 PTAB = '$fab1e0'                       # schema.DspSection.ptable: the tables below, one block
 # FM's table: per ladder index i the four words LB LK KF KD (kfb's inputs and the ladder's b); the clip's: per j = i -
@@ -79,6 +79,12 @@ def st32a(st):
     e('move    a1,x:(r7+%d)' % st)
     e('move    b1,x:(r7+%d)' % HI[st])
 
+def softclip_inline():
+    clamp_a('#>1482910', '#>%d' % neg24(1482910))
+    for s in ('move    a1,x1', 'move    x1,a', 'asr     #8,a,a', 'move    a1,x0', 'mpy     x0,x0,a', 'asl     #11,a,a',
+              'move    a1,y0', 'mpy     y0,x0,a', 'asl     #11,a,a', 'move    a1,y0', 'move    #>10923,x0',
+              'mpy     y0,x0,a', 'asl     #15,a,a', 'move    a1,x0', 'move    x1,a', 'sub     x0,a'):
+        e(s)
 def clamp_a(hi, lo_neg):
     """a = clamp(a, -lo, hi): the upper bound through y1, the lower through x0 (both 56-bit compares)"""
     e('move    %s,y1' % hi)
@@ -115,6 +121,37 @@ e('add     #>$80,a')
 e('move    a,x:>$20b')
 for m in (0, 1, 4, 6, 7):              # linear (stock's source leaves m6 linear; the others are linear here)
     e('move    #>$ffffff,m%d' % m)
+# v10.0 (vFable's review of v9.1): a record whose sizes do not add up is not rendered.  start + the pieces' n must
+# be 16 (hyb.Frame.words asserts it; octa303.s writes it so): else the zero fill (2 * start words) or a piece (2 n
+# words) could write past X:0..31.  A record that fails renders 32 zeros (silence) and continues after the source.
+e('move    x:(r4+3),a')
+e('and     #>$ff,a')
+e('move    a1,x0')
+e('move    x0,b')                      # b = start
+e('move    x:(r4+3),a')
+e('lsr     #8,a')
+e('and     #>$3,a')
+e('move    a1,y1')                     # y1 = the pieces (0..3)
+for j, lb in enumerate(('oh34a', 'oh35b', 'oh36c')):
+    e('move    y1,a')
+    e('move    #>%d,x0' % j)
+    e('cmp     x0,a')
+    e('ble     %s' % lb)               # piece j absent
+    e('move    x:(r4+%d),a' % (W_PC + PIECE * j))
+    e('and     #>$ffff,a')
+    e('move    a1,x0')
+    e('add     x0,b')
+    lab(lb)
+e('move    #>16,x0')
+e('cmp     x0,b')
+e('beq     oh37k')
+e('move    #0,r3')
+e('clr     b')
+e('do      #32,oh38z')
+e('move    b,x:(r3)+')
+lab('oh38z')
+e('bra     oh08d')
+lab('oh37k')
 e('move    x:>$418,a')                 # the voice's block (64 words)
 e('asl     a')
 e('add     #>$%x,a' % STATE)
@@ -158,7 +195,7 @@ e('beq     oh08d')
 e('lua     (r7+%d),r6' % CB)            # the tables' addresses, once a frame
 e('move    #>%s,x0' % PTAB)
 e('move    x0,x:(r6+%d)' % P_TB)
-for slot, off in ((P_FMT, O_FMT), (P_CLT, O_CLT), (P_DRT, O_DRT), (P_DRC, O_DRC)):
+for slot, off in ((P_TBP, 258), (P_FMT, O_FMT), (P_CLT, O_CLT), (P_DRT, O_DRT), (P_DRC, O_DRC)):
     e('move    x0,b')
     e('add     #>%d,b' % off)
     e('move    b1,x:(r6+%d)' % slot)
@@ -358,7 +395,7 @@ e('sub     b,a')                       # b0 = 0 here
 e('move    x:(r6+%d),b' % P_CLG)
 e('tst     b')
 e('bne     oh13g')
-e('bsr     oh30s')
+softclip_inline()
 e('bra     oh14l')
 lab('oh13g')
 clamp_a('x:(r6+%d)' % P_CLL, 'x:(r6+%d)' % P_CLN)
@@ -376,23 +413,28 @@ def stage(coef, st):
     ld32('b', st)
     e('add     b,a')
     st32a(st)
+def stage2(coef, st):
+    fm('a', 7, 'x:(r6+%d)' % coef, 8)
+    e('move    #0,a0')
+    e('add     b,a')
+    st32a(st)
 e('move    x:(r7+%d),a' % S_Y0V)
-ld32('b', S_Y1)
-e('sub     b,a')
 ld32('b', S_Y2)
 e('add     b,a')
-stage(P_C1, S_Y1)
+ld32('b', S_Y1)
+e('sub     b,a')
+stage2(P_C1, S_Y1)
 for (st, nxt) in ((S_Y2, S_Y3), (S_Y3, S_Y4)):
-    ld32('b', st)                      # a = the new state before
-    e('sub     b,a')
-    e('sub     b,a')
     ld32('b', nxt)
     e('add     b,a')
-    stage(P_B, st)
+    ld32('b', st)
+    e('sub     b,a')
+    e('sub     b,a')
+    stage2(P_B, st)
 ld32('b', S_Y4)
 e('sub     b,a')
 e('sub     b,a')
-stage(P_B, S_Y4)
+stage2(P_B, S_Y4)
 # ---- the VCA's input pair: vp += fm(fb - vp, HP, 4, 11)
 def hp(state, coef):
     e('move    x:(r7+%d),a' % S_FBV)
@@ -417,7 +459,7 @@ e('add     b,a')                       # a = x (a0: a fraction < 1 over an integ
 fm('a', 6, 'x:(r6+%d)' % P_GC, 6)
 clamp_a('#>%d' % T.OTA_LIM, '#>%d' % neg24(T.OTA_LIM))
 fm('a', 4, '#>%d' % T.OTA_IN, 8)
-e('bsr     oh30s')
+softclip_inline()
 fm('a', 4, '#>%d' % T.OTA_OUT, 11)
 clamp_a('#>%d' % T.VCA_LIM, '#>%d' % neg24(T.VCA_LIM))
 e('move    a1,x1')                     # o, clean, into b
@@ -445,8 +487,7 @@ e('move    #>%d,y1' % T.P6_K)
 e('tst     b')
 e('blt     oh15k')
 e('move    #>%d,y1' % T.P6_KP)
-e('move    #>258,n1')                  # P6_FP
-e('move    (r1)+n1')
+e('move    x:(r6+%d),r1' % P_TBP)
 lab('oh15k')
 e('abs     b')                         # |o| < 2^23 <= P6_AMAX: the table's own clamp never acts here
 e('asr     #6,b,b')
@@ -456,11 +497,11 @@ e('asl     #5,b,b')                    # b1 = i = floor(AK / 2^18), b0 = the res
 e('move    b0,a')
 e('lsr     #9,a')                      # a1 = (t & 0xFFFF) >> 1
 e('move    a1,y0')
+e('clr     a       b,n1')
 e('move    #>256,x0')
 e('cmp     x0,b')
 e('bge     oh16f')
-e('clr     a       b,n1')
-e('lua     (r1)+n1,r1')
+e('move    (r1)+n1')
 e('move    p:(r1)+,x0')
 e('move    p:(r1),a')
 e('sub     x0,a')

@@ -18,6 +18,10 @@ The full text before this rewrite: `git show 666b6154:CHANGELOG.md`.
 
 ## Unreleased
 
+- aCiDhYb ACIDV99 (BUILD B9, 25 Nov 2026, `remixes/acidhyb`, MaMarko; code by Claude): OCTA303 v9.1, every voice's
+  chain after the VCO on the DSP (OCTA303 SEAM: FM, MUFF, DIST and DRIV too) and dEVILish FM's source through a
+  one-pole; MORPH v1.2. On the author's MKI: "suona perfettamente", CFIRE 72 % with a full project.
+
 - aCiDtRacK ACIDV91 (`remixes/acidtrack`, MaMarko; code by Claude): STROJ, AtoMizer, DLPUMP/DLCOPY (the demand loader AtoMizer needed) and KITS left out; OCTA303 v8.2 with a stopwatch (`O3_PROF`: per track the render call, entry-to-loop and sample-loop times on DMA timer 3) read over USB as block 4 of `0xc0/0x57` (`modules/usb`) by `tools/octa303/prof/o3prof.py`. The sound is v8.2's (`test_octa303` 125/125). For measuring on the author's MKI.
 - **USB with MIDI OFF: DISK MODE mounts on Windows again** (#1039, reported by yvesrosius). The MSC interface declared one endpoint and two followed, so Windows' USBSTOR failed with Code 10; it now declares two, as stock does. A build-time check over every generated configuration (`descriptors.check_config`) found the audio configurations with MIDI off declaring one interface too few; fixed too, and `verify_usb` expects the corrected counts. Not flashed.
 

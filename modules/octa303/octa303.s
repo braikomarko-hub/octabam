@@ -418,18 +418,17 @@
 .Lcs1\@:
         lea     O3_CL_G,%a0
         move.l  (%a0,%d0.l*4),%d1
-        move.l  %d1,S_CLG(%a3)
         lea     O3_CL_INV,%a0
+        move.l  %d1,S_CLG(%a3)
         move.l  (%a0,%d0.l*4),%d1
-        move.l  %d1,S_CLI(%a3)
         lea     O3_CL_LIM,%a0
+        move.l  %d1,S_CLI(%a3)
         move.l  (%a0,%d0.l*4),%d1
         move.l  %d1,S_CLL(%a3)
 .Lcs9\@:
         .endm
         .macro  KB off, areg            | d0 = the knob byte at off(areg), clamped 0..127
-        moveq   #0,%d0
-        move.b  \off(\areg),%d0
+        mvz.b   \off(\areg),%d0         | (v10.0, Yves Rosius #1244 ff2ef4dd: one mvz.b for moveq + move.b)
         cmp.l   #127,%d0
         bls     .Lkb\@
         moveq   #127,%d0
@@ -484,10 +483,21 @@
         move.l  (%a1,%d0.l*4),%d1
         move.l  %d1,\dst(%a3)
         .endm
-        .macro  RAWW off, dst
-        moveq   #0,%d0
-        move.w  \off(%a4),%d0
-        lsr.l   #8,%d0
+| v10.0 (Yves Rosius, sambanks/octabam#1244 5d7bdd44, ported): KBTAB and TABNEXT are KB then TABs with no
+| address-use stall (MCF54455RM 3.3.5.1): KBTAB sets a1 before KB reads the byte; TABNEXT stores the previous
+| table's long between the next table's lea and its load.  The longs stored are TAB's; the caller stores the last.
+        .macro  KBTAB off, areg, tab    | d0 = the knob byte at off(areg) (KB), d1 = tab[d0]
+        lea     \tab,%a1
+        KB      \off,\areg
+        move.l  (%a1,%d0.l*4),%d1
+        .endm
+        .macro  TABNEXT prev, tab       | prev(a3) = d1, then d1 = tab[d0]
+        lea     \tab,%a1
+        move.l  %d1,\prev(%a3)
+        move.l  (%a1,%d0.l*4),%d1
+        .endm
+        .macro  RAWW off, dst           | dst = the word at off(a4) >> 8, clamped 0..127: its high byte
+        mvz.b   \off(%a4),%d0           | (v10.0, Yves Rosius #1244 ff2ef4dd)
         cmp.l   #127,%d0
         bls     .Lrw\@
         moveq   #127,%d0
@@ -513,6 +523,32 @@ o3_render:
         .else
 sy_render:
         .endif
+| v10.0 (Yves Rosius, sambanks/octabam#1244 298000b0, ported): a call that cannot make this track OCTA303's goes
+| straight to the stock renderer, before the register frame: the track is not latched, and either this is not the
+| frame's last call or no voice starts on it this frame (the full path below then only calls the stock renderer and
+| returns its value: .Lstockcall, .Lnorest, .Ldone with no stopwatch row).  The stock renderer finds the same four
+| arguments at the same offsets and returns to our caller; d1, a0, a1 and the flags are a call's scratch.
+        move.l  4(%sp),%d0              | track
+        moveq   #NTRACKS-1,%d1
+        cmp.l   %d1,%d0
+        bhi     .Lfast                  | (never: the packer renders tracks 0..7; the full path only calls stock)
+        move.l  %d0,%d1
+        lsl.l   #8,%d1                  | track * ST_SIZE (512: 8 + 1)
+        add.l   %d1,%d1
+        lea     o3_state,%a0
+        add.l   %d1,%a0
+        moveq   #16,%d1                 | here, between the add and the load: no address-use stall
+        tst.l   S_LATCHED(%a0)
+        bne     .Lfull                  | latched: the full path
+        cmp.l   16(%sp),%d1             | the frame's last call?
+        bne     .Lfast
+        lea     NIBBLE,%a0
+        add.l   %d0,%a0
+        btst    #4,(%a0)                | a voice starts this frame: the full path decides whose sample
+        bne     .Lfull
+.Lfast:
+        jmp     STOCK_RENDER
+.Lfull:
         lea     -48(%sp),%sp
         movem.l %d2-%d7/%a2-%a6,(%sp)
         move.l  O3_DTCN3,%d0            | ACIDV91 stopwatch (tools/octa303/prof): the call's entry on DMA timer 3
@@ -571,8 +607,8 @@ sy_render:
         move.w  %d0,(%a4)
         move.l  #NEUTRAL_RATE,%d0
         move.w  %d0,6(%a4)
+        lea     S_POS(%a3),%a1          | (before the call, which keeps a1: no address-use stall; #1244 b609e4ed)
         bsr     o3_voice                | a0 = the voice's position fields
-        lea     S_POS(%a3),%a1
         move.l  (%a0)+,(%a1)+
         move.l  (%a0)+,(%a1)+
         move.l  (%a0)+,(%a1)+
@@ -614,7 +650,7 @@ sy_render:
         bne     .Lnatclr
 .Lnatend:
         move.l  %a0,CURSOR
-        moveq   #0,%d0
+        clr.l   44(%sp)                 | the return value: 0
         bra     .Lcalled
 .Lstockcall:
         move.l  64(%sp),-(%sp)          | end
@@ -622,11 +658,11 @@ sy_render:
         move.l  64(%sp),-(%sp)          | ping
         move.l  64(%sp),-(%sp)          | track
         jsr     STOCK_RENDER
-        lea     16(%sp),%sp
+        move.l  %d0,60(%sp)             | the stock return value, handed back (44(%sp) after the pop): stored
+        lea     16(%sp),%sp             | before the pop, a moveq between it and the next sp use (#1244 b609e4ed)
 .Lcalled:
-        move.l  %d0,44(%sp)             | the stock return value, handed back
-        move.l  52(%sp),%d2
         moveq   #NTRACKS-1,%d0
+        move.l  52(%sp),%d2
         cmp.l   %d0,%d2
         bhi     .Ldone
         tst.l   %d4
@@ -635,8 +671,8 @@ sy_render:
         move.w  %d0,(%a4)
         move.w  S_WRATE+2(%a3),%d0
         move.w  %d0,6(%a4)
+        lea     S_POS(%a3),%a1          | (before the call: no address-use stall)
         bsr     o3_voice                | pin the carrier: the positions as they were before the call
-        lea     S_POS(%a3),%a1
         move.l  (%a1)+,(%a0)+
         move.l  (%a1)+,(%a0)+
         move.l  (%a1)+,(%a0)+
@@ -716,25 +752,25 @@ sy_render:
         asr.l   #4,%d0
         add.l   S_SCTRL(%a3),%d0
         CLAMP   %d0,0,S_MAX-1
-        asr.l   #6,%d0
         lea     O3_LADDER_B,%a0
+        asr.l   #6,%d0
         move.l  (%a0,%d0.l*4),%d1
         move.l  %d1,S_B(%a3)
         muls.l  K_C1R(%a5),%d1          | v6.7: c1 = b * C1R (Q12; v6.6: b * 2)
         asr.l   #8,%d1
         asr.l   #4,%d1
-        move.l  %d1,S_C1(%a3)
         lea     O3_LADDER_K,%a0
+        move.l  %d1,S_C1(%a3)
         move.l  (%a0,%d0.l*4),%d1
         muls.l  S_KMUL(%a3),%d1
         asr.l   #8,%d1
-        asr.l   #7,%d1
         lea     O3_KF,%a0               | the oscillation point and its shape by frequency (Q12)
+        asr.l   #7,%d1
         move.l  (%a0,%d0.l*4),%d2
         muls.l  %d2,%d1
         asr.l   #8,%d1
-        asr.l   #4,%d1
         lea     O3_KD,%a0               | v6.9: less the ring's decay, UD (dB/ms) * KD; never < 0
+        asr.l   #4,%d1
         move.l  (%a0,%d0.l*4),%d2
         muls.l  S_UD(%a3),%d2
         asr.l   #8,%d2
@@ -789,12 +825,12 @@ sy_render:
         move.l  %d4,%d0
         moveq   #25,%d1
         lsr.l   %d1,%d0                 | i = phase >> 25
+        move.l  %d0,%d1                 | v10.0: i + 1 first, so neither indexed load follows the write of its
+        addq.l  #1,%d1                  | index (cf_scan: 3 cycles each, 2 a sample on a square voice)
+        and.l   #127,%d1
         move.w  (%a0,%d0.l*2),%d2
         ext.l   %d2                     | c0
-        addq.l  #1,%d0
-        moveq   #127,%d1
-        and.l   %d1,%d0
-        move.w  (%a0,%d0.l*2),%d3
+        move.w  (%a0,%d1.l*2),%d3
         ext.l   %d3
         sub.l   %d2,%d3                 | c1 - c0
         move.l  %d4,%d1
@@ -1437,12 +1473,12 @@ sy_render:
         move.l  %d4,%d0
         moveq   #25,%d1
         lsr.l   %d1,%d0                 | i = phase >> 25
+        move.l  %d0,%d1                 | v10.0: i + 1 first, so neither indexed load follows the write of its
+        addq.l  #1,%d1                  | index (cf_scan: 3 cycles each, 2 a sample on a square voice)
+        and.l   #127,%d1
         move.w  (%a0,%d0.l*2),%d2
         ext.l   %d2                     | c0
-        addq.l  #1,%d0
-        moveq   #127,%d1
-        and.l   %d1,%d0
-        move.w  (%a0,%d0.l*2),%d3
+        move.w  (%a0,%d1.l*2),%d3
         ext.l   %d3
         sub.l   %d2,%d3                 | c1 - c0
         move.l  %d4,%d1
@@ -1694,9 +1730,8 @@ sy_render:
 o3_voice:
         move.l  #VOICE_STRIDE,%d0
         muls.l  %d2,%d0
-        lea     VOICE_BASE,%a0
+        lea     VOICE_BASE+V_POS,%a0    | (V_POS folded in: no lea through the a0 just written; #1244 b609e4ed)
         add.l   %d0,%a0
-        lea     V_POS(%a0),%a0
         rts
 
 | ============================================================================
@@ -2206,8 +2241,8 @@ o3_setup:
         moveq   #FINE_Q8,%d1
         muls.l  %d1,%d0
         move.l  %d0,S_FINE(%a3)
-        KB      4,%a0                   | DRIV: the gain into the output mixer (v7.7)
-        TAB     O3_DRV_G,S_OSIN
+        KBTAB   4,%a0,O3_DRV_G           | DRIV: the gain into the output mixer (v7.7)
+        move.l  %d1,S_OSIN(%a3)
         KB      1,%a0                   | GATE: 0 OFF, >= 1 303
         tst.l   %d0
         beq     .Lsu_g
@@ -3237,8 +3272,8 @@ o3_inc:
         swap    %d1
         and.l   #0xFFFF,%d1
         lsr.l   #2,%d1
-        and.l   #0xFFFF,%d0
         lea     O3_INC_TAB,%a0
+        and.l   #0xFFFF,%d0             | here, between the lea and the load: no address-use stall (#1244 5d7bdd44)
         move.l  (%a0,%d1.l*4),%d1
         lsl.l   %d0,%d1
         move.l  %d1,%d0
@@ -3358,8 +3393,8 @@ o3_acc:
         lea     -32(%sp),%sp
         move.l  %d0,24(%sp)
         move.l  S_ACCI(%a3),%d4
-        move.l  S_RES(%a3),%d5
         lea     O3_AC_K2,%a0
+        move.l  S_RES(%a3),%d5
         move.l  (%a0,%d5.l*4),%d0
         move.l  S_SPD(%a3),%d1
         moveq   #1,%d2
@@ -3390,8 +3425,8 @@ o3_acc:
         bra     .Lac_out
 .Lac_go:
         move.l  S_ACCI(%a3),%d4
-        move.l  S_RES(%a3),%d5
         lea     O3_AC_RE,%a0
+        move.l  S_RES(%a3),%d5
         move.l  (%a0,%d4.l*4),%d6       | Re
         lea     O3_AC_RA,%a0
         move.l  (%a0,%d5.l*4),%d3
@@ -3407,8 +3442,8 @@ o3_acc:
         divu.l  %d3,%d0                 | 2^29 / R24
         move.l  %d0,%d1
         muls.l  %d6,%d1
-        move.l  %d1,0(%sp)              | qre = Re / R24, Q29
         lea     O3_AC_RP,%a0
+        move.l  %d1,0(%sp)              | qre = Re / R24, Q29
         move.l  (%a0,%d5.l*4),%d1
         muls.l  %d0,%d1
         move.l  %d1,4(%sp)              | qrp
@@ -3418,20 +3453,20 @@ o3_acc:
         moveq   #2,%d0
         move.l  %d0,28(%sp)
 .Lac_st:
-        move.l  S_ACCI(%a3),%d4         | ve: VR7's wiper loaded by R119 to C36
         lea     O3_AC_A1,%a0
+        move.l  S_ACCI(%a3),%d4         | ve: VR7's wiper loaded by R119 to C36
         move.l  (%a0,%d4.l*4),%d1
         move.l  24(%sp),%d0
         bsr     o3_mul30
         move.l  %d0,%d6
-        move.l  S_ACCI(%a3),%d4
         lea     O3_AC_A2,%a0
+        move.l  S_ACCI(%a3),%d4
         move.l  (%a0,%d4.l*4),%d1
         move.l  S_V34(%a3),%d0
         bsr     o3_mul30
         add.l   %d0,%d6                 | ve
-        move.l  S_RES(%a3),%d5          | v24: D24 + R46 + VR4B towards C13
         lea     O3_AC_B1,%a0
+        move.l  S_RES(%a3),%d5          | v24: D24 + R46 + VR4B towards C13
         move.l  (%a0,%d5.l*4),%d1
         move.l  S_DVC(%a3),%d0
         bsr     o3_mul30
@@ -3723,10 +3758,10 @@ o3_params:
 .Lp_new:
         moveq   #1,%d0
         move.l  %d0,S_P2DV(%a3)
-        KB      0,%a0                   | OVDR
-        TAB     O3_DF_GIN,S_GIN
-        TAB     O3_DF_OCOMP,S_OCOMP
-        TAB     O3_DF_OGAIN,S_OGAIN
+        KBTAB   0,%a0,O3_DF_GIN          | OVDR
+        TABNEXT S_GIN,O3_DF_OCOMP
+        TABNEXT S_OCOMP,O3_DF_OGAIN
+        move.l  %d1,S_OGAIN(%a3)
         moveq   #0,%d1
         cmp.l   #DF_GIN_Q15,%d0
         bhi     .Lp_g
@@ -3737,17 +3772,17 @@ o3_params:
         move.l  #DF_FM_MUL,%d1
         muls.l  %d1,%d0
         move.l  %d0,S_FMQ(%a3)
-        KB      2,%a0                   | TRCK
-        TAB     O3_DF_TRK_HZ,S_TRKHZ
-        KB      3,%a0                   | VDEC
-        TAB     O3_DF_VEG,S_VEGD
-        TAB     O3_DF_VSUS,S_VSUS
-        KB      4,%a0                   | SLID
-        TAB     O3_DF_SLIDE,S_SLIDE
-        KB      5,%a0                   | ADEC
-        TAB     O3_DF_ADEC,S_ADEC
-        KB      0,%a2                   | SATK (0: none, v6.1's instant attack)
-        TAB     O3_DF_SATK,S_SATK
+        KBTAB   2,%a0,O3_DF_TRK_HZ       | TRCK
+        move.l  %d1,S_TRKHZ(%a3)
+        KBTAB   3,%a0,O3_DF_VEG          | VDEC
+        TABNEXT S_VEGD,O3_DF_VSUS
+        move.l  %d1,S_VSUS(%a3)
+        KBTAB   4,%a0,O3_DF_SLIDE        | SLID
+        move.l  %d1,S_SLIDE(%a3)
+        KBTAB   5,%a0,O3_DF_ADEC         | ADEC
+        move.l  %d1,S_ADEC(%a3)
+        KBTAB   0,%a2,O3_DF_SATK         | SATK (0: none, v6.1's instant attack)
+        move.l  %d1,S_SATK(%a3)
         KB      1,%a2                   | SWP: ACID 0 -> 2 (the 303), WHST 1 -> 1, SELF 2 -> 0
         MIN2
         moveq   #2,%d1
@@ -3779,8 +3814,8 @@ o3_params:
         cmp.l   %a1,%a0
         bne     .Lp_ns
         bsr     o3_setupptr
-        KB      3,%a0
-        TAB     O3_DF_SLIDE,S_SLIDE
+        KBTAB   3,%a0,O3_DF_SLIDE
+        move.l  %d1,S_SLIDE(%a3)
 .Lp_ns:
         move.l  (%sp)+,%a2
         rts
@@ -3868,8 +3903,8 @@ o3_ctrl:
         move.l  %d0,S_INC(%a3)
         move.l  S_PCUR(%a3),%d0         | v7.6: Q8's square by semitone (ref303: SQC / SQK[pcur >> 16])
         asr.l   #8,%d0
-        asr.l   #8,%d0
         lea     O3_SQK,%a0
+        asr.l   #8,%d0
         move.l  (%a0,%d0.l*4),%d1
         move.l  %d1,S_SQK(%a3)
         lsl.l   #8,%d0                  | 128 shorts a row
@@ -3954,8 +3989,8 @@ o3_ctrl:
         move.l  %d0,S_P2EK(%a3)
         tst.l   S_ENVX(%a3)             | env-mod depth
         bne     .Lc_ex
-        move.l  S_ENV(%a3),%d0
         lea     O3_TB_SLO,%a0
+        move.l  S_ENV(%a3),%d0
         move.l  (%a0,%d0.l*4),%d1
         lea     O3_TB_SHI,%a0
         move.l  (%a0,%d0.l*4),%d2
@@ -3987,8 +4022,8 @@ o3_ctrl:
 .Lc_edc:
         move.l  %d1,S_P2EV(%a3)
 .Lc_ed:
-        move.l  S_CUT(%a3),%d0          | cutoff, Q8 semitones above 20 Hz (CUTX: the wide pot)
         lea     O3_TB_OFF,%a0
+        move.l  S_CUT(%a3),%d0          | cutoff, Q8 semitones above 20 Hz (CUTX: the wide pot)
         move.l  (%a0,%d0.l*4),%d2
         lea     O3_TB_CUT,%a0
         tst.l   S_CUTX(%a3)
@@ -4071,15 +4106,15 @@ o3_ctrl:
         bsr     o3_trck
 .Lc_nt:
         move.l  %d3,S_SCTRL(%a3)
-        asr.l   #6,%d3
         lea     O3_LADDER_B,%a0
+        asr.l   #6,%d3
         move.l  (%a0,%d3.l*4),%d0
         move.l  %d0,S_B(%a3)
         muls.l  K_C1R(%a5),%d0          | v6.7: c1 = b * C1R (Q12; v6.6: b * 2)
         asr.l   #8,%d0
         asr.l   #4,%d0
-        move.l  %d0,S_C1(%a3)
         lea     O3_LADDER_K,%a0
+        move.l  %d0,S_C1(%a3)
         move.l  (%a0,%d3.l*4),%d0
         lea     O3_TB_KMUL,%a0
         move.l  (%a0,%d5.l*4),%d1
@@ -4092,16 +4127,16 @@ o3_ctrl:
         move.l  %d1,S_KMUL(%a3)
         muls.l  %d1,%d0
         asr.l   #8,%d0
-        asr.l   #7,%d0
         lea     O3_KF,%a0               | the oscillation point and its shape by frequency (Q12)
+        asr.l   #7,%d0
         move.l  (%a0,%d3.l*4),%d2
         muls.l  %d2,%d0
         asr.l   #8,%d0
-        asr.l   #4,%d0
         lea     O3_TB_UD,%a0            | v6.9: the ring's decay by RES (dB/ms, Q10) ...
+        asr.l   #4,%d0
         move.l  (%a0,%d5.l*4),%d1
-        move.l  %d1,S_UD(%a3)
         lea     O3_KD,%a0               | ... times the feedback a dB/ms, off k; never < 0
+        move.l  %d1,S_UD(%a3)
         move.l  (%a0,%d3.l*4),%d2
         muls.l  %d1,%d2
         asr.l   #8,%d2
@@ -4123,14 +4158,14 @@ o3_ctrl:
         add.l   %d1,%d0
         muls.l  S_OGAIN(%a3),%d0
         asr.l   #8,%d0
-        asr.l   #4,%d0
         lea     O3_LG,%a0               | v6.7: the level by frequency (Q12), the real ladder's
+        asr.l   #4,%d0
         move.l  (%a0,%d3.l*4),%d2       | passband with the resonance up
         muls.l  %d2,%d0
         asr.l   #8,%d0
         asr.l   #4,%d0
-        move.l  %d0,S_GCOMP(%a3)
         lea     O3_VP_W2,%a0            | v7.4: the VCA pair's RES path, OVDR swamping it
+        move.l  %d0,S_GCOMP(%a3)
         move.l  (%a0,%d5.l*4),%d0
         muls.l  S_OCOMP(%a3),%d0
         asr.l   #8,%d0
