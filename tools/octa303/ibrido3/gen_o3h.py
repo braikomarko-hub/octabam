@@ -649,7 +649,6 @@ e('rts')
 
 import re
 # the control block through r7 (stock has the (r7+N) forms, not (r6+N)): x:(r6+n) -> x:(r7+CB+n)
-import re
 L = [re.sub(r'x:\(r6\+(\d+)\)', lambda m: 'x:(r7+%d)' % (CB + int(m.group(1))), l) for l in L]
 L = [l.replace('x:(r6),', 'x:(r7+%d),' % CB) for l in L]
 assert not any(re.search(r'x:\(r6\+', l) for l in L) and CB + NCTL <= 63

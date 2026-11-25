@@ -162,11 +162,14 @@ instruction differently from the chip.
 
 dEVILish FM moves the cutoff, per sample, by the VCA's last word. With FM, DEC, CUT, RES and ENV high that loop went
 chaotic: the note turned into something like TV static (the model alone did it: its periodicity fell from 0.62 at FM 0
-to 0.25 at FM 127, no sample clipped). The word now goes through a one-pole of 1/4 a sample (~1.6 kHz) first
+to 0.25 at FM 127, no sample clipped). The word now goes through a one-pole of 1/4 a sample (~2 kHz) first
 (`S_FLP`, `ref303.py`'s `flp`): on the same note the periodicity is 0.73 and the level stays high. Of the cures tried
 on the model (a stronger low-pass, a slew limit, less FM with resonance, a soft limit of the deviation) this is the
 one MaMarko chose in a blind listening test (25 Nov 2026), "wild but controlled". FM 0 is unchanged sample for sample.
 In aCiDhYb the whole voice after the VCO now runs on the DSP (`modules/octa303-seam`).
+Open (review, 25 Nov 2026): on the ColdFire path (not aCiDhYb) the P11 pause freezes `S_FLP` like the VCO and the
+ladder, and its fixed-point test does not look at it; a long silence (~800 frames) then a new note already differs
+from ref303 before v9.1 (base `5f4885d0`, FM 0), which test_octa303 does not reach. To bisect separately.
 
 ### v7.3 (3 Nov 2026): Zac Kyoti's report, sambanks/octabam#1011
 

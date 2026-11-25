@@ -28,7 +28,8 @@ SIG0, SIG1, W_U, W_PC, PIECE = 0xA303, 0x0303, 52, 4, 15
 MAXP = 3
 
 def hybrid_ok(st):
-    """the cases the seam carries: v9.1, every voice (v9.0: no FM, no MUFF, no DIST, DRIV 0)"""
+    """v9.1: always (every voice is the seam's).  v9.0 carried no FM, MUFF, DIST or DRIV; Voice.call's ColdFire branch
+    and CHAIN are kept for that history and for a build without the seam, and are not reached with it."""
     return True
 
 def flags(st):

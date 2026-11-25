@@ -58,6 +58,8 @@ for c in range(ca):
     sounded = True; bad = bad or e != 0
 bad = bad or not sounded               # silence on both would pass vacuously
 # PASS: every sounding channel equal word for word at one constant lag (19 Nov 2026: +5 samples; the stock source's
-# interpolator ring delays the ColdFire's samples, the seam writes X:0 directly)
+# interpolator ring delays the ColdFire's samples, the seam writes X:0 directly).  25 Nov 2026: +26 between this
+# branch's aCiDtRacK and aCiDhYb images, while the 19 Nov pair still gives +5 under the same port and the 25 Nov
+# aCiDhYb equals the 24 Nov one (ACIDV98) at lag 0 / +1: the lag follows the images' start, not the seam)
 print('port_ab: ' + ('PASS' if not bad else 'FAIL'))
 sys.exit(1 if bad else 0)

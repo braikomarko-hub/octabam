@@ -9,7 +9,7 @@ R, T, S = hyb.R, hyb.T, hyb.S
 out, NN, NS, RUNS, FR = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 OV = int(sys.argv[6]) if len(sys.argv) > 6 else 0
 GJ = os.environ.get('O3_GIUDICE', '/home/claude/stradaA/giudice/giudice_meta/dati')
-fo = open(out, 'wb'); nfr = [0]; stats = {'pieces': {}, 'start': 0, 'silent': 0}
+fo = open(out, 'wb'); nfr = [0]; stats = {'pieces': {}, 'start': 0, 'silent': 0, 'keep': 0, 'fm': 0}
 class Voice:
     def __init__(self, track, df=None, setup=None):
         self.cf, self.ref, self.dsp, self.track, self.df, self.fresh = R.Track(), R.Track(), R.Track(), track, df, 1
@@ -31,6 +31,8 @@ class Voice:
         assert got[s:] == exp[s:], ('python model differs', nfr[0], got, exp)
         if s: stats['start'] += 1
         np_ = words[3] >> 8; stats['pieces'][np_] = stats['pieces'].get(np_, 0) + 1
+        for j in range(np_):                       # v9.1: FM pieces and KEEP pieces (flags bits 0 and 5)
+            fl = words[hyb.W_PC + hyb.PIECE * j + 13]; stats['fm'] += fl & 1; stats['keep'] += (fl >> 5) & 1
         fo.write(struct.pack('<101i', self.track, *words, *got)); nfr[0] += 1
 if NN:
     note = json.load(open(GJ + '/note400.json'))

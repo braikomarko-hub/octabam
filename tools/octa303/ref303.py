@@ -228,7 +228,7 @@ def ctrl(st):
 
 def sample(st):
     if st.fmq:                                       # FM: the last VCA sample moves the cutoff, per sample
-        st.flp += (st.ovca - st.flp) >> 2              # v9.1: through a one-pole, 1/4 a sample (~1.6 kHz): extreme FM
+        st.flp += (st.ovca - st.flp) >> 2              # v9.1: through a one-pole, 1/4 a sample (~2 kHz): extreme FM
         s = clamp(st.sctrl + ((((st.flp >> 8) * st.fmq)) >> 12), 0, T.S_MAX - 1)   # stays wild, not TV static
                                                      # (Marko's choice by ear, 25 Nov 2026, prova2 C)
         i = s >> 6

@@ -705,7 +705,7 @@ sy_render:
         bgt     .Lp11                   | whole voice waits (VCO, filter, FM: paused; the word is the same)
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
-        move.l  S_OVCA(%a3),%d0         | v9.1: through a one-pole, 1/4 a sample (~1.6 kHz): extreme FM stays
+        move.l  S_OVCA(%a3),%d0         | v9.1: through a one-pole, 1/4 a sample (~2 kHz): extreme FM stays
         sub.l   S_FLP(%a3),%d0          | wild, not TV static (Marko's choice by ear, 25 Nov 2026)
         asr.l   #2,%d0
         add.l   S_FLP(%a3),%d0
