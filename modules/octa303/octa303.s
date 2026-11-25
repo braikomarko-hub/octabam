@@ -528,6 +528,7 @@ sy_render:
 | frame's last call or no voice starts on it this frame (the full path below then only calls the stock renderer and
 | returns its value: .Lstockcall, .Lnorest, .Ldone with no stopwatch row).  The stock renderer finds the same four
 | arguments at the same offsets and returns to our caller; d1, a0, a1 and the flags are a call's scratch.
+| (Its tests mirror the full path's entry: a change to .Lison/.Lstock's conditions must be made here too.)
         move.l  4(%sp),%d0              | track
         moveq   #NTRACKS-1,%d1
         cmp.l   %d1,%d0

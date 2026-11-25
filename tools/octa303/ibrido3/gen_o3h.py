@@ -124,6 +124,8 @@ for m in (0, 1, 4, 6, 7):              # linear (stock's source leaves m6 linear
 # v10.0 (vFable's review of v9.1): a record whose sizes do not add up is not rendered.  start + the pieces' n must
 # be 16 (hyb.Frame.words asserts it; octa303.s writes it so): else the zero fill (2 * start words) or a piece (2 n
 # words) could write past X:0..31.  A record that fails renders 32 zeros (silence) and continues after the source.
+# (A refused record that carried w1 = 1, a new voice, does not clear the state: the next record has w1 = 0 and the
+# voice goes on from the old state.  Only a damaged record can be refused: octa303.s always writes start + n = 16.)
 e('move    x:(r4+3),a')
 e('and     #>$ff,a')
 e('move    a1,x0')
