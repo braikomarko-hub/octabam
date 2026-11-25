@@ -90,8 +90,8 @@ int main(int argc, char** argv) {
                 TWord v = mem.get(MemArea_X, 2 * k + h) & 0xffffff;
                 if (v != ((TWord)w[85 + k] & 0xffffff)) { if (!fb && bad < 10) fprintf(stderr, "frame %llu sample %d.%d: %06x, expected %06x\n", (unsigned long long)nfr, k, h, v, (TWord)w[85 + k] & 0xffffff); ++fb; }
             }
-            if (getenv("O3H_DUMP") && nfr < 2) { fprintf(stderr, "ctl:"); for (int k = 0; k < 12; ++k) fprintf(stderr, " %06x", mem.get(MemArea_X, 0x7c40 + k) & 0xffffff);
-                fprintf(stderr, "\nstate:"); for (int k = 0; k < 16; ++k) fprintf(stderr, " %06x", mem.get(MemArea_X, 0x7c00 + 0x10 * t + k) & 0xffffff);
+            if (getenv("O3H_DUMP") && nfr < 2) { fprintf(stderr, "ctl:"); for (int k = 0; k < 28; ++k) fprintf(stderr, " %06x", mem.get(MemArea_X, 0x7c00 + 0x40 * t + 32 + k) & 0xffffff);
+                fprintf(stderr, "\nstate:"); for (int k = 0; k < 32; ++k) fprintf(stderr, " %06x", mem.get(MemArea_X, 0x7c00 + 0x40 * t + k) & 0xffffff);
                 fprintf(stderr, "\nout:"); for (int k = 0; k < 32; ++k) fprintf(stderr, " %06x", mem.get(MemArea_X, k) & 0xffffff); fprintf(stderr, "\n"); }
             if (fb) { ++bad; badw += fb; }
             if (c > mx) mx = c; tot += c;

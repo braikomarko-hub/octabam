@@ -222,12 +222,17 @@
         .set    S_P2D2,480
         .set    S_P2D3,484
         .set    S_P2DA,488                      | and page 1's source address
+| v9.1: FM's source, the VCA's word through a one-pole (1/4 a sample)
+        .set    S_FLP,492
 | v9.0 the hybrid (O3 SEAM): the track's block in o3_hyb
         .set    H_U,0                           | u of each sample of the frame, 16 longs
-        .set    H_P,64                          | three pieces, 11 longs each: n c1 b k clg cli cll w2 gcomp amp step
-        .set    H_NP,196                        | pieces this frame
-        .set    H_START,200                     | the frame's first rendered sample + 1 (0: none yet)
-        .set    H_MODE,208                      | 1: the DSP has the voice (its states live there)
+        .set    H_P,64                          | three pieces, 13 longs each: n c1 b k clg cli cll w2 gcomp amp step
+                                                | flags osin (v9.1; with FM, c1 b k clg = sctrl kmul ud fmq)
+        .set    H_NP,220                        | pieces this frame
+        .set    H_START,224                     | the frame's first rendered sample + 1 (0: none yet)
+        .set    H_MODE,228                      | 1: the DSP has the voice (its states live there)
+        .set    H_FMD,232                       | v9.1: an FM piece since the last control step (the next plain
+                                                | piece keeps FM's last coefficients: flags bit 5)
         .set    ST_SHIFT,9
         .set    ST_SIZE,512
 
@@ -659,8 +664,8 @@ sy_render:
         lea     (%a1,%d0.l),%a6
         moveq   #11,%d7                 | it holds the shift 11 (FM411, the VCO's >> 11) for the whole loop
         .if     O3_SEAM
-        move.l  52(%sp),%d0             | v9.0 (O3 SEAM, the hybrid): the DSP renders the chain after u when the
-        lsl.l   #8,%d0                  | voice has no FM, no MUFF, no DIST and DRIV 0 (o3h.asm at the source seam);
+        move.l  52(%sp),%d0             | v9.0 (O3 SEAM, the hybrid): the DSP renders the chain after u (o3h.asm
+        lsl.l   #8,%d0                  | at the source seam; v9.1: every voice, v9.0: no FM, MUFF, DIST, DRIV);
         lea     o3_hyb,%a2              | a2 = the track's hybrid block (the header is not read past this point)
         add.l   %d0,%a2
         tst.l   60(%sp)                 | a frame's first call (start 0), whichever half renders it: no pieces, no
@@ -668,39 +673,7 @@ sy_render:
         clr.l   H_NP(%a2)               | ColdFire left them stale for the next one)
         clr.l   H_START(%a2)
 .LHnf:
-        tst.l   S_FMQ(%a3)
-        bne     .LHcf
-        tst.l   S_MUFF(%a3)
-        bne     .LHcf
-        tst.l   S_DIST(%a3)
-        bne     .LHcf
-        move.l  S_OSIN(%a3),%d0
-        cmp.l   #DRV_G0,%d0
-        beq     .LHrender
-.LHcf:
-        tst.l   H_MODE(%a2)             | back from the DSP: the ColdFire's chain starts from rest (its states
-        beq     .LHcf0                  | were not kept while the DSP had the voice)
-        clr.l   H_MODE(%a2)
-        moveq   #0,%d0
-        move.l  %d0,S_Y1(%a3)
-        move.l  %d0,S_Y2(%a3)
-        move.l  %d0,S_Y3(%a3)
-        move.l  %d0,S_Y4(%a3)
-        move.l  %d0,S_FB(%a3)
-        move.l  %d0,S_DC(%a3)
-        move.l  %d0,S_TONE(%a3)
-        move.l  %d0,S_OVCA(%a3)
-        move.l  %d0,S_MLO(%a3)
-        move.l  %d0,S_VP1(%a3)
-        move.l  %d0,S_VP2(%a3)
-        move.l  %d0,S_FBO(%a3)
-.LHcf0:
-        moveq   #16,%d0                 | the frame's last call on the ColdFire: no record, nothing kept
-        cmp.l   64(%sp),%d0
-        bne     .LHcf1
-        clr.l   H_NP(%a2)
-        clr.l   H_START(%a2)
-.LHcf1:
+        bra     .LHrender               | v9.1: every voice (FM, MUFF, DIST and DRIV too) renders on the DSP
         .endif
         tst.l   S_FMQ(%a3)              | v8.8: the neutral case runs .LFloop (same samples, fewer tests)
         bne     .Lloop
@@ -732,7 +705,11 @@ sy_render:
         bgt     .Lp11                   | whole voice waits (VCO, filter, FM: paused; the word is the same)
         move.l  S_FMQ(%a3),%d1          | FM: the last VCA sample moves the cutoff, per sample
         beq     .Lnofm
-        move.l  S_OVCA(%a3),%d0
+        move.l  S_OVCA(%a3),%d0         | v9.1: through a one-pole, 1/4 a sample (~1.6 kHz): extreme FM stays
+        sub.l   S_FLP(%a3),%d0          | wild, not TV static (Marko's choice by ear, 25 Nov 2026)
+        asr.l   #2,%d0
+        add.l   S_FLP(%a3),%d0
+        move.l  %d0,S_FLP(%a3)
         asr.l   #8,%d0
         muls.l  %d1,%d0
         asr.l   #8,%d0
@@ -1414,6 +1391,7 @@ sy_render:
         moveq   #CS,%d0
         move.l  %d0,S_CS(%a3)
         bsr     o3_ctrl
+        clr.l   H_FMD(%a2)              | v9.1: the control step sets the coefficients again
         bsr     .LHopen
 .LHnoctl:
         move.l  S_INC(%a3),%d5          | VCO
@@ -1586,9 +1564,13 @@ sy_render:
         move.w  %d0,(%a0)+
         move.l  (%a4)+,%d0              | ampstep (signed, 16 bits)
         move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0              | v9.1: flags, osin
+        move.w  %d0,(%a0)+
+        move.l  (%a4)+,%d0
+        move.w  %d0,(%a0)+
         subq.l  #1,%d1
         bne     .LHr2
-        lea     88(%a6),%a0             | w44: u, sixteen longs (high half first)
+        lea     104(%a6),%a0            | w52: u, sixteen longs (high half first)
         lea     H_U(%a2),%a4
         moveq   #16,%d1
 .LHr3:
@@ -1600,7 +1582,8 @@ sy_render:
         clr.l   H_NP(%a2)               | the next frame starts clean
         clr.l   H_START(%a2)
         bra     .Ldone
-| .LHopen: a new piece, a4 = it: n = 0 and this sample's control words.  Clobbers d0 (keeps the rest).
+| .LHopen: a new piece, a4 = it: n = 0 and this sample's control words.  Clobbers d0 and d1 (both free at its
+| two calls: before the loop, and after .LHclose, which clobbers them too).
 .LHopen:
         move.l  H_NP(%a2),%d0
         cmp.l   #3,%d0                  | (three at most a frame: the call's, the control step's, the second
@@ -1609,15 +1592,47 @@ sy_render:
         subq.l  #1,H_NP(%a2)
 .LHo1:
         addq.l  #1,H_NP(%a2)
-        mulu.w  #44,%d0
+        mulu.w  #52,%d0
         lea     H_P(%a2),%a4
         add.l   %d0,%a4
         moveq   #0,%d0
         move.l  %d0,(%a4)
+        move.l  S_MUFF(%a3),%d1         | v9.1: flags: bit 0 FM, 2..1 MUFF, 3 DIST, 4 ACID, 5 KEEP
+        add.l   %d1,%d1
+        tst.l   S_DIST(%a3)
+        beq     .LHo2
+        addq.l  #8,%d1
+.LHo2:
+        moveq   #2,%d0
+        cmp.l   S_SWP(%a3),%d0
+        bne     .LHo3
+        moveq   #16,%d0
+        add.l   %d0,%d1
+.LHo3:
+        tst.l   S_FMQ(%a3)
+        beq     .LHo4
+        addq.l  #1,%d1                  | FM: the DSP sets c1 b k and the clip per sample from these four
+        moveq   #1,%d0
+        move.l  %d0,H_FMD(%a2)
+        move.l  %d1,44(%a4)
+        move.l  S_SCTRL(%a3),4(%a4)
+        move.l  S_KMUL(%a3),8(%a4)
+        move.l  S_UD(%a3),12(%a4)
+        move.l  S_FMQ(%a3),16(%a4)
+        bra     .LHo6
+.LHo4:
+        tst.l   H_FMD(%a2)              | no FM now, but FM moved the coefficients since the last control step:
+        beq     .LHo5                   | the DSP keeps its own (ref303 keeps them to the next control step)
+        moveq   #32,%d0
+        add.l   %d0,%d1
+.LHo5:
+        move.l  %d1,44(%a4)
         move.l  S_C1(%a3),4(%a4)
         move.l  S_B(%a3),8(%a4)
         move.l  S_K(%a3),12(%a4)
         move.l  S_CLG(%a3),16(%a4)
+.LHo6:
+        move.l  S_OSIN(%a3),48(%a4)
         move.l  S_CLI(%a3),20(%a4)
         move.l  S_CLL(%a3),24(%a4)
         move.l  S_W2(%a3),28(%a4)

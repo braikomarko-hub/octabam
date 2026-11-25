@@ -15,7 +15,7 @@ dEVILish from the chooser. It takes PHASER's place on both menus.
 | Page | Knob | What it does |
 |---|---|---|
 | 1 | OVDR | overdrive: the VCO into the filter (25 = the 303) |
-| 1 | FM | filter FM from the VCA output |
+| 1 | FM | filter FM from the VCA output, smoothed a little (since 25 Nov 2026: high FM stays wild, without the static) |
 | 1 | TRCK | filter tracking |
 | 1 | VDEC | volume decay, up to endless notes |
 | 1 | SLID | slide time, 60–360 ms |

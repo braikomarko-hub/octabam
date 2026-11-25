@@ -61,7 +61,7 @@ FIELDS = ('latched', 'wave', 'dist', 'fab', 'phase', 'inc', 'pcur', 'cs', 'meg',
           'dc', 'tone', 'c1', 'b', 'k', 'gcomp', 'ptgt', 'cut', 'res', 'env', 'dec',
           'gin', 'vegd', 'vsus', 'trkhz', 'fmq', 'sctrl', 'kmul', 'ovca', 'ocomp', 'ogain',
           'slide', 'swp', 'adec', 'satk', 'vatt', 'spd', 'muff', 'mlo', 'cutx', 'envx', 'ginq15', 'nz',
-          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqi', 'ud', 'sqk', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2', 'sql')
+          'gmode', 'gate', 'glvl', 'gstep', 'lstep', 'ltick', 'idle', 'kmax', 'tps', 'gnew', 'gel', 'gend', 'sqi', 'ud', 'sqk', 'accvg', 'osin', 'oslim', 'fine', 'cutb', 'envs', 'smok', 'setsl', 'gsel', 'fcnt', 'fpt', 'fseen', 'gelf', 'mach', 'clg', 'cli', 'cll', 'fskip', 'stopd', 'vp1', 'vp2', 'w2', 'sql', 'flp')
 class Track:
     def __init__(self):
         for k in FIELDS: setattr(self, k, 0)
@@ -228,7 +228,9 @@ def ctrl(st):
 
 def sample(st):
     if st.fmq:                                       # FM: the last VCA sample moves the cutoff, per sample
-        s = clamp(st.sctrl + ((((st.ovca >> 8) * st.fmq)) >> 12), 0, T.S_MAX - 1)
+        st.flp += (st.ovca - st.flp) >> 2              # v9.1: through a one-pole, 1/4 a sample (~1.6 kHz): extreme FM
+        s = clamp(st.sctrl + ((((st.flp >> 8) * st.fmq)) >> 12), 0, T.S_MAX - 1)   # stays wild, not TV static
+                                                     # (Marko's choice by ear, 25 Nov 2026, prova2 C)
         i = s >> 6
         st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
         st.k = kfb(i, st.kmul, st.ud)

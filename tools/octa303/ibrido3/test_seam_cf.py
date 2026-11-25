@@ -1,7 +1,7 @@
 """The hybrid's ColdFire half (octa303.s built with O3_SEAM = 1) in cfsim: every frame's record, halfword for halfword,
 against hyb.py's model, and the samples the DSP half makes of it (hyb.dsp_model) against ref303 (coordination,
-19 Nov 2026; code written by Claude).  Also: a voice the seam does not carry (FM, MUFF, a DIST carrier, DRIV) still
-plays on the ColdFire, bit-exact, and the record is not written then.
+19 Nov 2026; code written by Claude).  v9.1 (25 Nov 2026): every voice is the seam's (FM, MUFF, DIST and DRIV too), so the sound of every frame
+is compared with ref303; fm_toggle switches FM, MUFF and DRIV within notes (FM's KEEP pieces).
 usage (worktree root): python3 tools/octa303/ibrido3/test_seam_cf.py [frames]"""
 import os, random, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -89,6 +89,19 @@ def scen(seed, frames, devil=False, mix=False):
         sc.append((w, start, 0, df, su))
     return sc
 
+def fm_toggle(seed, frames):
+    """v9.1: FM, MUFF and DRIV switched on and off inside held notes, often between control steps (KEEP pieces)"""
+    rnd = random.Random(seed); sc = []; df = [64] * 12; df[7] = df[8] = df[10] = df[11] = 0; df[1] = 127
+    su = [0, 0, 64, 0, 0, 64]; w = W(0, 70, 110, 90, 60, 64)
+    for f in range(frames):
+        start = rnd.randint(1, 15) if f == 0 else rnd.choice([0, rnd.randint(1, 15)]) if rnd.random() < 0.03 else None
+        if start is not None: su = list(su); su[0] = rnd.choice([0, 1, 2, 3])       # WAVE (+D: DIST)
+        if rnd.random() < 0.2:
+            df = list(df); df[1] = 0 if df[1] else rnd.choice([64, 127]); df[9] = rnd.choice([0, 0, 1, 2])
+        if rnd.random() < 0.1: su = list(su); su[4] = rnd.choice([0, 0, 127])
+        sc.append((w, start, 0, df, su))
+    return sc
+
 for nm, kw in (('saw_square', {}), ('devilish_smooth', {'devil': True}), ('mixed_modes', {'devil': True, 'mix': True})):
     tot = 0; recs = 0; bad = None
     for seed in range(3):
@@ -96,6 +109,12 @@ for nm, kw in (('saw_square', {}), ('devilish_smooth', {'devil': True}), ('mixed
         tot += n; recs += nr
         if mm: bad = 'seed %d: %s' % (seed, mm); break
     check('seam_' + nm, bad is None, ('%d samples, %d records' % (tot, recs)) if bad is None else bad)
+tot = 0; recs = 0; bad = None
+for seed in range(3):
+    n, nr, mm = run(fm_toggle(seed + 40, FRAMES))
+    tot += n; recs += nr
+    if mm: bad = 'seed %d: %s' % (seed, mm); break
+check('seam_fm_toggle', bad is None, ('%d samples, %d records' % (tot, recs)) if bad is None else bad)
 # review 19 Nov: a frame whose first call is hybrid and last is not (a START of a DIST note at 11), then a START of
 # a saw note at 5 whose first call is the ColdFire's: the pieces of the first must not reach the second's record
 sv = [0, 0, 64, 0, 0, 64]; sd = [2, 0, 64, 0, 0, 64]

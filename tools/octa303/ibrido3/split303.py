@@ -1,6 +1,8 @@
-"""ref303 cut in two at the hybrid seam (coordination, 19 Nov 2026).
+"""ref303 cut in two at the hybrid seam (coordination, 19 Nov 2026; v9.1, 25 Nov 2026: the whole voice after u).
 cf_front(st) = everything up to u (the oscillator, the input highpass, OVDR's gain, the noise when SWP < 2);
-dsp_chain(st, u) = the rest of sample() for the smooth voice (MUFF off, DIST off; DRIV 0 or not).
+dsp_chain(st, u) = the rest of sample(): FM's coefficients (from the last VCA word, smoothed), the loop, the ladder,
+the VCA, pin 6, MUFF, DIST, the output coupling and DRIV.  FM's block moves to the chain's start: it reads only the
+last sample's VCA word and writes only the ladder's coefficients, which nothing before u reads.
 The integer arithmetic is ref303's own, copied line for line; split_sample(st) == ref303.sample(st) is checked."""
 import os, sys
 D = os.environ.get('REF303_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -15,12 +17,6 @@ def pk(tag, v):
     return v
 
 def cf_front(st):
-    if st.fmq:
-        s = clamp(st.sctrl + ((((st.ovca >> 8) * st.fmq)) >> 12), 0, T.S_MAX - 1)
-        i = s >> 6
-        st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
-        st.k = kfb(i, st.kmul, st.ud)
-        clset(st, i)
     inc = st.inc
     ph = st.phase = (st.phase + inc) & M32
     if st.wave == 0:
@@ -48,6 +44,15 @@ def cf_front(st):
 def dsp_chain(st, x, peaks=False):
     P = pk if peaks else (lambda t, v: v)
     P('u', x)
+    if st.fmq:                                       # FM (v9.1: smoothed), per sample
+        st.flp += (st.ovca - st.flp) >> 2; P('flp', st.flp)
+        d = ((st.flp >> 8) * st.fmq) >> 12; P('fmdev', d)
+        s = clamp(st.sctrl + d, 0, T.S_MAX - 1)
+        i = s >> 6
+        st.b = LB[i]; st.c1 = (LB[i] * T.TB_C1R) >> 12
+        P('lkm', (R.LK[i] * st.kmul) >> 15)
+        st.k = kfb(i, st.kmul, st.ud)
+        clset(st, i)
     y4 = st.y4
     st.fb += fm(y4 - st.fb, T.TB_FBHP, 4, 11, 'fbhp'); P('fbst', st.fb)
     fb = clamp(y4 - st.fb, -(1 << 23), 1 << 23); P('fb', fb)
@@ -79,12 +84,27 @@ def dsp_chain(st, x, peaks=False):
         else: v = F[i] + (((F[i + 1] - F[i]) * ((t & 0xFFFF) >> 1)) >> 15)
         o = -v if o < 0 else v
     P('p6', o)
-    assert not st.muff and not st.dist, 'the smooth voice only'
-    st.ovca = o
+    if st.muff:                                      # MUFF: the bass passes, the rest is clipped
+        P('mlod', o - st.mlo)
+        st.mlo += fm(clamp(o - st.mlo, -T.DF_MUFF_DLIM, T.DF_MUFF_DLIM), T.DF_MUFF_LP, 4, 11, 'mlo'); P('mlo', st.mlo)
+        h = o - st.mlo; P('mh', h)
+        if st.muff == 1:
+            h = clamp(h, -1048576, 1048576)
+            h = fm(softclip(fm(h, 3413, 2, 8, 'mk')), 9830, 4, 11, 'mt')
+        else:
+            h = clamp(h, -T.DF_MUFF_T, T.DF_MUFF_T)
+        o = st.mlo + h; P('muff', o)
+    st.ovca = o                                      # FM reads the VCA after the Muffler
+    if st.dist:
+        o = softclip(o * T.DIST_GAIN + T.DIST_BIAS)
+        st.tone += fm(o - st.tone, T.DIST_TONE, 7, 8, 'tone'); P('tone', st.tone)
+        o = st.tone
     st.dc += fm(o - st.dc, T.TB_DCHP, 4, 11, 'dc'); P('dcst', st.dc)
     if st.osin == T.DRV_G[0]:
         return P('out', clamp(o - st.dc, -(1 << 24), 1 << 24))
-    return R.drive(st, o - st.dc)
+    y = clamp(o - st.dc, -T.DRV_YLIM, T.DRV_YLIM)
+    P('drvx', ((y >> 6) * st.osin) >> 6)
+    return P('drv', R.drive(st, o - st.dc))
 
 def split_sample(st, peaks=False):
     return dsp_chain(st, cf_front(st), peaks)

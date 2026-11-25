@@ -28,7 +28,7 @@ oh03y:
         move    #>$ffffff,m6
         move    #>$ffffff,m7
         move    x:>$418,a
-        asr     a
+        asl     a
         add     #>$7c00,a
         move    a,r5
         lua     (r5+0),r7
@@ -39,7 +39,7 @@ oh03y:
         beq     oh04o
         lua     (r7+0),r1
         clr     a
-        do      #16,oh05z
+        do      #32,oh05z
         move    a,x:(r1)+
 oh05z:
 oh04o:
@@ -51,7 +51,7 @@ oh04o:
         asl     a
         move    a1,x1
         move    r4,b
-        add     #<44,b
+        add     #<52,b
         add     x1,b
         move    b,r0
         tst     a
@@ -67,10 +67,25 @@ oh06f:
         move    a1,x1
         move    x1,a
         beq     oh08d
+        lua     (r7+32),r6
+        move    #>$fab1e0,x0
+        move    x0,x:(r7+55)
+        move    x0,b
+        add     #>516,b
+        move    b1,x:(r7+56)
+        move    x0,b
+        add     #>2300,b
+        move    b1,x:(r7+57)
+        move    x0,b
+        add     #>2489,b
+        move    b1,x:(r7+58)
+        move    x0,b
+        add     #>2747,b
+        move    b1,x:(r7+59)
         move    #>4,n4
         move    (r4)+n4
         do      a,oh09p
-        move    #>$7c40,r6
+        lua     (r7+32),r6
         move    x:(r4)+,b
         and     #>$ffff,b
         move    b1,x0
@@ -132,9 +147,82 @@ oh06f:
         move    x0,b
         asr     #8,b,b
         move    b,x:(r6)+
-        move    #>$7c40,r6
+        move    x:(r4)+,b
+        and     #>$ffff,b
+        move    b1,x0
+        move    x0,x:(r6)+
+        move    x:(r4)+,b
+        and     #>$ffff,b
+        move    b1,x0
+        move    x0,x:(r6)+
+        lua     (r7+32),r6
+        move    x:(r7+33),x0
+        move    x0,x:(r7+46)
+        move    x:(r7+34),x0
+        move    x0,x:(r7+47)
+        move    x:(r7+35),x0
+        move    x0,x:(r7+48)
+        move    x:(r7+36),x0
+        move    x0,x:(r7+49)
+        move    x:(r7+44),a
+        and     #>1,a
+        move    a1,x:(r7+50)
+        move    x:(r7+44),a
+        lsr     #1,a
+        and     #>3,a
+        move    a1,x:(r7+51)
+        move    x:(r7+44),a
+        lsr     #3,a
+        and     #>1,a
+        move    a1,x:(r7+52)
+        move    x:(r7+44),a
+        lsr     #4,a
+        and     #>1,a
+        move    a1,x:(r7+53)
+        move    x:(r7+45),a
+        move    #>4096,x0
+        move    #0,y1
+        move    #>1,b
+        cmp     x0,a
+        teq     y1,b
+        move    b1,x:(r7+54)
+        move    x:(r7+44),a
+        and     #>$e,a
+        move    a1,x:(r7+60)
+        move    x:(r7+44),a
+        lsr     #5,a
+        and     #>1,a
+        beq     oh18k
+        move    x:(r7+20),x0
+        move    x0,x:(r7+33)
+        move    x:(r7+21),x0
+        move    x0,x:(r7+34)
+        move    x:(r7+22),x0
+        move    x0,x:(r7+35)
+        move    x:(r7+23),x0
+        move    x0,x:(r7+36)
+        move    x:(r7+24),x0
+        move    x0,x:(r7+37)
+        move    x:(r7+25),x0
+        move    x0,x:(r7+38)
+        move    x:(r7+26),x0
+        move    x0,x:(r7+39)
+oh18k:
         bsr     oh10c
-        nop
+        move    x:(r7+33),x0
+        move    x0,x:(r7+20)
+        move    x:(r7+34),x0
+        move    x0,x:(r7+21)
+        move    x:(r7+35),x0
+        move    x0,x:(r7+22)
+        move    x:(r7+36),x0
+        move    x0,x:(r7+23)
+        move    x:(r7+37),x0
+        move    x0,x:(r7+24)
+        move    x:(r7+38),x0
+        move    x0,x:(r7+25)
+        move    x:(r7+39),x0
+        move    x0,x:(r7+26)
 oh09p:
 oh08d:
         move    ssh,x0
@@ -148,20 +236,107 @@ oh11r:
         nop
         rts
 oh10c:
-        move    x:(r6+10),x0
+        move    x:(r7+42),x0
         move    x0,x:(r7+8)
-        move    x:(r6),b
+        move    x:(r7+32),b
         tst     b
         beq     oh12x
         do      b,oh12x
+        move    x:(r7+50),b
+        tst     b
+        beq     oh19f
+        move    x:(r7+19),a
+        move    x:(r7+16),x0
+        sub     x0,a
+        asr     #2,a,a
+        add     x0,a
+        move    a1,x:(r7+16)
+        asr     #8,a,a
+        move    x:(r7+49),x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #11,a,a
+        move    x:(r7+46),x0
+        add     x0,a
+        move    #>28479,y1
+        cmp     y1,a
+        tge     y1,a
+        move    #0,x0
+        cmp     x0,a
+        tlt     x0,a
+        asr     #6,a,a
+        move    a1,x1
+        move    x1,a
+        asl     #2,a,a
+        move    x:(r7+56),x0
+        add     x0,a
+        move    a,r1
+        nop
+        move    p:(r1)+,x0
+        move    x0,x:(r7+34)
+        move    x0,a
+        move    #>9618,x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #11,a,a
+        move    a1,x:(r7+33)
+        move    p:(r1)+,a
+        move    x:(r7+47),x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #8,a,a
+        move    p:(r1)+,x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #11,a,a
+        move    a1,y1
+        move    p:(r1)+,b
+        move    x:(r7+48),x0
+        move    b1,y0
+        mpy     y0,x0,b
+        asl     #13,b,b
+        move    b1,x0
+        move    y1,a
+        sub     x0,a
+        move    #0,x0
+        tst     a
+        tlt     x0,a
+        move    a1,x:(r7+35)
+        move    x:(r7+53),b
+        tst     b
+        beq     oh20n
+        move    x1,a
+        move    #>383,x0
+        sub     x0,a
+        ble     oh20n
+        move    a1,x0
+        asl     a
+        add     x0,a
+        move    x:(r7+57),x0
+        add     x0,a
+        move    a,r1
+        nop
+        move    p:(r1)+,x0
+        move    x0,x:(r7+36)
+        move    p:(r1)+,x0
+        move    x0,x:(r7+37)
+        move    p:(r1),a
+        move    a1,x:(r7+38)
+        neg     a
+        move    a1,x:(r7+39)
+        bra     oh19f
+oh20n:
+        move    #0,x0
+        move    x0,x:(r7+36)
+oh19f:
         move    x:(r7+15),a
         move    x:(r7+4),a0
         asl     #24,a,a
         move    x:(r7+0),x0
         sub     x0,a
         asr     #4,a,a
-        move    a1,y0
         move    #>555,x0
+        move    a1,y0
         mpy     y0,x0,a
         asl     #12,a,a
         move    x:(r7+0),x0
@@ -182,32 +357,32 @@ oh10c:
         add     x0,a
         move    x1,b
         asr     #8,b,b
+        move    x:(r7+35),x0
         move    b1,y0
-        move    x:(r6+3),x0
         mpy     y0,x0,b
         asl     #23,b,b
         sub     b,a
-        move    x:(r6+4),b
+        move    x:(r7+36),b
         tst     b
         bne     oh13g
         bsr     oh30s
         bra     oh14l
 oh13g:
-        move    x:(r6+6),y1
+        move    x:(r7+38),y1
         cmp     y1,a
         tge     y1,a
-        move    x:(r6+7),x0
+        move    x:(r7+39),x0
         cmp     x0,a
         tlt     x0,a
         asr     #4,a,a
+        move    x:(r7+36),x0
         move    a1,y0
-        move    x:(r6+4),x0
         mpy     y0,x0,a
         asl     #15,a,a
         bsr     oh30s
         asr     #4,a,a
+        move    x:(r7+37),x0
         move    a1,y0
-        move    x:(r6+5),x0
         mpy     y0,x0,a
         asl     #15,a,a
         move    a1,x1
@@ -224,8 +399,8 @@ oh14l:
         asl     #24,b,b
         add     b,a
         asr     #7,a,a
+        move    x:(r7+33),x0
         move    a1,y0
-        move    x:(r6+1),x0
         mpy     y0,x0,a
         asl     #15,a,a
         move    #0,a0
@@ -233,8 +408,8 @@ oh14l:
         move    x:(r7+1),b0
         asl     #24,b,b
         add     b,a
-        move    a1,x:(r7+1)
         asr     #24,a,b
+        move    a1,x:(r7+1)
         move    b1,x:(r7+12)
         move    x:(r7+13),b
         move    x:(r7+2),b0
@@ -246,8 +421,8 @@ oh14l:
         asl     #24,b,b
         add     b,a
         asr     #7,a,a
+        move    x:(r7+34),x0
         move    a1,y0
-        move    x:(r6+2),x0
         mpy     y0,x0,a
         asl     #15,a,a
         move    #0,a0
@@ -255,8 +430,8 @@ oh14l:
         move    x:(r7+2),b0
         asl     #24,b,b
         add     b,a
-        move    a1,x:(r7+2)
         asr     #24,a,b
+        move    a1,x:(r7+2)
         move    b1,x:(r7+13)
         move    x:(r7+14),b
         move    x:(r7+3),b0
@@ -268,8 +443,8 @@ oh14l:
         asl     #24,b,b
         add     b,a
         asr     #7,a,a
+        move    x:(r7+34),x0
         move    a1,y0
-        move    x:(r6+2),x0
         mpy     y0,x0,a
         asl     #15,a,a
         move    #0,a0
@@ -277,8 +452,8 @@ oh14l:
         move    x:(r7+3),b0
         asl     #24,b,b
         add     b,a
-        move    a1,x:(r7+3)
         asr     #24,a,b
+        move    a1,x:(r7+3)
         move    b1,x:(r7+14)
         move    x:(r7+15),b
         move    x:(r7+4),b0
@@ -286,8 +461,8 @@ oh14l:
         sub     b,a
         sub     b,a
         asr     #7,a,a
+        move    x:(r7+34),x0
         move    a1,y0
-        move    x:(r6+2),x0
         mpy     y0,x0,a
         asl     #15,a,a
         move    #0,a0
@@ -295,15 +470,15 @@ oh14l:
         move    x:(r7+4),b0
         asl     #24,b,b
         add     b,a
-        move    a1,x:(r7+4)
         asr     #24,a,b
+        move    a1,x:(r7+4)
         move    b1,x:(r7+15)
         move    x:(r7+9),a
         move    x:(r7+5),x1
         sub     x1,a
         asr     #4,a,a
-        move    a1,y0
         move    #>333,x0
+        move    a1,y0
         mpy     y0,x0,a
         asl     #12,a,a
         move    a1,x0
@@ -317,8 +492,8 @@ oh14l:
         move    x:(r7+6),x1
         sub     x1,a
         asr     #4,a,a
-        move    a1,y0
         move    #>719,x0
+        move    a1,y0
         mpy     y0,x0,a
         asl     #12,a,a
         move    a1,x0
@@ -329,14 +504,14 @@ oh14l:
         move    x:(r7+9),a
         sub     x0,a
         asr     #6,a,a
+        move    x:(r7+40),x0
         move    a1,y0
-        move    x:(r6+8),x0
         mpy     y0,x0,a
         asl     #17,a,a
         add     b,a
         asr     #6,a,a
+        move    x:(r7+41),x0
         move    a1,y0
-        move    x:(r6+9),x0
         mpy     y0,x0,a
         asl     #17,a,a
         move    #>799590,y1
@@ -346,14 +521,14 @@ oh14l:
         cmp     x0,a
         tlt     x0,a
         asr     #4,a,a
-        move    a1,y0
         move    #>7596,x0
+        move    a1,y0
         mpy     y0,x0,a
         asl     #15,a,a
         bsr     oh30s
         asr     #4,a,a
-        move    a1,y0
         move    #>17669,x0
+        move    a1,y0
         mpy     y0,x0,a
         asl     #12,a,a
         move    #>1657856,y1
@@ -365,7 +540,7 @@ oh14l:
         move    a1,x1
         move    x1,b
         move    x:(r7+8),a
-        move    x:(r6+11),x0
+        move    x:(r7+43),x0
         add     x0,a
         move    #0,x0
         tst     a
@@ -380,7 +555,7 @@ oh14l:
         move    b,x0
         move    x0,b
         move    x0,x:(r7+11)
-        move    #>$fab1e0,r1
+        move    x:(r7+55),r1
         move    #>2241,y1
         tst     b
         blt     oh15k
@@ -421,12 +596,90 @@ oh17s:
         move    x:(r7+11),b
         tst     b
         tge     y1,a
+        move    x:(r7+60),b
+        tst     b
+        beq     oh24d
+        move    x:(r7+51),b
+        tst     b
+        beq     oh21m
+        move    a1,x1
+        move    x:(r7+17),x0
+        sub     x0,a
+        asr     #4,a,a
+        move    #>693,x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #12,a,a
+        move    x:(r7+17),x0
+        add     x0,a
+        move    a1,x:(r7+17)
+        move    a1,x0
+        move    x1,a
+        sub     x0,a
+        move    #>1,x0
+        cmp     x0,b
+        bne     oh22h
+        move    #>1048576,y1
+        cmp     y1,a
+        tge     y1,a
+        move    #>15728640,x0
+        cmp     x0,a
+        tlt     x0,a
+        asr     #2,a,a
+        move    #>3413,x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #15,a,a
+        bsr     oh30s
+        asr     #4,a,a
+        move    #>9830,x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #12,a,a
+        bra     oh23e
+oh22h:
+        move    #>314572,y1
+        cmp     y1,a
+        tge     y1,a
+        move    #>16462644,x0
+        cmp     x0,a
+        tlt     x0,a
+oh23e:
+        move    a1,x0
+        move    x:(r7+17),a
+        add     x0,a
+oh21m:
+        move    a1,x:(r7+19)
+        move    x:(r7+52),b
+        tst     b
+        beq     oh24d
+        move    a1,x0
+        asl     #2,a,a
+        add     x0,a
+        add     #>125829,a
+        bsr     oh30s
+        move    x:(r7+18),x0
+        sub     x0,a
+        asr     #7,a,a
+        move    #>18830,x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #15,a,a
+        move    x:(r7+18),x0
+        add     x0,a
+        move    a1,x:(r7+18)
+        move    a1,x1
+        move    x1,a
+        bra     oh33o
+oh24d:
+        move    a1,x:(r7+19)
+oh33o:
         move    a1,x1
         move    x:(r7+7),x0
         sub     x0,a
         asr     #4,a,a
-        move    a1,y0
         move    #>41,x0
+        move    a1,y0
         mpy     y0,x0,a
         asl     #12,a,a
         move    x:(r7+7),x0
@@ -435,6 +688,83 @@ oh17s:
         move    a1,x0
         move    x1,a
         sub     x0,a
+        move    x:(r7+54),b
+        tst     b
+        beq     oh25v
+        move    #>4194304,y1
+        cmp     y1,a
+        tge     y1,a
+        move    #>12582912,x0
+        cmp     x0,a
+        tlt     x0,a
+        asr     #6,a,a
+        move    x:(r7+45),x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #17,a,a
+        move    #0,a0
+        move    x:(r7+59),r1
+        move    a,b
+        move    b,x:(r7+27)
+        tst     b
+        bge     oh26p
+        move    #>4,n1
+        nop
+        move    (r1)+n1
+oh26p:
+        abs     a
+        move    p:(r1)+,x0
+        move    x0,x:(r7+28)
+        cmp     x0,a
+        ble     oh27k
+        sub     x0,a
+        move    p:(r1)+,y1
+        cmp     y1,a
+        tge     y1,a
+        move    a1,x1
+        move    p:(r1)+,y1
+        mpy     y1,x1,b
+        asl     #1,b,b
+        move    b0,a
+        lsr     #9,a
+        move    a1,y0
+        move    p:(r1)+,x0
+        move    x0,x:(r7+11)
+        move    x:(r7+58),r1
+        move    #>256,x0
+        cmp     x0,b
+        bge     oh28f
+        clr     a       b,n1
+        lua     (r1)+n1,r1
+        move    p:(r1)+,x0
+        move    p:(r1),a
+        sub     x0,a
+        move    a1,x1
+        mpy     x1,y0,a
+        asl     #8,a,a
+        move    a1,x1
+        move    x0,a
+        add     x1,a
+        bra     oh29s
+oh28f:
+        move    #>256,n1
+        lua     (r1)+n1,r1
+        move    p:(r1),a
+oh29s:
+        move    x:(r7+11),x0
+        move    a1,y0
+        mpy     y0,x0,a
+        asl     #9,a,a
+        move    a1,x0
+        move    x:(r7+28),a
+        add     x0,a
+oh27k:
+        move    a1,y1
+        neg     a
+        move    x:(r7+27),b
+        tst     b
+        tge     y1,a
+oh25v:
         asr     #6,a,a
         move    a1,x1
         move    x1,a

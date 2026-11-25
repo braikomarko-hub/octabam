@@ -158,6 +158,16 @@ simulator checks in seconds. Not done: `cfsim.py`'s output has not been compared
 the same calls under `ot_emu`; the port gate and the unit are what catch a simulator that reads an
 instruction differently from the chip.
 
+### v9.1 (25 Nov 2026): FM's source through a one-pole
+
+dEVILish FM moves the cutoff, per sample, by the VCA's last word. With FM, DEC, CUT, RES and ENV high that loop went
+chaotic: the note turned into something like TV static (the model alone did it: its periodicity fell from 0.62 at FM 0
+to 0.25 at FM 127, no sample clipped). The word now goes through a one-pole of 1/4 a sample (~1.6 kHz) first
+(`S_FLP`, `ref303.py`'s `flp`): on the same note the periodicity is 0.73 and the level stays high. Of the cures tried
+on the model (a stronger low-pass, a slew limit, less FM with resonance, a soft limit of the deviation) this is the
+one MaMarko chose in a blind listening test (25 Nov 2026), "wild but controlled". FM 0 is unchanged sample for sample.
+In aCiDhYb the whole voice after the VCO now runs on the DSP (`modules/octa303-seam`).
+
 ### v7.3 (3 Nov 2026): Zac Kyoti's report, sambanks/octabam#1011
 
 Zac Kyoti studied `ref303.py` against v7.1 and sent five findings with a repro script. Every number

@@ -47,22 +47,25 @@ if NN:
 for run in range(RUNS):
     rnd = random.Random(1000 + run)
     df = setup = None
-    if run < OV:      # dEVILish on the track, its knobs at random (OVDR up to 127) but FM 0 and MUFF OFF; SETUP at
-        df = [rnd.choice([0, 1, 2, 64, 127, rnd.randint(0, 127)]) for _ in range(12)]      # random but DRIV 0
-        df[1] = df[9] = 0
-        setup = [0, rnd.choice([0, 1]), rnd.randint(0, 127), rnd.randint(0, 127), 0, rnd.randint(0, 127)]
+    if run < OV:      # dEVILish on the track, its knobs at random (v9.1: FM, MUFF, SWP too, FM often high); SETUP at
+        df = [rnd.choice([0, 1, 2, 64, 127, rnd.randint(0, 127)]) for _ in range(12)]      # random, DRIV too
+        if rnd.random() < 0.5: df[1] = rnd.choice([64, 100, 127])
+        setup = [0, rnd.choice([0, 1]), rnd.randint(0, 127), rnd.randint(0, 127),
+                 rnd.choice([0, 0, 127, rnd.randint(0, 127)]), rnd.randint(0, 127)]
     v = Voice(run & 3, df, setup)
     kv = lambda: rnd.choice([0, 1, 64, 126, 127, rnd.randint(0, 127)])
     w = None; code = 0
     for f in range(FR):
         if f == 0 or rnd.random() < 0.05:
-            code = rnd.choice([0, 1, 4, 5])   # WAVE: saw/square, R (bit 2); not DIST (bit 1)
+            code = rnd.randint(0, 7)          # WAVE: saw/square, DIST (bit 1), R (bit 2)
             w = [0x4000 + rnd.randint(-24, 30) * 256, kv() << 8, kv() << 8, kv() << 8, kv() << 8, rnd.choice([0, 0, 127, kv()]) << 8]
             s = rnd.randint(0, 15) if f else 0
             v.frame([(w, False, code, s), (w, True, code, 16 - s)])
         else:
             if rnd.random() < 0.08:
                 w = list(w); w[rnd.randint(1, 5)] = kv() << 8
+            if df is not None and rnd.random() < 0.01:          # v9.1: dEVILish moves mid-note (FM, MUFF on/off)
+                df = list(df); df[rnd.choice([1, 1, 7, 9])] = rnd.choice([0, 1, 2, 127, rnd.randint(0, 127)]); v.df = df
             s = rnd.randint(1, 15) if rnd.random() < 0.3 else 0
             v.frame([(w, False, code, s), (w, False, code, 16 - s)] if s else [(w, False, code, 16)])
 print('frames', nfr[0], stats)

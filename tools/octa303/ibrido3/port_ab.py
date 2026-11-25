@@ -1,7 +1,7 @@
 """The hybrid end to end under the port: the same project on two images -- aCiDtRacK (the voice on the ColdFire) and
 aCiDhYb (the chain after u on the DSP, OCTA303 SEAM) -- and their main outs compared sample for sample.  The project:
 play_gate.py's fixture (T5 and T6 OCTA-303 every step with CUT/RES/ENV/ACC 127, T1 on 1 5 9 13, 300 BPM).
-usage (worktree root): port_ab.py IMAGE_CF IMAGE_HYB PROJECT [frames]
+usage (worktree root): [O3_PAB_DEVIL=page1/page2] port_ab.py IMAGE_CF IMAGE_HYB PROJECT [frames]
 What it cannot see: the port runs a frame when its work is done (no cycle limit) and models one DSP core at a time;
 equal audio here says the record, the seam and the chain are right, not that the chip has the cycles."""
 import os, pathlib, subprocess, sys, wave
@@ -11,6 +11,13 @@ import play_gate as PG
 a, b, proj = sys.argv[1:4]; frames = sys.argv[4] if len(sys.argv) > 4 else '3000'
 out = ROOT / 'out/octa303/port-ab'; out.mkdir(parents=True, exist_ok=True)
 card = PG.fixture(proj, out)
+DEVIL = os.environ.get('O3_PAB_DEVIL')   # v9.1: "p1,p1,p1,p1,p1,p1/p2,..": dEVILish on T5 and T6 FX1 with these pages
+if DEVIL:                                # (FM, MUFF, SWP...: the voices the DSP now carries too)
+    sys.path.insert(0, str(ROOT / 'tools/hw')); import ot_project as OTP
+    p1, p2 = ([int(x) for x in h.split(',')] for h in DEVIL.split('/'))
+    for t in (5, 6): OTP.set_fx(out / 'RIG', 'fx1', t, 'DEVILISH', page=p1, page2=p2, guard=False)
+    subprocess.run([sys.executable, str(ROOT / 'tools/emu/ot_emu/stage_card.py'), str(out / 'RIG'), 'OCTABAM', 'RIG',
+                    '--tree', str(out / 'tree'), '--out', str(card)], check=True, stdout=subprocess.DEVNULL)
 res = {}
 for tag, img in (('cf', a), ('hyb', b)):
     wav = out / ('%s.wav' % tag)

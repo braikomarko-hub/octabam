@@ -20,7 +20,7 @@ locked, morphed by scenes and the crossfader and modulated by the track's LFOs, 
 | page | name | range | default | what it does |
 |---|---|---|---|---|
 | 1 | OVDR | 0..127 | 25 | overdrive: the VCO into the filter; 0 none, 25 the 303, 127 = 66.6× (resonance swamped) |
-| 1 | FM | 0..127 | 0 | filter FM from the VCA output (after the Muffler); high = towards chaos |
+| 1 | FM | 0..127 | 0 | filter FM from the VCA output (after the Muffler), through a one-pole of 1/4 a sample since OCTA303 v9.1 (25 Nov 2026: high FM stays wild, no static); high = towards chaos |
 | 1 | TRCK | 0..127 | 0 | filter tracking, linear in Hz up to ~2.7 kHz/oct; low notes can shut the filter |
 | 1 | VDEC | 0..127 | 64 | volume: 0..64 decay 16 ms .. the 303's; 64..127 the sustain level, 127 = endless notes |
 | 1 | SLID | 0..127 | 0 | slide time, 60 ms (0, the 303) .. 360 ms |

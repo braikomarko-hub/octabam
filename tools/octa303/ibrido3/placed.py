@@ -20,8 +20,8 @@ with tempfile.TemporaryDirectory() as d:
 mine = [bb[i] | bb[i + 1] << 8 | bb[i + 2] << 16 for i in range(0, len(bb), 3)]
 diff = [i for i, w in enumerate(mine) if word(0, pa + i) != w]
 print('payload %s: %d words at P:0x%05x, %d differ from o3h.asm assembled there' % (tag, len(mine), pa, len(diff)))
-sys.path.insert(0, 'tools/octa303'); import o3tables as T
-tab = [int(v) & 0xFFFFFF for v in list(T.P6_F) + list(T.P6_FP)]
+sys.path.insert(0, 'tools/octa303'); sys.path.insert(0, HERE); import gen_o3h as G
+tab = [int(v) & 0xFFFFFF for v in G.ptable]           # v9.1: pin 6, FM's, the clip's and DRIV's tables
 td = [i for i, v in enumerate(tab) if word(1, ta + i) != v]
 print('  table: %d words at X:0x%05x, %d differ' % (len(tab), ta, len(td)))
 seam = {'A': 0x39C, 'B': 0x1A2}[tag]
