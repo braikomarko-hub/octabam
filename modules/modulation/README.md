@@ -34,125 +34,6 @@ Stored parts: MODE bytes 3..5 (FLNG/COMB/PHSR) mean one lower since ENS
 went; the page-1 order is RATE DPTH DLY FDBK LOFI MIX, page 2 MODE TONE
 WDTH. `stamp-defaults` before play.
 
-## Measured
-
-- **25 Oct 2026, the cost pass** (not bit-identical; `verify_modulation` 29/29
-  at its original bars, `verify-knobs` 131 cases 0 flagged,
-  `verify_stations_fx2` PASS). Instructions per sample from `dsp_host -meter`
-  (LOFI 40, MIX 100, 16-sample blocks, the per-block work included): LINE
-  JUNO / DIM / FLNG 316.9 → 212.9 / 258.8 / 259.8, COMB 298.5 → 262.5, PHSR
-  296.8 (unchanged). `cycle_count.py`: LINE 330 → 266, COMB 291 → 255, PHSR
-  298. Words 1,411 → 1,417. On the unit (octabam-inserts, 24 Oct 2026, slot
-  cost as a share of a frame) JUNO / DIM / FLNG 10.0 %, COMB 9.5 %, PHSR 8.7 %;
-  not measured since this pass. Changes: (1) the swept delays are a straight
-  line per block (`mo_knot`) to what the LFO, WDTH, DPTH and DLY give `n7`
-  samples on, and the loop adds the slope: the two per-sample triangles and the
-  per-sample steps of wid and depth are gone (wid and depth glide per block,
-  `mo_glide`); a triangle corner inside a block is cut to the chord, at most
-  `slope * n7 / 2` of delay (3.2 samples at RATE 127, DPTH 127, DLY 64), and the first
-  block after init or a MODE change starts on the end value; (2) the fixed taps
-  (FLNG only) and the highpass and lift's lowpass (DIM only) are branched past
-  in the other modes, with their states (`MODEARM` stretches, priced as the
-  worst arm by `cycle_count.py`); `bl`, `kc` and `kb` are read from the r7
-  block there, and L and R read one copy of `bd ff`; (3) `mo_herm` works from
-  the successive differences in registers, 71 → 54 words and one scratch word
-  instead of eight (the COMB walk is 9 words, not 17). `modulation_ref.py`
-  models the block-linear sweep (`process(exact=True)` is the per-sample LFO).
-- **25 Oct 2026, on the unit** (I3 = hw/usb-standalone-transport + the pass above,
-  MODULATION on all 8 tracks in one slot, per-slot cost = (layout - BASE) / 4, BASE
-  22.5 % / 14.9 %; core 0 = core 1, FX1 = FX2): JUNO 7.2 %, DIM 8.76 %, FLNG 9.22 %,
-  COMB 7.93 %, PHSR 8.65 %; `dear` costs what its mode costs. Caps at a 95 % limit:
-  9.07 % core 0, 10.0 % core 1. FLNG was 0.15 over; its fixed-tap arm was then trimmed
-  (the second channel reuses the first's address, the fraction waits in n3, bl is an
-  immediate): 259.8 → 253.6 instructions a sample, 1,417 → 1,413 words. I4 (the same
-  project and layouts): FLNG 8.95 %, 0.12 under the core-0 cap; the other modes and `dear`
-  unchanged (JUNO 7.20, DIM 8.75, COMB 7.93, PHSR 8.65, `dear` 8.65 %).
-- **5 Oct 2026, the cycles pass** (bit-identical, `make verify-ident
-  MOD=modulation` 13/13): LINE 354 → 330, COMB 329 → 291, PHSR 298.
-  The lines run as modulo-1024 rings in the two loops (`m5 = $3ff`, a
-  stock modulo; every FX1 allocator base is 1024-aligned, `DSP.md`'s
-  table, line R at +1024), so `mo_itap` and `mo_herm` step to the next
-  delay with a post-decrement read instead of the add / and / n5 /
-  (r5)+n5 / −n5 sequence per point.
-- **27 Sep 2026, the cycle pass** (PR: mod-cycles): pricer per loop LINE
-  404 → 354, PHSR 394 → 298, COMB 339 → 329 words/sample; the priced
-  worst core beside the bus and the other FX1 stations 2,781 → 2,585 (four Characters beside the reverb now bound it;
-  four JUNO + reverb + 3 sends 2,781 → 2,581), payload A FREE 87 → 138.
-  Exact (13/13 `verify-ident` settings bit-identical): the walk pointers by
-  `lua`, `mo_itap`/`mo_herm` read and step back in one move
-  (`y:(r5)-n5,b`, a stock form), limited values moved straight into `y1`,
-  one fixed-tap split shared by L and R (`n3`, `$44`). Within the bars, not
-  bit-identical: LINE's eight one-poles as two products `c x + c' s` (c'
-  streamed; the halved-difference form truncated one bit per sample) and
-  PHSR's eight mod stages rolled two per trip with the stage inline (no
-  limiting reload between the tap weights: one is set, the rest 0). Against
-  main's render on the ident matrix the LINE settings differ by at most 6 LSB
-  (−123 dBFS) and one PHSR setting by 1 LSB; every other setting is
-  bit-identical. `verify_modulation` reference errors unchanged (JUNO
-  2.33e-5 → 2.36e-5, PHSR hard 5.55e-5 → 5.53e-5); `make verify-knobs` 0
-  flagged, 0 garbage-start flagged. Priced on a scratch edit, not applied:
-  LOFI removed −18 words/sample in every loop (its inline hold and mask;
-  LINE 336, PHSR 280, COMB 311); PHSR capped at 4 stages −68 (two trips of
-  the roll: PHSR 230), which drops 6/8-stage phasing.
-- **1,480 words** with the knob ramps (26 Sep 2026; payload A FREE 61
-  beside the bus; pricer per loop LINE 404, PHSR 397, COMB 339 words/sample).
-  Before them: 1,383 words (`make bus`, 23 Sep 2026; 1,352 on 22 Sep, 1,128 on 20
-  Sep, LOFI added 16 Sep 2026: 1,044 before, 1,199 with ENS), payload A FREE
-  673 beside the bus; pricer per loop PHSR 393, LINE 372, COMB 321 words/sample
-  (489 / 423 / 361 on 22 Sep; 525 / 446 / 359 before the pointer rewrite).
-  23 Sep 2026: the allpass stage passes x0 straight through (its entry and
-  exit copies went, 20 calls per sample), the LFO, LOFI and MIX bodies are
-  inline, the fixed taps' centre is split into i and f per block, c200, the
-  COMB period−1 and trim are stream words, and six parallel moves with
-  stock precedent; 13 settings (every MODE × two knob sets, zeros, max)
-  bit-identical (`make verify-ident MOD=modulation`). The priced worst
-  core (four PHSR beside the reverb) went 3,121 → 2,737 against 3,120
-  usable. The loops are pointer-addressed since 22 Sep 2026 (PR #378):
-  displaced moves per sample LINE 107, PHSR 136, COMB 116 → 0, the block's
-  constants streamed at r7+$48 and the states walked from r7+$23; 15
-  renders across every MODE bit-identical. A one-word displaced move runs
-  3.98 cycles on the chip against 2.00 for a pointer move (probe 57,
-  `docs/firmware/CHIP.md` section 2), which the word count cannot show.
-- The 14 Sep 2026 build against its reading estimates: words were
-  estimated 700..900 and came in 300 higher (the phaser's unrolled tap
-  weighting is ~180 words per channel pair, the Hermite read 90); cycles
-  were estimated ≈ 200 and came in 270 higher (the LFO shaping — the
-  parabola sine is 17 instructions a call, six calls in ENS — and the
-  one-poles are the difference). PHSR was retired 13 Sep 2026 at 464
-  cycles and brought back on ChowPhaser's law.
-- `tools/verify/verify_modulation.py`, **29 gates, all PASS**: MIX 0
-  bit-exact in every mode; an FX2 instance a bit-exact dry pass with the
-  guard clean; every mode against `modulation_ref.py` on a stereo signal
-  (max error ≤ 1e-4 where the law is linear; COMB's ring recirculates its
-  rounding, 5.5e-4 against a 3e-3 bar); the Juno's sweep 1.56..5.10 ms and
-  0.5 Hz; the through-zero null −138 dB; the phaser unity at FDBK 64; the
-  comb's period at three pitches; LOFI against the reference at hold 7 / 24 bits
-  (JUNO), hold 32 / 9 bits (PHSR), hold 64 / 5 bits (DIM), hold 40 / 8 bits
-  through the ring (COMB) — the hold to the sample, the mask within one quantum.
-- The LFO's increment is an integer count of 2^-23 cycles (the mpy keeps
-  the integer part); the reference models that (a float increment drifts
-  2.5 % at RATE 14).
-- Output trims (16 Sep 2026, measured on the pad and the loop stems): each
-  mode carries a trim that levels it with JUNO at the views: DIM −8 dB (its
-  five weights scaled), FLNG −7 (blend and feedforward scaled; the feedback
-  is FDBK's), PHSR −2 (the selected stage weight), COMB −12 (on the parked
-  wet, after the line write, so the ring is untouched). After the trims,
-  active RMS against JUNO: DIM −1.9 / +2.6 (pad / loop), FLNG −1.9 / +2.8,
-  COMB +11.8 / +2.4, PHSR −1.4 / +4.5.
-- Heard, 16 Sep 2026, on the emulator (`abkit`, the pad and loop stems,
-  level-matched, Sam listening): JUNO "good", DIM "good", FLNG "good" at
-  RATE 8 (the view was 14: "slower please"), COMB "sounds like what you
-  describe" — kept, PHSR "pretty good". LOFI (same day): two placements
-  rendered on JUNO over the loop at 90 — on the wet before MIX, and at the
-  line write — Sam: "c please" (the line write).
-
-## On the unit
-
-- Image 88 (Sam's MKII, 27 Sep 2026): a fourth MODULATION beside the reverb
-  overran the DSP; three fit. The cycle pass above prices four inside the
-  budget, not measured on the unit since.
-- Not listened to on the unit.
-
 ## Open
 
 - DIM's amounts are ours; the Juno's own asymmetry (R 1.51..5.40 ms vs L
@@ -167,11 +48,6 @@ WDTH. `stamp-defaults` before play.
   Airwindows' 3-point read (weights 1−f, 1, f, × 0.5, minus 1/50 of the
   second difference) preceded by an "air" pre-emphasis (3 mul, 8 add a
   channel) that puts back the highs the averaging takes.
-
-## Gates
-
-`tools/verify/verify_modulation.py` (the manifest's), `make verify-ident
-MOD=modulation`, `make verify-knobs`.
 
 ## Modes
 
@@ -202,14 +78,18 @@ inline at its three sites per channel (L advances the shared counter and
 latches on its compare, R latches on the counter reading 0; the mask keeps
 bit 23 so the extension byte stays consistent and the store does not
 saturate), as is the MIX. LINE's swept delays come from `mo_knot` once per
-block (`mo_dly`: the triangle, depth and centre). Straight-line callees: `mo_tap` (the linear read,
+block (`mo_dly`: the triangle, depth and centre). Which of LINE's arms run is
+a flag the dispatch sets in n4: + FLNG (the fixed taps), − DIM (the highpass
+and the lift), 0 JUNO. Straight-line callees: `mo_tap` (the linear read,
 blending toward the older sample; the fixed taps use it too since 26 Sep
-2026, split per sample from the centre's run value; `mo_itap` is its
-second entry), `mo_herm` (the 4-point Hermite read from the successive differences,
+2026, split per sample from the centre's run value, and R's fixed tap reuses
+L's split through `mo_itrd`), `mo_herm` (the 4-point Hermite read from the successive differences,
 scaled 1/16 inside), `mo_apst` (one allpass stage, x in and y out in x0 so a chain
 passes it straight through; PHSR's eight mod stages carry it inline, two
 per trip of a counted loop, since 27 Sep 2026), `mo_para` (the parabola
-sine), `mo_tab` (the table read, per block). The one-poles are
+sine), `mo_pco` (one channel's PHSR coefficient ramps, per block),
+`mo_tab` (the table read, per block; the P table is `modulation_ref.TABLE`,
+which the manifest loads). The one-poles are
 `s' = c x + c' s` with `c' = 1 − c` streamed beside `c`. The PHSR chain runs at half scale for headroom (an
 allpass cascade peaks above its input).
 

@@ -12,9 +12,9 @@ REMIX = Remix(
                "(October 2026): hours of live use with two or three OCTA-303 tracks, dEVILish, DISTORX and dB666",
     doc="aCiDhYb: the hybrid OCTA303 (FM, filter, VCA, MUFF, DIST and output on the DSP) + dEVILish + MORPH (track + UP/DOWN: the scene morph by itself) + TRACK PATTERNS + SPECTRUM (ladder, SEM, isolator, vowels) + DISTORX (BOSS SD-1 + Pro Co RAT + Turbo RAT) + VCA160 (the dbx 160, side-chain KEY from any track through KEYBUS) + FET76 (the UREI 1176LN limiter, for the master after VCA160) + LOAD METER + USB AUDIO OUT MASTER + BRAIN (FX presets from the card; switch remixes from the card); DARK REV the one reverb.",
     modules=('OCTA303', 'OCTA303 SEAM', 'DEVILISH', 'MORPH', 'STORE', 'USB', 'BRAIN', 'MEMORY',
-             'SPECTRUM', 'DELAY', 'DARK REV', 'DISTORX', 'VCA160', 'KEYBUS', 'FET76',
+             'MODULATION', 'DELAY', 'DARK REV', 'DISTORX', 'VCA160', 'KEYBUS', 'FET76',
              'LOAD METER', 'TRACK PATTERNS', 'REC CS1 SKIP', 'RECORDER LOOP FIX'),
-    fx1=('SPECTRUM', 'DEVILISH', 'DISTORX', 'VCA160'),
+    fx1=('MODULATION', 'DEVILISH', 'DISTORX', 'VCA160'),
     # dB666 is VCA160 now and DISTORX sorts before it: pinned to the ids the author's saved projects use
     ids={"VCA160": 0x1b, "DISTORX": 0x06},
     # The shared window: LOAD METER's DSP half in the gap below 0x37F00 (KEYBUS's words at X:0x37F60..0x37F6F). ACIDV91: AtoMizer and the demand loader (DLCOPY, its stub, DARK REV's guard) are out.
