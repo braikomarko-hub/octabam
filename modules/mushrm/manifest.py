@@ -1,6 +1,7 @@
 """MU-SHRM -- the Mu-Tron III's photocell on two Sherman Filterbank-style filters, with the dirt.
 
-A per-track insert (FX1 or FX2: no delay line, its state is ~60 words of its r7 block).  Idea, choices and
+A per-track insert (FX1 or FX2: no delay line, its state is ~60 words of its r7 block), MONO: L and R are summed,
+filtered once, and the result goes to both sides (MaMarko, 26 Nov 2026).  Idea, choices and
 listening: MaMarko; design, model and code: Claude (Anthropic), 26 Nov 2026.
 
   * the photocell (the Mu-Tron III's envelope follower): the block peak of |L+R|/2 -- of this track, or with

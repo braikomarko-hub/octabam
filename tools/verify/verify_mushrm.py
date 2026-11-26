@@ -5,7 +5,7 @@ Written by Claude (Anthropic), 26 Nov 2026.  The model (tools/mushrm/mushrm_ref.
 is written from it by tools/mushrm/gen_mushrm.py.  What this proves:
 
   generator   -> modules/mushrm/mushrm.asm is what gen_mushrm.py writes now (--check)
-  bit-exact   -> on both payloads, FX1 and FX2 instances, every sample of every render equals the model's:
+  bit-exact   -> on both payloads, FX1 and FX2 instances, every sample of every render (both sides) equals the model's:
                  the knobs' corners and 60 random knob sets on a 303 loop, noise, a sine sweep and silence,
                  with KEY OFF and KEY T1..T8 (KEYBUS's peak word seeded with -xword), blocks of 16 frames
   guard       -> dsp_host's -guard: no write outside the frame and the instance's state

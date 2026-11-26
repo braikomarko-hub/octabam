@@ -7,7 +7,7 @@
 ;
 ; Insert contract: frames in place at x:(r0) (L, R interleaved), n7 frames, knobs from r6
 ; (page 1 at +0..5; page 2 two to a word at +12..14, bits 16-23 and 8-15), state in this
-; instance's r7 block (and r1 = a channel's block - $100 in the sample loop). In the shared
+; instance's r7 block. MONO: L and R are summed, filtered once, and the result goes to both. In the shared
 ; window it reads one word: KEYBUS's block peak of the track its KEY names.
 ; ---------------------------------------------------------------------------
 
@@ -406,11 +406,17 @@ mzpeak:
         move x:(r7+$38),b           
         normf b1,a                  
         move a,x:(r7+$23)           ; the clock's step, limited
-        move r7,a                   
-        sub #>$0000fd,a             
-        move a1,x:(r7+$3e)          
-; ==== the sample loop ====
+; ==== the sample loop: MONO, (L + R)/2 filtered once, the result on both sides ====
+        move #$1,n0                 
         do n7,>mzloop               
+        move x:(r0),a               
+        move x:(r0+n0),x0           
+        add x0,a                    
+        asr #$1,a,a                 
+        move a,x:(r7+$2f)           ; x = (L + R)/2
+        move x:(r7+$26),b           
+        tst b                       
+        beq mzc1                    ; DIRT 0: no clock, no noise
         move x:(r7+$01),a           
         move x:(r7+$23),y1          
         add y1,a                    ; phase + step
@@ -442,11 +448,8 @@ mzpeak:
         move x1,b                   ; clean
         move b1,x:(r7+$02)          
         move b1,x:(r7+$29)          
-        move x:(r7+$3e),r1          ; the left channel's block - $100
-        move #$7,n1                 
-        do #$2,>mzchan              
-; ---- a channel: r1 points at its block ----
-        move x:(r0),x0              
+mzc1:
+        move x:(r7+$2f),x0          
         move x:(r7+$1c),y1          
         mpy x0,y1,a                 
         move x:(r7+$1d),b           
@@ -472,16 +475,16 @@ mzpeak:
         mac y1,x1,a                 ; + noise
         move a,x:(r7+$2a)           
         move x:(r7+$2a),a           
-        move x:(r1+$0101),x0        
+        move x:(r7+$04),x0          
         sub x0,a                    
         move a,x1                   ; v3 = x - ic2
-        move x:(r1+$0100),x0        ; ic1
+        move x:(r7+$03),x0          ; ic1
         move x:(r7+$11),y1          
         mpy x0,y1,a                 
         move x:(r7+$12),y1          
         mac y1,x1,a                 
         move a,x:(r7+$2b)           ; v1 = a1 ic1 + a2 v3
-        move x:(r1+$0101),a         
+        move x:(r7+$04),a           
         mac x0,y1,a                 
         move x:(r7+$13),y1          
         mac y1,x1,a                 
@@ -497,14 +500,12 @@ mzpeak:
         move #>$eaaaab,y1           
         move x0,a                   
         mac y1,x1,a                 
-        move a,b                    
-        move b,x:(r1+$0100)         
+        move a,x:(r7+$03)           
         move x:(r7+$2c),a           
         asl #$1,a,a                 
-        move x:(r1+$0101),x0        
+        move x:(r7+$04),x0          
         sub x0,a                    
-        move a,b                    
-        move b,x:(r1+$0101)         
+        move a,x:(r7+$04)           
         move x:(r7+$2b),x0          
         move x:(r7+$14),y1          
         move x:(r7+$2a),a           
@@ -529,16 +530,16 @@ mzpeak:
         tne x0,a                    ; series: F2 takes F1
         move a,x:(r7+$2e)           
         move x:(r7+$2e),a           
-        move x:(r1+$0103),x0        
+        move x:(r7+$06),x0          
         sub x0,a                    
         move a,x1                   ; v3 = x - ic2
-        move x:(r1+$0102),x0        ; ic1
+        move x:(r7+$05),x0          ; ic1
         move x:(r7+$15),y1          
         mpy x0,y1,a                 
         move x:(r7+$16),y1          
         mac y1,x1,a                 
         move a,x:(r7+$2b)           ; v1 = a1 ic1 + a2 v3
-        move x:(r1+$0103),a         
+        move x:(r7+$06),a           
         mac x0,y1,a                 
         move x:(r7+$17),y1          
         mac y1,x1,a                 
@@ -554,14 +555,12 @@ mzpeak:
         move #>$eaaaab,y1           
         move x0,a                   
         mac y1,x1,a                 
-        move a,b                    
-        move b,x:(r1+$0102)         
+        move a,x:(r7+$05)           
         move x:(r7+$2c),a           
         asl #$1,a,a                 
-        move x:(r1+$0103),x0        
+        move x:(r7+$06),x0          
         sub x0,a                    
-        move a,b                    
-        move b,x:(r1+$0103)         
+        move a,x:(r7+$06)           
         move x:(r7+$2b),x0          
         move x:(r7+$18),y1          
         move x:(r7+$2e),a           
@@ -587,15 +586,18 @@ mzpeak:
         tst b                       
         move x1,a                   
         tne x0,a                    ; series: F2 alone
-        move a,x:(r7+$28)           ; y
+        move a,x0                   ; y
+        move x:(r7+$26),b           
+        tst b                       
+        beq mzc2                    ; DIRT 0: the filters' output as it is
+        move x0,x:(r7+$28)          ; y
         move x:(r7+$23),x0          
         move x:(r7+$01),b           
+        move x:(r7+$07),a           
         cmp x0,b                    ; phase < step: a tick
         move x:(r7+$28),x0          
-        move x:(r1+$0104),a         
         tlt x0,a                    
-        move a,b                    
-        move b,x:(r1+$0104)         
+        move a,x:(r7+$07)           
         move x:(r7+$24),b           
         neg b                       
         move b,y1                   ; -leak
@@ -605,17 +607,13 @@ mzpeak:
         cmp x0,b                    
         tge y1,a                    ; the clock's high half: -leak
         move a,y1                   
-        move x:(r1+$0104),a         
+        move x:(r7+$07),a           
         abs a                       
         move a,x1                   ; |held|
-        move x:(r1+$0104),a         
+        move x:(r7+$07),a           
         mac y1,x1,a                 
         move a,x0                   ; held + leak
-        move x:(r7+$26),b           
-        tst b                       
-        move x:(r7+$28),a           
-        tne x0,a                    ; DIRT: the held, leaking sample
-        move a,x0                   
+mzc2:
         mpy x0,x0,a                 
         move a,x1                   ; v^2
         move x:(r7+$21),y1          
@@ -635,29 +633,24 @@ mzpeak:
         move x:(r7+$1f),b           
         normf b1,a                  ; the level back
         move a,x1                   ; y
-        move x:(r1+$0105),x0        
+        move x:(r7+$08),x0          
         move x1,a                   
         sub x0,a                    
-        move x:(r1+$0106),x0        
+        move x:(r7+$09),x0          
         move #>$7f5c29,y1           
         mac x0,y1,a                 ; the DC blocker
-        move x1,b                   
-        move b,x:(r1+$0105)         
+        move x1,x:(r7+$08)          
         move a,x0                   ; o
-        move x0,b                   
-        move b,x:(r1+$0106)         
-        move x:(r7+$00),y1          
-        mpy x0,y1,a                 
-        move x0,x1                  ; o
-        move a,x0                   ; o x photocell
+        move x0,x:(r7+$09)          
         move x:(r7+$27),b           
         tst b                       
-        move x1,a                   
-        tne x0,a                    ; GATE: the VCA
-        move a,x:(r0)+              
-        move (r1)+n1                ; the right channel's block
-mzchan:
-        nop                         
+        beq mzc3                    ; no GATE
+        move x:(r7+$00),y1          
+        mpy x0,y1,a                 
+        move a,x0                   ; GATE: o x photocell
+mzc3:
+        move x0,x:(r0)+             ; L
+        move x0,x:(r0)+             ; R
 mzloop:
         nop                         
         rts                         

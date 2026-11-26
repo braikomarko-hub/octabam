@@ -29,13 +29,13 @@ def h(v):
 
 # ---- r7 slots ----------------------------------------------------------------------------------------
 S = dict(PHOTO=0x00, CLK=0x01, LFSR=0x02,
-         CHB=0x03, CH=0x07,   # a channel's block (L at $03, R at $0a), 7 words: F1 ic1 ic2, F2 ic1 ic2, hold, dc x, dc y
+         F1S=0x03, F2S=0x05, HOLD=0x07, DCX=0x08, DCY=0x09,   # F1 ic1 ic2, F2 ic1 ic2, the clock's hold, the DC blocker
          A1=0x11, A2=0x12, A3=0x13, K=0x14,   # F1's; F2's at +4
          WL=0x19, WB=0x1A, WH=0x1B, DM=0x1C, DCNT=0x1D, CM=0x1E, CCNT=0x1F, AIN=0x20, AOUT=0x21,
          NLEV=0x22, CINC=0x23, LEAK=0x24, SER=0x25, DIRT=0x26, GATE=0x27,
          T0=0x28, NZ=0x29, V=0x2A, V1=0x2B, V2=0x2C, Y1=0x2D, IN2=0x2E, T1=0x2F,
          P1=0x30, P2=0x31, G=0x32, KK=0x33, D4=0x34, ATT=0x35, REL=0x36, TGT=0x37, CNT=0x38, PK=0x39,
-         KF=0x3A, KW=0x3B, F50=0x3C, ST=0x3D, RB=0x3E)
+         KF=0x3A, KW=0x3B, F50=0x3C, ST=0x3D)
 STATE_ZERO = [S['PHOTO'], S['CLK']] + list(range(0x03, 0x11))
 assert max(S.values()) < 0x84, "the r7 block is $00..$83 (TRAPS: r7 scratch)"
 
@@ -132,7 +132,7 @@ def gen():
         ";",
         "; Insert contract: frames in place at x:(r0) (L, R interleaved), n7 frames, knobs from r6",
         "; (page 1 at +0..5; page 2 two to a word at +12..14, bits 16-23 and 8-15), state in this",
-        "; instance's r7 block (and r1 = a channel's block - $100 in the sample loop). In the shared",
+        "; instance's r7 block. MONO: L and R are summed, filtered once, and the result goes to both. In the shared",
         "; window it reads one word: KEYBUS's block peak of the track its KEY names.",
         "; ---------------------------------------------------------------------------",
         "",
@@ -459,12 +459,18 @@ def gen():
     a("normf b1,a")
     a(f"move a,{a.r7(S['CINC'])}", "the clock's step, limited")
     # ===================================================================================================
-    a("move r7,a")
-    a(f"sub #>{h(0x100 - S['CHB'])},a")
-    a(f"move a1,{a.r7(S['RB'])}")
-    a.c("==== the sample loop ====")
+    a.c("==== the sample loop: MONO, (L + R)/2 filtered once, the result on both sides ====")
+    a("move #$1,n0")
     a("do n7,>mzloop")
-    # the clock
+    a("move x:(r0),a")
+    a("move x:(r0+n0),x0")
+    a("add x0,a")
+    a("asr #$1,a,a")
+    a(f"move a,{a.r7(S['T1'])}", "x = (L + R)/2")
+    # the clock and the noise: only with DIRT on
+    a(f"move {a.r7(S['DIRT'])},b")
+    a("tst b")
+    a("beq mzc1", "DIRT 0: no clock, no noise")
     a(f"move {a.r7(S['CLK'])},a")
     a(f"move {a.r7(S['CINC'])},y1")
     a("add y1,a", "phase + step")
@@ -475,7 +481,6 @@ def gen():
     a("add y1,a", "phase + step - 1")
     a("tlt x0,a", "no wrap: phase + step")
     a(f"move a,{a.r7(S['CLK'])}")
-    # the noise: two Galois steps
     a(f"move {a.r7(S['LFSR'])},b")
     for _ in range(2):
         a("clr a")
@@ -489,11 +494,8 @@ def gen():
         a("move x1,b", "clean")
     a(f"move b1,{a.r7(S['LFSR'])}")
     a(f"move b1,{a.r7(S['NZ'])}")
-    a(f"move {a.r7(S['RB'])},r1", "the left channel's block - $100")
-    a(f"move #${S['CH']:x},n1")
-    a("do #$2,>mzchan")
-    a.c("---- a channel: r1 points at its block ----")
-    a("move x:(r0),x0")
+    a.label("mzc1")
+    a(f"move {a.r7(S['T1'])},x0")
     a(f"move {a.r7(S['DM'])},y1")
     a("mpy x0,y1,a")
     a(f"move {a.r7(S['DCNT'])},b")
@@ -505,7 +507,7 @@ def gen():
     a("move x0,a")
     a("mac y1,x1,a", "+ noise")
     a(f"move a,{a.r7(S['V'])}")
-    _svf(a, S['V'], 0, 0)
+    _svf(a, S['V'], S['F1S'], 0)
     a(f"move a,{a.r7(S['Y1'])}", "F1's output")
     a(f"move {a.r7(S['SER'])},b")
     a("tst b")
@@ -513,7 +515,7 @@ def gen():
     a(f"move {a.r7(S['Y1'])},x0")
     a("tne x0,a", "series: F2 takes F1")
     a(f"move a,{a.r7(S['IN2'])}")
-    _svf(a, S['IN2'], 2, 4)
+    _svf(a, S['IN2'], S['F2S'], 4)
     a("move a,x0", "F2's output")
     a(f"move {a.r7(S['Y1'])},a")
     a("add x0,a")
@@ -523,15 +525,19 @@ def gen():
     a("tst b")
     a("move x1,a")
     a("tne x0,a", "series: F2 alone")
-    a(f"move a,{a.r7(S['T0'])}", "y")
-    # the clock's hold and leak
+    a("move a,x0", "y")
+    # the clock's hold and leak: only with DIRT on
+    a(f"move {a.r7(S['DIRT'])},b")
+    a("tst b")
+    a("beq mzc2", "DIRT 0: the filters' output as it is")
+    a(f"move x0,{a.r7(S['T0'])}", "y")
     a(f"move {a.r7(S['CINC'])},x0")
     a(f"move {a.r7(S['CLK'])},b")
+    a(f"move {a.r7(S['HOLD'])},a")
     a("cmp x0,b", "phase < step: a tick")
     a(f"move {a.r7(S['T0'])},x0")
-    a(f"move {a.r1(4)},a")
     a("tlt x0,a")
-    a.st1("a", 4)
+    a(f"move a,{a.r7(S['HOLD'])}")
     a(f"move {a.r7(S['LEAK'])},b")
     a("neg b")
     a("move b,y1", "-leak")
@@ -541,44 +547,37 @@ def gen():
     a("cmp x0,b")
     a("tge y1,a", "the clock's high half: -leak")
     a("move a,y1")
-    a(f"move {a.r1(4)},a")
+    a(f"move {a.r7(S['HOLD'])},a")
     a("abs a")
     a("move a,x1", "|held|")
-    a(f"move {a.r1(4)},a")
+    a(f"move {a.r7(S['HOLD'])},a")
     a("mac y1,x1,a")
     a("move a,x0", "held + leak")
-    a(f"move {a.r7(S['DIRT'])},b")
-    a("tst b")
-    a(f"move {a.r7(S['T0'])},a")
-    a("tne x0,a", "DIRT: the held, leaking sample")
-    a("move a,x0")
+    a.label("mzc2")
     _asym(a, S['AOUT'])
     a(f"move {a.r7(S['CM'])},y1")
     a("mpy x0,y1,a")
     a(f"move {a.r7(S['CCNT'])},b")
     a("normf b1,a", "the level back")
     a("move a,x1", "y")
-    a(f"move {a.r1(5)},x0")
+    a(f"move {a.r7(S['DCX'])},x0")
     a("move x1,a")
     a("sub x0,a")
-    a(f"move {a.r1(6)},x0")
+    a(f"move {a.r7(S['DCY'])},x0")
     a(f"move #>{h(C['DC'])},y1")
     a("mac x0,y1,a", "the DC blocker")
-    a.st1("x1", 5)
+    a(f"move x1,{a.r7(S['DCX'])}")
     a("move a,x0", "o")
-    a.st1("x0", 6)
-    a(f"move {a.r7(S['PHOTO'])},y1")
-    a("mpy x0,y1,a")
-    a("move x0,x1", "o")
-    a("move a,x0", "o x photocell")
+    a(f"move x0,{a.r7(S['DCY'])}")
     a(f"move {a.r7(S['GATE'])},b")
     a("tst b")
-    a("move x1,a")
-    a("tne x0,a", "GATE: the VCA")
-    a("move a,x:(r0)+")
-    a("move (r1)+n1", "the right channel's block")
-    a.label("mzchan")
-    a("nop")
+    a("beq mzc3", "no GATE")
+    a(f"move {a.r7(S['PHOTO'])},y1")
+    a("mpy x0,y1,a")
+    a("move a,x0", "GATE: o x photocell")
+    a.label("mzc3")
+    a("move x0,x:(r0)+", "L")
+    a("move x0,x:(r0)+", "R")
     a.label("mzloop")
     a("nop")
     a("rts")
@@ -696,11 +695,11 @@ def _asym(a, slot):
 
 
 def _svf(a, xin, f, co):
-    """f: the filter's state offset in the channel block (r1)"""
+    """f: the filter's state slots in the r7 block (ic1 at f, ic2 at f + 1)"""
     """the TPT state-variable filter on x:(r7+xin); state at f, f+1; coefficients at A1+co.. ;
     leaves the MORF mix in a"""
     r = a.r7
-    q1 = a.r1
+    q1 = a.r7
     a(f"move {r(xin)},a")
     a(f"move {q1(f + 1)},x0")
     a("sub x0,a")
@@ -727,12 +726,12 @@ def _svf(a, xin, f, co):
     a(f"move #>{h(-C['SIXTH'])},y1")
     a("move x0,a")
     a("mac y1,x1,a")
-    a.st1("a", f)
+    a(f"move a,{q1(f)}")
     a(f"move {r(S['V2'])},a")
     a("asl #$1,a,a")
     a(f"move {q1(f + 1)},x0")
     a("sub x0,a")
-    a.st1("a", f + 1)
+    a(f"move a,{q1(f + 1)}")
     a(f"move {r(S['V1'])},x0")
     a(f"move {r(S['K'] + co)},y1")
     a(f"move {r(xin)},a")

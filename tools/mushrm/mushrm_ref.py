@@ -207,45 +207,46 @@ class MuShrM:
                        ain=ain, aout=aout, nlev=nlev, cinc=cinc, leak=leak, ser=ser, dirt=dirt, gate=gate, pk=pk,
                        lvl=lvl, L32=L32, tgt=tgt, att=att, rel=rel, st=st, cs=cs)
         out = ([], [])
+        f = self.f[0]
         for i in range(n):
-            # the clock and the noise run every sample (their output is used only with DIRT on)
-            a = self.clk + cinc
-            if a - Q >= 0:
-                a -= Q
-            self.clk = a
-            tick = self.clk < cinc                     # a wrap leaves the phase below one step
-            for _ in range(2):
-                c_ = self.lfsr >> 23 & 1
-                self.lfsr = ((self.lfsr << 1) & 0xFFFFFF) ^ (TAPS if c_ else 0)
+            # MONO (MaMarko, 26 Nov 2026): the Mu-Tron and the Sherman are mono; L and R are summed, filtered once,
+            # and the one result goes to both sides
+            x = (L[i] + R[i]) >> 1                     # the accumulator's L + R, halved at the move
+            if dirt:                                   # the clock and the noise run only with DIRT on
+                a = self.clk + cinc
+                if a - Q >= 0:
+                    a -= Q
+                self.clk = a
+                for _ in range(2):
+                    c_ = self.lfsr >> 23 & 1
+                    self.lfsr = ((self.lfsr << 1) & 0xFFFFFF) ^ (TAPS if c_ else 0)
             nz = self.lfsr - (1 << 24) if self.lfsr & 0x800000 else self.lfsr
-            for ch, x in ((0, L[i]), (1, R[i])):
-                f = self.f[ch]
-                v = fl(shift(x * dm, dsh))
-                v = self.asym(v, ain)
-                v = fl(v * Q + nz * nlev)              # nlev = 0 with DIRT off: exact
-                y1 = self.svf(f, 0, v, co[0])
-                y1 = fl(y1[0] * wl + y1[1] * wb + y1[2] * wh)
-                if ser:
-                    y2 = self.svf(f, 2, y1, co[1])
-                    y = fl(y2[0] * wl + y2[1] * wb + y2[2] * wh)
-                else:
-                    y2 = self.svf(f, 2, v, co[1])
-                    y2 = fl(y2[0] * wl + y2[1] * wb + y2[2] * wh)
-                    y = (y1 + y2) >> 1
-                if tick:                                # the hold runs always; DIRT decides if it is heard
-                    self.hold[ch] = y
-                yh = self.hold[ch]
+            v = fl(shift(x * dm, dsh))
+            v = self.asym(v, ain)
+            v = fl(v * Q + nz * nlev)                  # nlev = 0 with DIRT off: exact
+            y1 = self.svf(f, 0, v, co[0])
+            y1 = fl(y1[0] * wl + y1[1] * wb + y1[2] * wh)
+            if ser:
+                y2 = self.svf(f, 2, y1, co[1])
+                y = fl(y2[0] * wl + y2[1] * wb + y2[2] * wh)
+            else:
+                y2 = self.svf(f, 2, v, co[1])
+                y2 = fl(y2[0] * wl + y2[1] * wb + y2[2] * wh)
+                y = (y1 + y2) >> 1
+            if dirt:
+                if self.clk < cinc:                    # a tick: a wrap leaves the phase below one step
+                    self.hold[0] = y
+                yh = self.hold[0]
                 sq = leak if self.clk < (Q >> 1) else -leak
-                yh = fl(yh * Q + sq * sat(abs(yh)))
-                if dirt:
-                    y = yh
-                y = self.asym(y, aout)
-                y = fl(shift(y * cm, csh))
-                o = fl((y - self.dcx[ch]) * Q + self.dcy[ch] * C['DC'])
-                self.dcx[ch], self.dcy[ch] = y, o
-                if gate:
-                    o = fl(o * self.photo)
-                out[ch].append(o)
+                y = fl(yh * Q + sq * sat(abs(yh)))
+            y = self.asym(y, aout)
+            y = fl(shift(y * cm, csh))
+            o = fl((y - self.dcx[0]) * Q + self.dcy[0] * C['DC'])
+            self.dcx[0], self.dcy[0] = y, o
+            if gate:
+                o = fl(o * self.photo)
+            out[0].append(o)
+            out[1].append(o)
         return out
 
     @staticmethod

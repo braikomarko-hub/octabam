@@ -1,6 +1,7 @@
 # `mushrm` — MU-SHRM
 
-A per-track filter insert, FX1 or FX2: the Mu-Tron III's photocell (an envelope follower with a fast attack and
+A per-track filter insert, FX1 or FX2, **mono** (L and R are summed, filtered once, and the result goes to
+both sides, as the Mu-Tron III and the Sherman are mono): the Mu-Tron III's photocell (an envelope follower with a fast attack and
 a slow release) moves two state-variable filters in the manner of the Sherman Filterbank 2, with the Sherman's
 dirt: noise, the switched-capacitor clock that holds the output and leaks into it, and an asymmetric
 saturation. KEY lets another track move the filter (the Mutronics Mutator's external input), through KEYBUS.
@@ -42,8 +43,11 @@ output, so a track keyed to a kick plays only on the kick.
   square at the clock's rate, its depth proportional to the held sample, is added (the clock that leaks).
 - **The saturations**: v + a v², then s − s³/3, at the input (ASYM/2) and at the output (ASYM/4); a DC blocker
   after them.
-- **State**: about 60 words of the instance's r7 block (`$00..$3e`, below the `$84` limit), the two channels'
-  filter and DC states through r1 in the sample loop. No delay line: it runs in FX1 and FX2.
+- **Mono**: (L + R)/2 in, the one result out on both sides (MaMarko's choice, 26 Nov 2026: half the cycles of
+  the stereo first version, 876 a sample in `interlock_scan`'s model).
+- **DIRT 0 and GATE off skip their code** (a branch a sample each): the clock and the noise stand still.
+- **State**: about 60 words of the instance's r7 block (`$00..$3d`, below the `$84` limit). No delay line: it
+  runs in FX1 and FX2.
 - **Tables**: 130 words (LOG 33, EXP2 17, G 69, HARM 11), the module's ptable, parked in the stock curve bank in
   a remix without DJ EQ.
 
@@ -56,6 +60,11 @@ model's constants, using only instruction forms with a stock site or a CHIP.md r
 compares every sample with the model: the knobs' corners, GATE, KEY with a seeded KEYBUS word, series and
 parallel, the dirt, out-of-range bytes, silence and 60 random knob sets; it also runs `-guard` and an impulse at
 full resonance. It needs a `dsp_host` with `-xword`.
+
+## Cost
+
+`interlock_scan` (sambanks/main's model from the DSP56300 manual, not a measurement): 393 cycles a sample at the
+defaults (230 instructions), 488 with every feature on (DIRT, GATE, series). 847 words of P, 130 of table.
 
 ## Not covered
 

@@ -14,9 +14,11 @@ its id 0x04, every track's stock default FX1, now plays the null stub (the track
 
 ## Where it has run
 
-- ACIDV102 (MODULATION, KITS; 25 Nov 2026): not yet on a unit. Under the port: verify_set, verify_octa303_ui, the
+- ACIDV103 (MU-SHRM in place of MODULATION, stock FILTER back; 26 Nov 2026): not yet on a unit. Under the port:
+  verify_set, verify_octa303_ui, the play gate; in dsp_host: verify_dirty_state, verify_keybus, verify_mushrm.
+- ACIDV102 (MODULATION, KITS; 25 Nov 2026): on the author's MKI from the same evening, "working 100 %". Under the port: verify_set, verify_octa303_ui, the
   play gate; in dsp_host: verify_dirty_state, verify_modulation.
-- ACIDV101 (25 Nov 2026): built on the author's Mac and cleared to flash; no report yet. Under the port: verify_set on a fresh project, verify_octa303_ui,
+- ACIDV101 (25 Nov 2026): built on the author's Mac and cleared to flash. Under the port: verify_set on a fresh project, verify_octa303_ui,
   the two-voice play gate; in dsp_host: verify_dirty_state, verify_keybus, verify_vca160 (its own scratch image).
 - ACIDV100 (OCTA303 v10.0, Yves Rosius's #1244/#1238/#1245 savings; 25 Nov 2026): on the author's MKI the same
   day, "funziona".
