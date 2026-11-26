@@ -7,10 +7,11 @@ plays there (v9.0 left FM, MUFF, DIST and DRIV on the ColdFire), and dEVILish's 
 (1/4 a sample): extreme FM stays wild instead of turning into static. COMPRESSOR, LO-FI and DJ EQ are left out to make
 room for the DSP code. MORPH is v1.2 (RET, CURV, END).
 
-Since ACIDV101: SPECTRUM (since ACIDV102 MODULATION, and KITS back) on FX1 in place of COMB FILTER (stock COMB FILTER's code and dispatch stay, off the
-chooser); VCA160 in place of dB666 on the same id and store (`ids` pins VCA160 0x1b and DISTORX 0x06), its KEY read
-through KEYBUS; TRACK PATTERNS, REC CS1 SKIP and RECORDER LOOP FIX. Stock FILTER is out to make room for SPECTRUM, then MODULATION:
-its id 0x04, every track's stock default FX1, now plays the null stub (the track passes unfiltered).
+Since ACIDV103: MU-SHRM (the Mu-Tron III's photocell on two dirty Sherman-style filters, mono, KEY from any
+track through KEYBUS, GATE) on FX1 and FX2, id pinned 0x0b; stock FILTER back. Since ACIDV101: VCA160 in place
+of dB666 on the same id and store (`ids` pins VCA160 0x1b and DISTORX 0x06), its KEY read through KEYBUS; TRACK
+PATTERNS, REC CS1 SKIP, RECORDER LOOP FIX; COMB FILTER off the chooser (its stock code and dispatch stay).
+ACIDV101 and ACIDV102 left stock FILTER out (SPECTRUM, then MODULATION, took its room); KITS is back since ACIDV102.
 
 ## Where it has run
 
