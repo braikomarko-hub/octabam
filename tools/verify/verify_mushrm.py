@@ -111,6 +111,10 @@ def host(p, L, R, kn, key_word=None, slot="fx1", guard=False, dirty_bits=False):
         cmd += ["-pword", pwords(kn, slot)]
     if guard:
         cmd.append("-guard")
+    if args.image:
+        # an image with OCTA303 SEAM: dsp_host's search for the frame-context setup stops at the seam's hook;
+        # its bounds as verify_dirty_state gives them
+        cmd += ["-ctx", "372,39b,53e" if p == "A" else "17a,1a1,333"]
     rr = subprocess.run(cmd, capture_output=True, text=True)
     if rr.returncode != 0:
         return None, rr.stdout + rr.stderr
