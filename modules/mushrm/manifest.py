@@ -8,7 +8,7 @@ listening: MaMarko; design, model and code: Claude (Anthropic), 26 Nov 2026.
     KEY T1..T8 of that track, as KEYBUS publishes it -- through SENS, a LED law ((dB + 24)/18) and a one-pole
     with a fast attack and a slow release (SPD).  SPD 127 is GATE: the photocell is 0 or 1 and also opens the
     output (the Mutronics Mutator's gate);
-  * two TPT state-variable filters a channel (F1 at BASE moved by DPTH x the photocell, F2 a HARM step away),
+  * two TPT state-variable filters on the mono sum (F1 at BASE moved by DPTH x the photocell, F2 a HARM step away),
     in parallel or in series, MORF from low-pass through band-pass to high-pass, each with its resonance
     through a soft clip so it cannot run away;
   * the Sherman's dirt (DIRT): noise before the filters, the switched-capacitor clock (100 or 50 x F1) holding
@@ -86,5 +86,5 @@ MODULE = Module(
     harness=Harness(layout_char=None, is_server=False),
     gates=(Gate("tools/verify/verify_mushrm.py", remix_arg=False),),
     dear={"BASE": 127, "SENS": 127, "DPTH": 127, "RES1": 127, "RES2": 127, "HARM": 21, "MORF": 64,
-          "KEY": 1, "SPD": 126, "DRIV": 127, "ASYM": 127, "DIRT": 127},
+          "KEY": 1, "SPD": 127, "DRIV": 127, "ASYM": 127, "DIRT": 127},
 )

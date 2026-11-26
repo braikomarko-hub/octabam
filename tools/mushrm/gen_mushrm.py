@@ -19,6 +19,12 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import mushrm_ref as M  # noqa: E402
+import importlib.util as _ilu  # noqa: E402
+_kb = _ilu.spec_from_file_location("_keybus_manifest", ROOT / "modules/keybus/manifest.py")
+_kbm = _ilu.module_from_spec(_kb)
+sys.path.insert(0, str(ROOT / "tools")); import toolpath  # noqa: E402,F401
+_kb.loader.exec_module(_kbm)
+KEY_WORDS = _kbm.KEY_WORDS                     # X:$37F60 + t: track t's block peak (modules/keybus)
 
 C = M.C
 
@@ -60,17 +66,6 @@ class Asm:
 
     def r7(self, slot):
         return f"x:(r7+${slot:02x})"
-
-    def r1(self, off):
-        """a channel-block word through r1 = block - $100: the long-displacement form (loads into a, b, x0,
-        x1 and the store from b are stock's; the short form through r1 is not)"""
-        return f"x:(r1+${0x100 + off:04x})"
-
-    def st1(self, reg, off):
-        """store a register into the channel block: through b (stock's store form)"""
-        if reg != "b":
-            self(f"move {reg},b")
-        self(f"move b,{self.r1(off)}")
 
     # -- the knob, stretched: ws = w + w/127 in x0 (and a) ---------------------------------------------
     def load_knob(self, name):
@@ -180,7 +175,7 @@ def gen():
     a("and #$7,a")
     a("move a1,x1")
     a("move x1,a")
-    a(f"add #>{h(0x37F60)},a", "KEYBUS's peak word for track t")
+    a(f"add #>{h(KEY_WORDS)},a", "KEYBUS's peak word for track t")
     a("move a1,r1")
     a("nop")
     a("nop")
@@ -458,6 +453,13 @@ def gen():
     a(f"move {a.r7(S['CNT'])},b")
     a("normf b1,a")
     a(f"move a,{a.r7(S['CINC'])}", "the clock's step, limited")
+    a(f"move {a.r7(S['CINC'])},b")
+    a(f"move {a.r7(S['LEAK'])},a")
+    a("move #>$400000,x0")
+    a("cmp x0,b", "the clock above half the sample rate")
+    a("move #0,x0")
+    a("tge x0,a", "... is inaudible: no leak")
+    a(f"move a,{a.r7(S['LEAK'])}")
     # ===================================================================================================
     a.c("==== the sample loop: MONO, (L + R)/2 filtered once, the result on both sides ====")
     a("move #$1,n0")

@@ -406,6 +406,13 @@ mzpeak:
         move x:(r7+$38),b           
         normf b1,a                  
         move a,x:(r7+$23)           ; the clock's step, limited
+        move x:(r7+$23),b           
+        move x:(r7+$24),a           
+        move #>$400000,x0           
+        cmp x0,b                    ; the clock above half the sample rate
+        move #0,x0                  
+        tge x0,a                    ; ... is inaudible: no leak
+        move a,x:(r7+$24)           
 ; ==== the sample loop: MONO, (L + R)/2 filtered once, the result on both sides ====
         move #$1,n0                 
         do n7,>mzloop               

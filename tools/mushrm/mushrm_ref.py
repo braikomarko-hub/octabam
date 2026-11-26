@@ -6,7 +6,7 @@ keeps its full product in the accumulator until the result is MOVED to a word (t
 limiter saturates it), and a chain of mpy/mac sums the full products before the one floor.  gen_mushrm.py
 writes the assembly from the same constants; verify_mushrm.py runs it in dsp_host and wants every sample equal.
 
-Signal path (one channel; L and R share every coefficient, each has its own state):
+Signal path, MONO: (L + R)/2 in, the one result out on both sides:
   in -> DRIV (0..+30 dB) -> ASYM in -> + DIRT noise -> F1 (BASE + DPTH x photocell, RES1) -.
                                                        F2 (F1 x HARM, RES2) ----------------+- PAR: (F1+F2)/2
                                                                                             +- SER: F2(F1)
@@ -94,10 +94,10 @@ class MuShrM:
         self.photo = 0
         self.clk = 0
         self.lfsr = 0x5A5A5A
-        self.f = [[0, 0, 0, 0], [0, 0, 0, 0]]      # per channel: F1 ic1 ic2, F2 ic1 ic2
-        self.hold = [0, 0]
-        self.dcx = [0, 0]
-        self.dcy = [0, 0]
+        self.f = [[0, 0, 0, 0]]                   # F1 ic1 ic2, F2 ic1 ic2 (mono: one set)
+        self.hold = [0]
+        self.dcx = [0]
+        self.dcy = [0]
 
     # -------------------------------------------------------------------------------------------- helpers
     @staticmethod
@@ -143,7 +143,7 @@ class MuShrM:
     # -------------------------------------------------------------------------------------------- a block
     def block(self, L, R, knobs, key_peak=0):
         """knobs: 12 bytes (0..127) in slot order; key_peak: KEYBUS's word for the track KEY names"""
-        BASE, SENS, DPTH, RES1, RES2, HARM, MORF, KEY, SPD, DRIV, ASYM, DIRT = knobs
+        BASE, SENS, DPTH, RES1, RES2, HARM, MORF, KEY, SPD, DRIV, ASYM, DIRT = (k & 0x7F for k in knobs)   # the DSP reads 7 bits
         ws = self.ws_of
         n = len(L)
         # the peak of this block's |L+R|/2 (KEY OFF)
@@ -202,6 +202,8 @@ class MuShrM:
         leak = C['LK0'] + fl(ws(DIRT) * C['LK1'])
         km, ksh = self.exp2(p1 >> 15)
         cinc = fl(shift((C['CB50'] if DIRT >= 64 else C['CB100']) * km, ksh))
+        if cinc >= (Q >> 1):                         # the clock above half the sample rate: inaudible, no leak
+            leak = 0
         gate = SPD == 127
         self.tr = dict(photo=self.photo, p1=p1, p2=p2, co=co, wl=wl, wb=wb, wh=wh, dm=dm, dsh=dsh, cm=cm, csh=csh,
                        ain=ain, aout=aout, nlev=nlev, cinc=cinc, leak=leak, ser=ser, dirt=dirt, gate=gate, pk=pk,
@@ -272,8 +274,8 @@ class MuShrM:
 
 
 def keybus_peak(L, R):
-    """KEYBUS's X:$37F60+t for a block: the peak of |(L+R)/2|"""
-    return max(abs((a + b) >> 1) for a, b in zip(L, R))
+    """KEYBUS's X:$37F60+t for a block: |L+R| halved in the accumulator, the peak floored at the move"""
+    return min(MAXW, max(abs(a + b) for a, b in zip(L, R)) >> 1)
 
 
 NAMES = ("BASE", "SENS", "DPTH", "RES1", "RES2", "HARM", "MORF", "KEY", "SPD", "DRIV", "ASYM", "DIRT")

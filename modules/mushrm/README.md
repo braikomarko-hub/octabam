@@ -34,13 +34,15 @@ output, so a track keyed to a kick plays only on the kick.
   that track), through SENS, a LED law (−24 dB .. −6 dB onto 0 .. 1, from log2 by the LOG table), then a one-pole
   whose coefficient depends on the direction (attack or release) and on SPD. The coefficients assume the unit's
   16-frame block.
-- **The filters**: Zavalishin's TPT state-variable filter, two a channel. Each block takes g = tan(πf/fs) from a
+- **The filters**: Zavalishin's TPT state-variable filter, two, on the mono sum. Each block takes g = tan(πf/fs) from a
   69-word table (an eighth of an octave a point, linear interpolation), k = 1 − 0.98 RES, and 1/(1 + g(g + 2k)) by
   four Newton steps. The band-pass state goes through n − n³/6 every sample, so the resonance cannot run away.
   F2 is HARM's step from F1; in series it filters F1's output.
 - **The dirt**: a 24-bit Galois noise register (x²⁴ + x⁷ + x² + x + 1, two steps a sample) at −60 .. −30 dB
   before the filters; the clock's phase advances 100 or 50 × F1 a second; at each tick the output is held, and a
-  square at the clock's rate, its depth proportional to the held sample, is added (the clock that leaks).
+  square at the clock's rate, its depth proportional to the held sample, is added (the clock that leaks). Once the
+  clock passes half the sample rate (F1 above about 220 Hz at 100:1, 440 Hz at 50:1) it holds every sample and
+  leaks nothing: the dirt is audible with F1 low, as on the Sherman.
 - **The saturations**: v + a v², then s − s³/3, at the input (ASYM/2) and at the output (ASYM/4); a DC blocker
   after them.
 - **Mono**: (L + R)/2 in, the one result out on both sides (MaMarko's choice, 26 Nov 2026: half the cycles of
@@ -57,14 +59,15 @@ output, so a track keyed to a kick plays only on the kick.
 accumulator until the move that floors and limits it. `tools/mushrm/gen_mushrm.py` writes `mushrm.asm` from the
 model's constants, using only instruction forms with a stock site or a CHIP.md register row.
 `tools/verify/verify_mushrm.py` runs the assembly in `dsp_host` on both payloads, FX1 and FX2 instances, and
-compares every sample with the model: the knobs' corners, GATE, KEY with a seeded KEYBUS word, series and
-parallel, the dirt, out-of-range bytes, silence and 60 random knob sets; it also runs `-guard` and an impulse at
-full resonance. It needs a `dsp_host` with `-xword`.
+compares every sample of both sides with the model: the knobs' corners, GATE, KEY T1..T8 each reading its own
+track's KEYBUS word, series and parallel, the dirt, out-of-range bytes, junk in the knob words' low bits, silence
+and 60 random knob sets; it also runs `-guard` and an impulse at full resonance. `--image` runs it on a built
+image's dumps (the table parked in the curve bank). It needs a `dsp_host` with `-xword`.
 
 ## Cost
 
 `interlock_scan` (sambanks/main's model from the DSP56300 manual, not a measurement): 393 cycles a sample at the
-defaults (230 instructions), 488 with every feature on (DIRT, GATE, series). 847 words of P, 130 of table.
+defaults (230 instructions), 488 with every feature on (DIRT, GATE, series). About 830 words of P, 130 of table.
 
 ## Not covered
 

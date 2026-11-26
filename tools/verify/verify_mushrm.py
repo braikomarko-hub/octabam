@@ -10,7 +10,8 @@ is written from it by tools/mushrm/gen_mushrm.py.  What this proves:
                  with KEY OFF and KEY T1..T8 (KEYBUS's peak word seeded with -xword), blocks of 16 frames
   guard       -> dsp_host's -guard: no write outside the frame and the instance's state
   stability   -> RES1/RES2 127, DRIV/ASYM/DIRT 127, an impulse then silence: bounded, no runaway
-  knobs       -> every knob at 0 and 127 renders without dsp_host dying
+  knobs       -> all knobs at 0, all at 127, junk in the knob words' low bits, KEY T1..T8 each reading its own
+                 track's KEYBUS word; with --image, the same on a built image's dumps (the table in the curve bank)
 
 Needs the scratch dump:  python3 tools/remix/audition.py mushrm out/dry/drums_110.wav  (built here when missing),
 and a dsp_host with -xword (sambanks/main's; tools/harness/dsp_host/dsp_host.cpp in this tree has it).
@@ -35,10 +36,13 @@ import mushrm_ref as M  # noqa: E402
 ap = argparse.ArgumentParser()
 ap.add_argument("--host", default=str(ROOT / "vendor/dsp56300/build/source/dsp_host/dsp_host"))
 ap.add_argument("--quick", action="store_true")
+ap.add_argument("--image", help="run on a built image's dumps instead of the scratch ones (e.g. out/mainos_bus.bin "
+                "of acidhyb: the table parked in the curve bank, the p:( reads as x:()")
+ap.add_argument("--fxid", type=lambda v: int(v, 0), help="the id in that image (default: the manifest's)")
 args = ap.parse_args()
 
 MOD = registry.by_name("mushrm")
-FXID = MOD.menu.fx2_id
+FXID = args.fxid if args.fxid is not None else MOD.menu.fx2_id
 FRAMES = 16
 TMP = ROOT / "out/_mushgate"
 TMP.mkdir(parents=True, exist_ok=True)
@@ -55,7 +59,17 @@ r = subprocess.run([sys.executable, str(ROOT / "tools/mushrm/gen_mushrm.py"), "-
 check("generator: mushrm.asm is what gen_mushrm.py writes", r.returncode == 0, (r.stdout + r.stderr).strip())
 
 MEMS = {p: ROOT / f"out/dsp/_audition_{MOD.name}_{p}.mem" for p in "AB"}
-if not all(m.exists() for m in MEMS.values()):
+ASM = ROOT / "modules/mushrm/mushrm.asm"
+if args.image:
+    import dsp_modmap
+    img = pathlib.Path(args.image).read_bytes()
+    for p in "AB":
+        MEMS[p] = TMP / f"image_{p}.mem"
+        dsp_modmap.dumpmem(img, [p, str(MEMS[p])])
+    print(f"dumps from {args.image}")
+elif not all(m.exists() and m.stat().st_mtime >= ASM.stat().st_mtime for m in MEMS.values()):
+    for m in MEMS.values():
+        m.unlink(missing_ok=True)                     # stale against the assembly: rebuild
     subprocess.run([sys.executable, str(ROOT / "tools/remix/audition.py"), MOD.name, str(ROOT / "out/dry/drums_110.wav")],
                    capture_output=True)
 ENTRY = {}
@@ -68,7 +82,17 @@ for p, mem in MEMS.items():
     print(f"payload {p}: init P:0x{ENTRY[p][0]:04x} proc P:0x{ENTRY[p][1]:04x}")
 
 
-def host(p, L, R, kn, key_word=None, slot="fx1", guard=False):
+def pwords(kn, slot):
+    """the knob words with junk in the bits the DSP must ignore (an LFO's low bits): page 1 bits 0-15, page 2
+    bits 0-7 (bits 8-15 carry the companion slot)"""
+    k = "0" if slot == "fx1" else "0"
+    ws = [f"{k}:{i:x}={((kn[i] & 0x7f) << 16) | 0x00a5c3:x}" for i in range(6)]
+    for w in range(3):
+        ws.append(f"{k}:{0xc + w:x}={((kn[6 + 2 * w] & 0x7f) << 16) | ((kn[7 + 2 * w] & 0x7f) << 8) | 0x5a:x}")
+    return ",".join(ws)
+
+
+def host(p, L, R, kn, key_word=None, slot="fx1", guard=False, dirty_bits=False):
     n = len(L) - len(L) % FRAMES
     inter = []
     for i in range(n):
@@ -81,7 +105,10 @@ def host(p, L, R, kn, key_word=None, slot="fx1", guard=False):
            "-alloc", alloc, "-inmask", "1", "-stereo", "-frames", str(FRAMES), "-blocks", str(n // FRAMES),
            "-in", str(src), "-out", str(out), "-params", ",".join(str(v) for v in kn)]
     if key_word is not None:
-        cmd += ["-xword", ",".join(f"{0x37F60 + t:x}={key_word & 0xFFFFFF:x}" for t in range(8))]
+        kws = key_word if isinstance(key_word, (list, tuple)) else [key_word] * 8
+        cmd += ["-xword", ",".join(f"{0x37F60 + t:x}={kws[t] & 0xFFFFFF:x}" for t in range(8))]
+    if dirty_bits:
+        cmd += ["-pword", pwords(kn, slot)]
     if guard:
         cmd.append("-guard")
     rr = subprocess.run(cmd, capture_output=True, text=True)
@@ -96,15 +123,22 @@ def host(p, L, R, kn, key_word=None, slot="fx1", guard=False):
 def model(L, R, kn, key_word=None):
     n = len(L) - len(L) % FRAMES
     nb = n // FRAMES
+    if isinstance(key_word, (list, tuple)):              # the track KEY names
+        t = (kn[7] & 0x7f) - 1
+        key_word = key_word[t] if 0 <= t < 8 else 0
     return M.render(L[:n], R[:n], kn, key=None if key_word is None else [key_word] * nb, block=FRAMES)
 
 
-def compare(label, p, L, R, kn, key_word=None, slot="fx1"):
-    got, log = host(p, L, R, kn, key_word, slot)
+def compare(label, p, L, R, kn, key_word=None, slot="fx1", dirty_bits=False):
+    got, log = host(p, L, R, kn, key_word, slot, dirty_bits=dirty_bits)
     if got is None:
         check(label, False, "dsp_host failed: " + log.strip()[-200:])
         return False
     exp = model(L, R, kn, key_word)
+    n = len(L) - len(L) % FRAMES
+    if len(got[0]) != n or len(got[1]) != n:
+        check(label, False, f"dsp_host gave {len(got[0])}/{len(got[1])} frames, expected {n}")
+        return False
     for ch in (0, 1):
         for i, (g, e) in enumerate(zip(got[ch], exp[ch])):
             if g != e:
@@ -147,10 +181,18 @@ cases = [
     ("HARM byte 100 (above 21), KEY 9 (off)", noise, noiseR, knobs(HARM=100, KEY=9), int(0.5 * Q)),
     ("silence, DIRT 127", silence, silence, knobs(DIRT=127), None),
 ]
+KEYS8 = [int(Q * (0.05 + 0.11 * t)) for t in range(8)]       # a different KEYBUS word on every track
 for p in "AB":
     for label, L, R, kn, kw in cases:
         compare(f"{p} FX1 {label}", p, L, R, kn, kw)
-    compare(f"{p} FX2 defaults, 303", p, acidL, acidR, knobs(), None, slot="fx2")
+    for label, L, R, kn, kw in cases[:6]:
+        compare(f"{p} FX2 {label}", p, L, R, kn, kw, slot="fx2")
+    for t in range(1, 9):
+        compare(f"{p} FX1 KEY T{t}: track {t}'s own word", p, acidL[:16 * 200], acidR[:16 * 200],
+                knobs(KEY=t, DPTH=110, SENS=90), KEYS8)
+    compare(f"{p} FX1 knob words with junk low bits (an LFO's)", p, acidL, acidR,
+            knobs(BASE=77, DPTH=20, HARM=14, MORF=90, KEY=3, SPD=40, DRIV=70, ASYM=99, DIRT=101), KEYS8,
+            dirty_bits=True)
 nrand = 12 if args.quick else 60
 ok = 0
 for j in range(nrand):
