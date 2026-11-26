@@ -8,6 +8,7 @@ import mushrm_ref as M
 
 SR = 44100; Q = M.Q
 OUT = 'out/mushrm_examples'
+import os; os.makedirs(OUT, exist_ok=True)
 
 
 def load(p, tile=1):
@@ -45,9 +46,9 @@ padL = [int(v * Q) for v in pad]
 from numpy.fft import rfft, irfft
 dl = np.array(drums[0], dtype=np.float64); K = rfft(dl); fr = np.fft.rfftfreq(len(dl), 1 / SR); K[fr > 150] = 0
 kick = [int(v) for v in irfft(K, len(dl))]
-kick_peaks = M.keybus_peaks(kick, kick)
+kick_peaks = [M.keybus_peak(kick[b * 16:(b + 1) * 16], kick[b * 16:(b + 1) * 16]) for b in range(len(kick) // 16)]
 
-H = lambda st, ser=False: [-24, -19, -12, -7, -5, 0, 5, 7, 12, 19, 24].index(st) * 64 // 11 + 3 + (64 if ser else 0)
+H = lambda st, ser=False: M.HARM_ST.index(st) + (11 if ser else 0)      # HARM: a 22-step knob
 EX = {
  'e00_303_secco':          (acid, None, {}),
  'e01_303_quack_MuTron':   (acid, None, dict(BASE=28, SENS=70, DPTH=112, RES1=95, RES2=0, HARM=H(0), MORF=64, SPD=64, DRIV=20, ASYM=10)),
@@ -64,7 +65,7 @@ for name, (src, key, kw) in EX.items():
     if which and name not in which: continue
     if not kw:
         save(name, *src); continue
-    L, R = M.render(src[0], src[1], M.Knobs(**kw), key=key)
+    L, R = M.render(src[0], src[1], M.knobs(**kw), key=key)
     save(name, L, R)
     print('   ', kw, flush=True)
 
@@ -73,5 +74,5 @@ if not which or 'e09_303_LFO_BASE_DIRT' in which:
     nb = len(acid[0]) // 16; per = int(SR * 60 / 128 * 8 / 16)
     def kn(b):
         ph = (b % per) / per; tri = 1 - abs(2 * ph - 1)
-        return M.Knobs(BASE=int(20 + 80 * tri), SENS=64, DPTH=80, RES1=100, RES2=70, HARM=H(7), MORF=25, DRIV=50, ASYM=50, DIRT=35)
+        return M.knobs(BASE=int(20 + 80 * tri), SENS=64, DPTH=80, RES1=100, RES2=70, HARM=H(7), MORF=25, DRIV=50, ASYM=50, DIRT=35)
     L, R = M.render(acid[0], acid[1], kn); save('e09_303_LFO_BASE_DIRT', L, R)

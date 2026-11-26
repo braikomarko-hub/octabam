@@ -1,244 +1,295 @@
-"""Mu-ShrM v3 -- the integer model (the judge for the DSP code to come).
+"""Mu-ShrM v3 -- the integer model: the judge for modules/mushrm/mushrm.asm.
 
-Written by Claude (Anthropic), 26 Nov 2026, for MaMarko's Octatrack (octabam).  Design:
-claude/SHRM_progetto_v3.md.  Every number is a 24-bit DSP word (Q23, -1 <= x < 1) or a 56-bit
-accumulator; every multiply is the DSP's fractional multiply, floored (mpy: (a*b) >> 23).  What the DSP
-code will do, this does, in the same order: per BLOCK the knobs, the photocell and the coefficients; per
-SAMPLE two TPT state-variable filters a channel, the clock hold and the saturations.
+Written by Claude (Anthropic), 26 Nov 2026, for MaMarko (octabam).  Design: the project doc SHRM_progetto_v3.md.
+This model does what the DSP code does, operation for operation: every word is 24 bits (Q23), a multiply
+keeps its full product in the accumulator until the result is MOVED to a word (then it is floored, and the
+limiter saturates it), and a chain of mpy/mac sums the full products before the one floor.  gen_mushrm.py
+writes the assembly from the same constants; verify_mushrm.py runs it in dsp_host and wants every sample equal.
 
 Signal path (one channel; L and R share every coefficient, each has its own state):
-  in -> DRIV (0..+30 dB) -> ASYM in -> + DIRT noise -> F1 (BASE+DPTH*photocell, RES1) -.
-                                                       F2 (F1 x HARM, RES2) ----------+- PAR: (F1+F2)/2
-                                                                                      +- SER: F2(F1)
-     -> MORF (LP -> BP -> HP) -> DIRT clock hold + leak -> ASYM out -> level back -> GATE VCA -> out
-  photocell: the block peak of |L+R|/2 (KEY OFF: this track's input; KEY T1..T8: KEYBUS X:$37F60+t),
-  through SENS, a LED law (-24 dB .. -6 dB = 0 .. 1), then a one-pole with fast attack, slow release (SPD).
-  SPD 127 = GATE: the photocell jumps to 1 or 0 at a threshold and also opens/closes the output (Mutator).
+  in -> DRIV (0..+30 dB) -> ASYM in -> + DIRT noise -> F1 (BASE + DPTH x photocell, RES1) -.
+                                                       F2 (F1 x HARM, RES2) ----------------+- PAR: (F1+F2)/2
+                                                                                            +- SER: F2(F1)
+     -> MORF (LP -> BP -> HP) -> DIRT clock hold + leak -> ASYM out -> level back -> DC block -> GATE VCA -> out
+  The photocell: the block peak of |L+R|/2 (KEY OFF: this track; KEY T1..T8: KEYBUS X:$37F60+t), through
+  SENS (-18..+18 dB), a LED law ((dB + 24)/18, 0..1), then a one-pole a block with fast attack and slow release
+  (SPD).  SPD 127 = GATE: the photocell is 0 or 1 at the LED's middle and also opens the output.
 
-Knobs (12, the Octatrack's two pages; values 0..127):
-  page 1: BASE SENS DPTH RES1 RES2 HARM      page 2: MORF KEY SPD DRIV ASYM DIRT
-  HARM: 0..63 = parallel, 64..127 = series; within each half 11 steps -24 -19 -12 -7 -5 0 +5 +7 +12 +19 +24 st.
-  KEY: 0 = OFF, 1..8 = T1..T8 (the knob's 0..127 is cut in 9 steps by the build's formatter).
+Knobs (12): page 1 BASE SENS DPTH RES1 RES2 HARM, page 2 MORF KEY SPD DRIV ASYM DIRT.
+  HARM: a stepped knob, 0..10 parallel (P-24 .. P+24), 11..21 series (S-24 .. S+24); the steps -24 -19 -12 -7
+  -5 0 +5 +7 +12 +19 +24 semitones (a byte above 21 reads as 21).
+  KEY: 0 OFF, 1..8 T1..T8 (anything above 8: OFF).
 """
 import math
 
 Q = 1 << 23
 MAXW, MINW = Q - 1, -Q
 SR = 44100
-BLOCK = 16
+BLOCK = 16                       # the unit's block: the photocell's time constants assume it
 
 
-def sat(x):                       # a store from an accumulator: the DSP's limiter
+def sat(x):
     return MAXW if x > MAXW else MINW if x < MINW else x
 
 
-def mul(a, b):                    # mpy a,b then the high word: floor(a*b / 2^23)
-    return (a * b) >> 23
-
-
-def q(x):                         # a constant, rounded to a word
+def q(x):
     return sat(int(round(x * Q)))
 
 
-# ---- the tables (built at the generator's time; in the image: the curve bank, ~100 words) -------------
-F_LO, F_HI = 30.0, 10000.0        # F1/F2 span; 10 kHz keeps g = tan(pi f / fs) below 1 (a word)
+def fl(acc):
+    """an accumulator (in units of 2^-46) moved to a word: floor, then the limiter"""
+    return sat(acc >> 23)
+
+
+def shift(acc, n):
+    """normf/asl/asr by n places (n > 0: left)"""
+    return acc << n if n >= 0 else acc >> (-n)
+
+
+# ---- constants and tables (the generator puts the same numbers into the assembly) -------------------------
+F_LO, F_HI = 30.0, 10000.0
 OCT_SPAN = math.log2(F_HI / F_LO)                          # 8.38 octaves
-G_STEPS = 8                                                # table points an octave
-G_TAB = [q(math.tan(math.pi * min(F_HI, F_LO * 2 ** (i / G_STEPS)) / SR))
-         for i in range(int(OCT_SPAN * G_STEPS) + 2)]      # 69 words
-EXP2_TAB = [q(2 ** (i / 16) / 2) for i in range(17)]       # 2^(i/16)/2: the mantissa of a gain, 17 words
+G_STEPS = 8
+NG = int(OCT_SPAN * G_STEPS) + 2                           # 69
+G_TAB = [q(math.tan(math.pi * min(F_HI, F_LO * 2 ** (i / G_STEPS)) / SR)) for i in range(NG)]
+EXP2_TAB = [q(2 ** (i / 16) / 2) for i in range(17)]       # 2^(i/16)/2
+LOG_TAB = [q(math.log2(0.5 + i / 64) / 32) for i in range(33)]   # log2(m)/32, m = 0.5 + i/64 (VCA160's)
 HARM_ST = (-24, -19, -12, -7, -5, 0, 5, 7, 12, 19, 24)
+HARM_TAB = [q(st / 12 / 16) for st in HARM_ST]
+PTABLE = LOG_TAB + EXP2_TAB + G_TAB + HARM_TAB             # 33 + 17 + 69 + 11 = 130 words
+AT_LOG, AT_EXP, AT_G, AT_HARM = 0, 33, 50, 50 + NG
+TAPS = 0x000087                  # Galois LFSR, x^24 + x^7 + x^2 + x + 1 (primitive), shifted left twice a sample
 
-
-def pitch_to_g(pq):
-    """pq: F1's position in octaves above F_LO, Q23 scaled by 1/16 (so 0..16 octaves fit a word).
-    Linear interpolation in the table, as the DSP would: index = pq * 16 * G_STEPS."""
-    pq = max(0, min(pq, q(OCT_SPAN / 16) - 1))
-    pos = pq * 16 * G_STEPS                       # Q23 * 128: integer part = the index
-    i, fr = pos >> 23, pos & (Q - 1)
-    a, b = G_TAB[i], G_TAB[i + 1]
-    return a + mul(b - a, fr)
-
-
-def exp2_gain(oct_q4):
-    """2^x for x in octaves given as Q23/16 (0..+16): returns (mantissa word in [0.5,1), left shift)."""
-    pos = oct_q4 * 16 * 16                        # x * 16 steps an octave
-    e, fr = pos >> 27, (pos >> 23) & 15
-    return EXP2_TAB[fr], e + 1
-
-
-def recip(d4):
-    """1/d for d = 4*d4, d4 in [0.25, 0.85] (d = 1 + g(g+k) in [1, 3.4]): a linear start (the accumulator holds
-    1.29 before the limiter), then four Newton steps y = y (2 - d y) = 4 y (0.5 - d4 y)."""
-    y = sat(int(1.29 * Q) - 2 * mul(d4, q(0.58)))
-    for _ in range(4):
-        t = mul(d4, y)
-        y = sat(mul(y, q(0.5) - t) * 4)
-    return y
-
-
-class Knobs:
-    NAMES = ("BASE", "SENS", "DPTH", "RES1", "RES2", "HARM", "MORF", "KEY", "SPD", "DRIV", "ASYM", "DIRT")
-    DEFAULT = dict(BASE=40, SENS=64, DPTH=96, RES1=60, RES2=40, HARM=5, MORF=0, KEY=0, SPD=64, DRIV=32,
-                   ASYM=32, DIRT=0)
-
-    def __init__(self, **kw):
-        d = dict(self.DEFAULT); d.update(kw)
-        for k in self.NAMES:
-            setattr(self, k, max(0, min(127, int(d[k]))))
-
-
-class Chan:
-    def __init__(self):
-        self.s1 = [0, 0]; self.s2 = [0, 0]         # F1 ic1, ic2
-        self.t1 = [0, 0]                            # F2 ic1, ic2  (t1[0], t1[1])
-        self.hold = 0; self.dc_x = 0; self.dc_y = 0
+C = dict(
+    STR=q(1 / 127),               # w + w/127: the knob 0..127 onto 0..1.0
+    OCT16=q(OCT_SPAN / 16),       # BASE: F1's octaves above F_LO, / 16
+    DP=q(5 / 8),                  # DPTH: (ws - 1/2) x 5/8 = +-5 octaves / 16
+    S96=q(96 / 128),              # SENS: ws x 96/128 -> 0..96 steps of 1/16 octave
+    LEDC=q(6.0206 * 32 / 18 / 16),  # (dB + 24)/18 = 4/3 + 10.703 L, L = log2/32: x LEDC, << 4
+    TWO3=q(2 / 3),                # 4/3 = 2/3 + 2/3
+    S64=q(64 / 128),              # SPD: ws x 64/128 -> 0..64 steps (4 octaves)
+    ATT4=q(16 / (SR * 0.004) / 4),    # attack 4 ms at SPD 64: the coefficient a block, x 2^(s/16) / 4
+    REL4=q(16 / (SR * 0.045) / 4),    # release 45 ms
+    GREL=q(0.06),                 # GATE's release a block (~6 ms)
+    PMAX=q(OCT_SPAN / 16) - 1,
+    R98=q(0.98),
+    Y0=q(0.645),                  # 1/d's start: 2 x 0.645 - 2 x 0.58 d4
+    Y1=q(0.58),
+    S80=q(80 / 128),              # DRIV, DIRT: ws x 80/128 -> 0..80 steps (5 octaves)
+    THIRD2=q(2 / 3),
+    THIRD=q(1 / 3),
+    SIXTH=q(1 / 6),
+    AHALF=q(0.5),                 # ASYM in: ws / 2
+    CB100=q(F_LO * 100 / SR),     # the clock at 100 F1 / SR
+    CB50=q(F_LO * 50 / SR),
+    LK0=q(0.02), LK1=q(0.1),      # the clock's leak: 0.02 + 0.1 ws
+    DC=q(0.995),
+)
 
 
 class MuShrM:
+    """One instance: the state of its r7 block."""
+
     def __init__(self):
-        self.ch = [Chan(), Chan()]
-        self.photo = 0          # the photocell, 0..1 (a word)
-        self.clk = 0            # the clock's phase
-        self.lfsr = 0x5A5A5A    # the noise
-        self.gate = 0
+        self.photo = 0
+        self.clk = 0
+        self.lfsr = 0x5A5A5A
+        self.f = [[0, 0, 0, 0], [0, 0, 0, 0]]      # per channel: F1 ic1 ic2, F2 ic1 ic2
+        self.hold = [0, 0]
+        self.dcx = [0, 0]
+        self.dcy = [0, 0]
 
-    # ---- the photocell, once a block ----------------------------------------------------------------
-    def photocell(self, k, peak):
-        sm, se = exp2_gain(q(k.SENS * 6 / 127 / 16))   # SENS: 2^(0..6) then /8 = -18..+18 dB
-        lvl = sat((mul(peak, sm) << se) >> 3)
-        # (dB + 24) / 18 of lvl: normalise (e shifts to m in [0.5,1)), log2(m) ~ 2m - 2 (0.09 octave at worst)
-        if lvl <= 0:
-            tgt = 0
-        else:
-            e, m = 0, lvl
-            while m < (Q >> 1) and e < 12:
-                m <<= 1; e += 1
-            u16 = e * (Q >> 4) + ((Q - m) >> 3)         # (e + 2 - 2m) / 16: octaves below full scale
-            tgt = sat(int(4 / 3 * Q) - mul(u16, q(0.33448 * 16 / 8)) * 8)   # (24 - 6.02 u) / 18
-            tgt = max(0, tgt)
-        if k.SPD >= 127:                                # GATE: a threshold at the LED's middle
-            self.gate = MAXW if tgt > q(0.5) else 0
-            tgt = self.gate
-            att, rel = MAXW, q(0.06)                    # one block on, ~6 ms off
-        else:
-            sp = (k.SPD - 64) / 64 * 2                  # 4x slower .. 4x faster
-            att = q(min(0.999, 1 - math.exp(-BLOCK / (SR * 0.004 / 2 ** sp))))
-            rel = q(min(0.999, 1 - math.exp(-BLOCK / (SR * 0.045 / 2 ** sp))))
-        c = att if tgt > self.photo else rel
-        self.photo = sat(self.photo + mul(tgt - self.photo, c))
+    # -------------------------------------------------------------------------------------------- helpers
+    @staticmethod
+    def ws_of(byte):
+        w = (byte & 0x7F) << 16
+        return sat(w + ((w * C['STR']) >> 23))
 
-    # ---- one block -----------------------------------------------------------------------------------
-    def block(self, L, R, k, key_peak=None):
+    @staticmethod
+    def exp2(steps):
+        """2^(steps/16) as (mantissa EXP2[steps & 15], shift (steps >> 4) + 1): value = mant x 2^shift"""
+        return EXP2_TAB[steps & 15], (steps >> 4) + 1
+
+    @staticmethod
+    def steps(ws, c):
+        """the integer part of ws x c x 128 (a word's >> 16 after the multiply)"""
+        return fl(ws * c) >> 16
+
+    @staticmethod
+    def log32(v):
+        """log2(v)/32 for a word v >= 1: normalise, then LOG_TAB with linear interpolation (VCA160's form)"""
+        e = 0
+        while v < (Q >> 1):
+            v <<= 1; e += 1
+        u = (v - (Q >> 1)) << 1                       # 2 (m - 1/2), a word
+        i, fr = u >> 18, (u & 0x3FFFF) << 5
+        a, b = LOG_TAB[i], LOG_TAB[i + 1]
+        return a + ((fr * (b - a)) >> 23) - (e << 18)
+
+    @staticmethod
+    def g_of(p):
+        i, fr = p >> 16, (p & 0xFFFF) << 7
+        a, b = G_TAB[i], G_TAB[i + 1]
+        return a + ((fr * (b - a)) >> 23)
+
+    @staticmethod
+    def recip(d4):
+        y = fl(2 * C['Y0'] * Q - 2 * d4 * C['Y1'])
+        for _ in range(4):
+            t = fl(d4 * y)
+            y = fl((y * (C['AHALF'] - t)) << 2)
+        return y
+
+    # -------------------------------------------------------------------------------------------- a block
+    def block(self, L, R, knobs, key_peak=0):
+        """knobs: 12 bytes (0..127) in slot order; key_peak: KEYBUS's word for the track KEY names"""
+        BASE, SENS, DPTH, RES1, RES2, HARM, MORF, KEY, SPD, DRIV, ASYM, DIRT = knobs
+        ws = self.ws_of
         n = len(L)
-        own = max(abs((a + b) >> 1) for a, b in zip(L, R))
-        self.photocell(k, own if (k.KEY == 0 or key_peak is None) else key_peak)
-        # F1/F2 positions, octaves/16
-        base = q(OCT_SPAN / 16 * k.BASE / 127)
-        dp = q((k.DPTH - 64) / 64 * 5 / 16)
-        p1 = base + mul(dp, self.photo)
-        h = HARM_ST[(k.HARM & 63) * 11 // 64]
-        ser = k.HARM >= 64
-        p2 = p1 + q(h / 12 / 16)
-        g1, g2 = pitch_to_g(p1), pitch_to_g(p2)
-        k1 = q(1.0 - 0.98 * k.RES1 / 127)             # damping / 2: k = 2 * k1
-        k2 = q(1.0 - 0.98 * k.RES2 / 127)
+        # the peak of this block's |L+R|/2 (KEY OFF)
+        pk = 0
+        for a, b in zip(L, R):
+            pk = max(pk, abs(a + b))
+        pk = min(MAXW, pk >> 1)                      # the accumulator keeps the half bit until the move
+        if 1 <= KEY <= 8:
+            pk = key_peak
+        # ---- the photocell
+        sm, sh = self.exp2(self.steps(ws(SENS), C['S96']))
+        lvl = fl(shift(pk * sm, sh - 3))
+        lvl = max(lvl, 1)
+        L32 = self.log32(lvl)
+        tgt = fl((L32 * C['LEDC'] << 4) + 2 * C['TWO3'] * Q)
+        tgt = max(0, tgt)
+        if SPD == 127:
+            tgt = MAXW if tgt > (Q >> 1) else 0
+            att, rel = MAXW, C['GREL']
+        else:
+            m, s = self.exp2(self.steps(ws(SPD), C['S64']))
+            att = fl(shift(C['ATT4'] * m, s))
+            rel = fl(shift(C['REL4'] * m, s))
+        c = att if tgt > self.photo else rel
+        self.photo = fl(self.photo * Q + (tgt - self.photo) * c)
+        # ---- F1, F2
+        p1 = fl(ws(BASE) * C['OCT16'])
+        dp = fl((ws(DPTH) - (Q >> 1)) * C['DP'])
+        p1 = fl(p1 * Q + dp * self.photo)
+        p1 = min(max(p1, 0), C['PMAX'])
+        hb = min(HARM, 21)                           # 0..10 parallel, 11..21 series (a stepped knob)
+        hi = hb - 11 if hb >= 11 else hb
+        p2 = min(max(p1 + HARM_TAB[hi], 0), C['PMAX'])
+        ser = hb != hi
         co = []
-        for g, kk in ((g1, k1), (g2, k2)):
-            d4 = sat((q(0.25) + mul(g, sat(g + 2 * kk)) // 4))   # (1 + g(g+k))/4
-            a1 = recip(d4)                              # 1/(1+g(g+k))
-            a2 = mul(g, a1); a3 = mul(g, a2)
-            co.append((a1, a2, a3, kk))
-        m = k.MORF * 2                                  # 0..254: LP 0 -> BP 127 -> HP 254
-        wl = q(max(0, 1 - m / 127)); wb = q(1 - abs(m - 127) / 127); wh = q(max(0, m / 127 - 1))
-        dg_m, dg_e = exp2_gain(q(5 * k.DRIV / 127 / 16))          # DRIV: 0..+30 dB
-        cm, ce = exp2_gain(q((5 - 5 * k.DRIV / 127 * 2 / 3) / 16))  # level back: -2/3 of DRIV's dB (then /32)
-        a_in = q(k.ASYM / 127 * 0.5)
-        dirt = k.DIRT
-        nlev = q(0 if dirt == 0 else 10 ** ((-60 + 30 * dirt / 127) / 20))
-        ratio = 100 if dirt < 64 else 50
-        pm, pe = exp2_gain(p1)
-        cinc = sat(mul(q(F_LO * ratio / SR), pm) << pe) if dirt else MAXW
-        leak = q(0 if dirt == 0 else 0.02 + 0.1 * dirt / 127)
-        outL, outR = [], []
+        for p, res in ((p1, RES1), (p2, RES2)):
+            g = self.g_of(p)
+            k = MAXW - fl(ws(res) * C['R98'])
+            d4 = (Q >> 2) + fl(g * ((g + 2 * k) >> 2))
+            a1 = self.recip(d4)
+            a2 = fl(g * a1)
+            a3 = fl(g * a2)
+            co.append((a1, a2, a3, k))
+        d = 2 * ws(MORF) - MAXW
+        wh, wl, wb = max(0, d), max(0, -d), MAXW - abs(d)
+        # ---- DRIV, the level back, ASYM, DIRT
+        st = self.steps(ws(DRIV), C['S80'])
+        dm, dsh = self.exp2(st)
+        cs = 80 - (fl((st << 16) * C['THIRD2']) >> 16)
+        cm, csh = self.exp2(cs); csh -= 5
+        ain = fl(ws(ASYM) * C['AHALF']); aout = ain >> 1
+        dirt = DIRT != 0
+        ns = self.steps(ws(DIRT), C['S80']) - 160
+        nm, nsh = self.exp2(ns)
+        nlev = (nm >> (-nsh)) if dirt else 0
+        leak = C['LK0'] + fl(ws(DIRT) * C['LK1'])
+        km, ksh = self.exp2(p1 >> 15)
+        cinc = fl(shift((C['CB50'] if DIRT >= 64 else C['CB100']) * km, ksh))
+        gate = SPD == 127
+        self.tr = dict(photo=self.photo, p1=p1, p2=p2, co=co, wl=wl, wb=wb, wh=wh, dm=dm, dsh=dsh, cm=cm, csh=csh,
+                       ain=ain, aout=aout, nlev=nlev, cinc=cinc, leak=leak, ser=ser, dirt=dirt, gate=gate, pk=pk,
+                       lvl=lvl, L32=L32, tgt=tgt, att=att, rel=rel, st=st, cs=cs)
+        out = ([], [])
         for i in range(n):
-            # the clock, once a sample for both channels
-            if dirt:
-                self.clk += cinc
-                tick = self.clk >= Q
-                if tick: self.clk -= Q
-                self.lfsr ^= (self.lfsr << 7) & 0xFFFFFF; self.lfsr ^= self.lfsr >> 9; self.lfsr ^= (self.lfsr << 8) & 0xFFFFFF
-                nz = (self.lfsr & 0xFFFFFF) - (1 << 23)
-            else:
-                tick, nz = True, 0
-            for c, x, out in ((0, L[i], outL), (1, R[i], outR)):
-                ch = self.ch[c]
-                v = sat(mul(x, dg_m) << dg_e)          # DRIV (the limiter is the store's)
-                v = self.asym(v, a_in)
-                v = sat(v + mul(nz, nlev))
-                y1 = self.svf(ch.s1, v, co[0])
-                y1 = self.morf(y1, v, co[0], wl, wb, wh)
+            # the clock and the noise run every sample (their output is used only with DIRT on)
+            a = self.clk + cinc
+            if a - Q >= 0:
+                a -= Q
+            self.clk = a
+            tick = self.clk < cinc                     # a wrap leaves the phase below one step
+            for _ in range(2):
+                c_ = self.lfsr >> 23 & 1
+                self.lfsr = ((self.lfsr << 1) & 0xFFFFFF) ^ (TAPS if c_ else 0)
+            nz = self.lfsr - (1 << 24) if self.lfsr & 0x800000 else self.lfsr
+            for ch, x in ((0, L[i]), (1, R[i])):
+                f = self.f[ch]
+                v = fl(shift(x * dm, dsh))
+                v = self.asym(v, ain)
+                v = fl(v * Q + nz * nlev)              # nlev = 0 with DIRT off: exact
+                y1 = self.svf(f, 0, v, co[0])
+                y1 = fl(y1[0] * wl + y1[1] * wb + y1[2] * wh)
                 if ser:
-                    y2 = self.svf(ch.t1, y1, co[1]); y = self.morf(y2, y1, co[1], wl, wb, wh)
+                    y2 = self.svf(f, 2, y1, co[1])
+                    y = fl(y2[0] * wl + y2[1] * wb + y2[2] * wh)
                 else:
-                    y2 = self.svf(ch.t1, v, co[1]); y = (y1 >> 1) + (self.morf(y2, v, co[1], wl, wb, wh) >> 1)
-                if tick:
-                    ch.hold = y
-                y = ch.hold if dirt else y
-                if dirt:                                 # the clock leaks, louder with a louder signal
-                    sq = leak if self.clk < (Q >> 1) else -leak
-                    y = sat(y + mul(sq, abs(y)))
-                y = self.asym(y, a_in >> 1)
-                y = sat(mul(y, cm) << ce >> 5)
-                # a DC blocker (ASYM makes DC): y - x[-1] + 0.995 y[-1]
-                o = sat(y - ch.dc_x + mul(ch.dc_y, q(0.995)))
-                ch.dc_x, ch.dc_y = y, o
-                if k.SPD >= 127:
-                    o = mul(o, self.photo)
-                out.append(o)
-        return outL, outR
+                    y2 = self.svf(f, 2, v, co[1])
+                    y2 = fl(y2[0] * wl + y2[1] * wb + y2[2] * wh)
+                    y = (y1 + y2) >> 1
+                if tick:                                # the hold runs always; DIRT decides if it is heard
+                    self.hold[ch] = y
+                yh = self.hold[ch]
+                sq = leak if self.clk < (Q >> 1) else -leak
+                yh = fl(yh * Q + sq * sat(abs(yh)))
+                if dirt:
+                    y = yh
+                y = self.asym(y, aout)
+                y = fl(shift(y * cm, csh))
+                o = fl((y - self.dcx[ch]) * Q + self.dcy[ch] * C['DC'])
+                self.dcx[ch], self.dcy[ch] = y, o
+                if gate:
+                    o = fl(o * self.photo)
+                out[ch].append(o)
+        return out
 
     @staticmethod
     def asym(v, a):
-        """x + a x^2, then the 303's softclip shape on half scale: y = s - s^3/6 with s = clamp(2x, +-sqrt2)/2."""
-        v = sat(v + mul(a, mul(v, v)))
-        s = v                                        # |s| <= 1
-        return sat(s - mul(mul(s, s), s) // 3)       # s - s^3/3: 0..2/3, smooth to the rails
+        """v + a v^2, then s - s^3/3"""
+        v = fl(v * Q + a * fl(v * v))
+        s3 = fl(fl(v * v) * v)
+        return fl(v * Q - s3 * C['THIRD'])
 
     @staticmethod
-    def svf(st, x, co):
-        """Zavalishin's TPT state-variable filter; ic1 through the softclip (the resonance can't run away).
-        Returns (lp, bp, hp) packed; st = [ic1, ic2]."""
-        a1, a2, a3, kk = co
-        ic1, ic2 = st
+    def svf(f, o, x, co):
+        """Zavalishin's TPT state-variable filter; ic1 through n - n^3/6.  Returns (lp, bp, hp)."""
+        a1, a2, a3, k = co
+        ic1, ic2 = f[o], f[o + 1]
         v3 = sat(x - ic2)
-        v1 = sat(mul(a1, ic1) + mul(a2, v3))
-        v2 = sat(ic2 + mul(a2, ic1) + mul(a3, v3))
+        v1 = fl(a1 * ic1 + a2 * v3)
+        v2 = fl(ic2 * Q + a2 * ic1 + a3 * v3)
         n1 = sat(2 * v1 - ic1)
-        st[0] = sat(n1 - mul(mul(n1, n1), n1) // 6)  # the softclip in the loop
-        st[1] = sat(2 * v2 - ic2)
-        hp = sat(x - 2 * mul(kk, v1) - v2)
-        return (v2, v1, hp)
-
-    @staticmethod
-    def morf(y, x, co, wl, wb, wh):
-        lp, bp, hp = y
-        return sat(mul(lp, wl) + mul(bp, wb) + mul(hp, wh))
+        f[o] = fl(n1 * Q - fl(fl(n1 * n1) * n1) * C['SIXTH'])
+        f[o + 1] = sat(2 * v2 - ic2)
+        hp = fl(x * Q - 2 * k * v1 - v2 * Q)
+        return v2, v1, hp
 
 
-def render(L, R, knobs, key=None, block=BLOCK):
-    """L, R: lists of words; knobs: a Knobs or a function block_index -> Knobs (automation);
-    key: None or a list of per-block peaks (KEYBUS X:$37F60+t)."""
+def keybus_peak(L, R):
+    """KEYBUS's X:$37F60+t for a block: the peak of |(L+R)/2|"""
+    return max(abs((a + b) >> 1) for a, b in zip(L, R))
+
+
+NAMES = ("BASE", "SENS", "DPTH", "RES1", "RES2", "HARM", "MORF", "KEY", "SPD", "DRIV", "ASYM", "DIRT")
+DEFAULT = dict(BASE=40, SENS=64, DPTH=96, RES1=60, RES2=40, HARM=5, MORF=0, KEY=0, SPD=64, DRIV=32, ASYM=32, DIRT=0)
+
+
+def knobs(**kw):
+    d = dict(DEFAULT); d.update(kw)
+    return [max(0, min(127, int(d[k]))) for k in NAMES]
+
+
+def render(L, R, kn, key=None, block=BLOCK):
+    """kn: a 12-list or a function block -> 12-list; key: per-block KEYBUS peaks (or None)"""
     fx = MuShrM(); oL, oR = [], []
-    nb = len(L) // block
-    for b in range(nb):
-        k = knobs(b) if callable(knobs) else knobs
-        kp = key[b] if key is not None and b < len(key) else None
-        a, c = fx.block(L[b * block:(b + 1) * block], R[b * block:(b + 1) * block], k, kp)
+    for b in range(len(L) // block):
+        k = kn(b) if callable(kn) else kn
+        a, c = fx.block(L[b * block:(b + 1) * block], R[b * block:(b + 1) * block], k,
+                        key[b] if key is not None and b < len(key) else 0)
         oL += a; oR += c
     return oL, oR
-
-
-def keybus_peaks(L, R, block=BLOCK):
-    """What KEYBUS publishes for a track: the block peak of |(L+R)/2|."""
-    return [max(abs((L[i] + R[i]) >> 1) for i in range(b * block, (b + 1) * block)) for b in range(len(L) // block)]
